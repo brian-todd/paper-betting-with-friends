@@ -1,0 +1,6 @@
+{{/*
+  Error alert for the login and register forms. Rendered on its own for HTMX
+  requests and swapped into #auth-error; the full-page render inlines the same
+  markup directly in the page template.
+*/}}
+<div class="alert alert-error">{{.Error}}</div>

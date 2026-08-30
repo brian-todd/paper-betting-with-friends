@@ -1,0 +1,104 @@
+{{define "content"}}
+<div class="admin-page">
+    <div class="admin-header">
+        <h1>Manage Leagues</h1>
+        <a href="/admin" class="btn btn-secondary btn-sm">← Back to Admin</a>
+    </div>
+
+    {{if .Error}}
+    <div class="alert alert-error">{{.Error}}</div>
+    {{end}}
+
+    {{if .Success}}
+    <div class="alert alert-success">{{.Success}}</div>
+    {{end}}
+
+    <div class="card create-form-card">
+        <h3>Create New League</h3>
+        <form action="/admin/leagues" method="POST" class="create-league-form">
+            <div class="form-group">
+                <label for="name">League Name</label>
+                <input type="text" id="name" name="name" placeholder="Enter league name" required>
+            </div>
+            <div class="form-group">
+                <label for="starting_balance">Starting Balance</label>
+                <input type="text" id="starting_balance" name="starting_balance" placeholder="1000.00">
+            </div>
+            <button type="submit" class="btn btn-primary">Create League</button>
+        </form>
+    </div>
+
+    <h2 class="section-title">Existing Leagues</h2>
+
+    {{if .Leagues}}
+    <div class="leagues-list">
+        {{range .Leagues}}
+        <div class="league-card">
+            <div class="league-header">
+                <h3>{{.League.Name}}</h3>
+                <span class="text-muted">
+                    Created by {{.League.Creator.Username}} on {{localTime .League.CreatedAt "mediumdate"}}
+                    &middot; starting balance {{.League.StartingBalance.StringFixed 2}}
+                    &middot; invite code <code>{{.League.InviteCode}}</code>
+                </span>
+            </div>
+
+            <div class="league-members">
+                <h4>Members ({{len .Members}})</h4>
+                {{if .Members}}
+                <ul class="member-list">
+                    {{range .Members}}
+                    <li>
+                        <span>{{.Member.User.Username}}</span>
+                        <span class="badge badge-{{.Member.Role}}">{{.Member.Role}}</span>
+                        {{if .HasPurse}}
+                        <span class="purse-balance">{{.Balance.StringFixed 2}}</span>
+                        {{else}}
+                        <span class="badge badge-warning">no purse</span>
+                        {{end}}
+                        <form action="/admin/leagues/{{.Member.LeagueID}}/members/{{.Member.UserID}}/balance" method="POST" class="inline-form">
+                            <input type="text" name="balance" placeholder="Set balance" required>
+                            <button type="submit" class="btn btn-sm btn-secondary">Set</button>
+                        </form>
+                        <form action="/admin/leagues/{{.Member.LeagueID}}/members/{{.Member.UserID}}/remove" method="POST" class="inline-form">
+                            <button type="submit" class="btn btn-sm btn-danger">Remove</button>
+                        </form>
+                    </li>
+                    {{end}}
+                </ul>
+                {{else}}
+                <p class="text-muted">No members yet.</p>
+                {{end}}
+            </div>
+
+            <div class="add-member-form">
+                <h4>Add Member</h4>
+                <form action="/admin/leagues/{{.League.ID}}/members" method="POST" class="inline-form">
+                    <select name="user_id" required>
+                        <option value="">Select a user...</option>
+                        {{range $.Users}}
+                        <option value="{{.ID}}">{{.Username}}</option>
+                        {{end}}
+                    </select>
+                    <button type="submit" class="btn btn-sm btn-primary">Add</button>
+                </form>
+            </div>
+
+            <div class="danger-zone">
+                <h4>Danger Zone</h4>
+                <p class="text-muted">Deleting a league also deletes every bet and purse in it.</p>
+                <form action="/admin/leagues/{{.League.ID}}/delete" method="POST" class="inline-form danger-form">
+                    <input type="text" name="confirm" placeholder="Type {{.League.Name}}" required>
+                    <button type="submit" class="btn btn-sm btn-danger">Delete League</button>
+                </form>
+            </div>
+        </div>
+        {{end}}
+    </div>
+    {{else}}
+    <div class="card text-center">
+        <p class="text-muted">No leagues created yet.</p>
+    </div>
+    {{end}}
+</div>
+{{end}}

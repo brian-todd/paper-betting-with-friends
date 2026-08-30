@@ -1,0 +1,78 @@
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} | Betting Tracker</title>
+    <!--
+      htmx discards the body of any 4xx by default, which silently swallows
+      server-side form validation messages. Allow 400/422 to swap so those
+      responses reach the user; everything else in 4xx/5xx stays an error.
+      reportValidityOfForms makes htmx surface native constraint-validation
+      messages (e.g. the password-match check on /register) instead of just
+      refusing to send the request. Must precede the htmx script tag.
+    -->
+    <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"400","swap":true},{"code":"422","swap":true},{"code":"429","swap":true},{"code":"[45]..","swap":false,"error":true}],"reportValidityOfForms":true}'>
+    <!-- htmx 2.0.10, vendored rather than CDN-loaded; refresh with `make vendor-htmx` -->
+    <script src="{{asset "/static/js/htmx.min.js"}}"></script>
+    <!-- Rewrites the <time> elements emitted by the localTime template function
+         into the reader's timezone. Loads after htmx so it can hook htmx:load. -->
+    <script src="{{asset "/static/js/localtime.js"}}"></script>
+    <link rel="stylesheet" href="{{asset "/static/css/style.css"}}">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="nav-brand">🏈 Betting Tracker</a>
+            <div class="nav-links">
+                {{if .User}}
+                    <a href="/games" class="nav-link">Games</a>
+                    <a href="/bets" class="nav-link">My Bets</a>
+                    <a href="/leagues" class="nav-link">Leagues</a>
+                    <span class="nav-user">{{.User.Username}}</span>
+                    {{if .User.IsAdmin}}
+                    <a href="/admin" class="btn btn-primary btn-sm">Admin</a>
+                    {{end}}
+                    <form action="/logout" method="POST" class="nav-form">
+                        <button type="submit" class="btn btn-secondary btn-sm" hx-post="/logout" hx-swap="none">Logout</button>
+                    </form>
+                {{else}}
+                    <a href="/login" class="btn btn-secondary btn-sm">Login</a>
+                    <a href="/register" class="btn btn-primary btn-sm">Register</a>
+                {{end}}
+            </div>
+        </nav>
+    </header>
+
+    <main class="main">
+        <div class="container">
+            {{template "content" .}}
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; {{currentYear}} Betting Tracker. Track your college sports bets.</p>
+            {{if .SyncStatus}}
+            <ul class="sync-status">
+                {{range .SyncStatus}}
+                <li class="sync-status-item">
+                    <span class="sync-label">{{.Label}}</span>
+                    {{if .LastSuccess.IsZero}}
+                    <span class="sync-pending">awaiting first update</span>
+                    {{else}}
+                    <span class="sync-updated">updated {{localTime .LastSuccess "relative"}}</span>
+                    {{end}}
+                    {{if not .NextRun.IsZero}}
+                    <span class="sync-next">next {{localTime .NextRun "relative"}}</span>
+                    {{end}}
+                </li>
+                {{end}}
+            </ul>
+            {{end}}
+        </div>
+    </footer>
+</body>
+</html>
+{{end}}

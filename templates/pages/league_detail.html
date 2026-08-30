@@ -1,0 +1,173 @@
+{{define "content"}}
+<div class="league-detail-page">
+    <div class="page-header">
+        <div class="header-left">
+            <a href="/leagues" class="btn btn-secondary btn-sm">← Back to Leagues</a>
+            <h1>{{.League.Name}}</h1>
+            <div class="league-badges">
+                <span class="badge {{if .League.IsPublic}}badge-public{{else}}badge-private{{end}}">
+                    {{if .League.IsPublic}}Public{{else}}Private{{end}}
+                </span>
+                {{if .IsMember}}
+                <span class="badge badge-member">Member</span>
+                {{end}}
+                {{if .IsAdmin}}
+                <span class="badge badge-admin">Admin</span>
+                {{end}}
+            </div>
+        </div>
+        <div class="header-actions">
+            {{if .IsMember}}
+                {{if not .IsCreator}}
+                <form action="/leagues/{{.League.ID}}/leave" method="POST" class="inline">
+                    <button type="submit" class="btn btn-secondary btn-sm" onclick="return confirm('Are you sure you want to leave this league?')">Leave League</button>
+                </form>
+                {{end}}
+                {{if .IsAdmin}}
+                <form action="/leagues/{{.League.ID}}/delete" method="POST" class="inline">
+                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this league? This action cannot be undone.')">Delete League</button>
+                </form>
+                {{end}}
+            {{else}}
+                {{if .League.IsPublic}}
+                <form action="/leagues/{{.League.ID}}/join" method="POST" class="inline">
+                    <button type="submit" class="btn btn-primary">Join League</button>
+                </form>
+                {{end}}
+            {{end}}
+        </div>
+    </div>
+
+    {{if .Error}}
+    <div class="alert alert-error">
+        {{if eq .Error "cannot_leave"}}As the creator, you cannot leave this league.{{end}}
+        {{if eq .Error "not_member"}}You are not a member of this league.{{end}}
+        {{if eq .Error "already_member"}}You're already a member of this league.{{end}}
+        {{if eq .Error "not_public"}}This league is invite-only.{{end}}
+        {{if eq .Error "not_authorized"}}You are not authorized to perform this action.{{end}}
+        {{if eq .Error "error"}}An error occurred. Please try again.{{end}}
+    </div>
+    {{end}}
+
+    {{if .Success}}
+    <div class="alert alert-success">
+        {{if eq .Success "created"}}League created successfully!{{end}}
+        {{if eq .Success "joined"}}You've joined the league!{{end}}
+    </div>
+    {{end}}
+
+    <div class="league-info-grid">
+        <div class="card league-info-card">
+            <h3>League Info</h3>
+            <dl class="info-list">
+                <dt>Created by</dt>
+                <dd>{{.League.Creator.Username}}</dd>
+                <dt>Created on</dt>
+                <dd>{{localTime .League.CreatedAt "fulldate"}}</dd>
+                <dt>Members</dt>
+                <dd>{{len .League.Members}}</dd>
+                <dt>Starting Balance</dt>
+                <dd>${{.League.StartingBalance}}</dd>
+            </dl>
+
+            {{if .IsMember}}
+            <div class="purse-balance-section">
+                <h4>Your Balance</h4>
+                <div class="balance-display">
+                    <span class="balance-amount">${{.PurseBalance}}</span>
+                </div>
+            </div>
+            {{end}}
+
+            {{if .IsAdmin}}
+            <div class="invite-code-section">
+                <h4>Invite Code</h4>
+                <p class="text-muted">Share this code with friends to invite them:</p>
+                <div class="invite-code-display">
+                    <code>{{.League.InviteCode}}</code>
+                </div>
+            </div>
+            {{end}}
+        </div>
+
+        <div class="card leaderboard-card">
+            <h3>Leaderboard</h3>
+            {{if .Leaderboard}}
+            <div class="leaderboard-table-container">
+                <table class="leaderboard-table">
+                    <thead>
+                        <tr>
+                            <th class="rank-col">#</th>
+                            <th class="player-col">Player</th>
+                            <th class="record-col">Record</th>
+                            <th class="balance-col">Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Leaderboard}}
+                        <tr{{if eq .Rank 1}} class="rank-first"{{else if eq .Rank 2}} class="rank-second"{{else if eq .Rank 3}} class="rank-third"{{end}}>
+                            <td class="rank-col">
+                                {{if eq .Rank 1}}<span class="rank-medal">🥇</span>{{else if eq .Rank 2}}<span class="rank-medal">🥈</span>{{else if eq .Rank 3}}<span class="rank-medal">🥉</span>{{else}}{{.Rank}}{{end}}
+                            </td>
+                            <td class="player-col">{{.Username}}</td>
+                            <td class="record-col">
+                                <span class="record-wins">{{.Wins}}W</span>
+                                <span class="record-separator">-</span>
+                                <span class="record-losses">{{.Losses}}L</span>
+                                {{if .Pushes}}<span class="record-separator">-</span><span class="record-pushes">{{.Pushes}}P</span>{{end}}
+                            </td>
+                            <td class="balance-col">${{.Balance}}</td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            {{else}}
+            <p class="text-muted">No leaderboard data yet. Place some bets to get started!</p>
+            {{end}}
+        </div>
+    </div>
+
+    {{if .WeeklyStats}}
+    <details class="card weekly-stats-card" open>
+        <summary>
+            <h3>Weekly Breakdown</h3>
+        </summary>
+        {{range $i, $week := .WeeklyStats}}
+        <details class="week-stats-group"{{if eq $i 0}} open{{end}}>
+            <summary>{{$week.Label}}</summary>
+            <div class="leaderboard-table-container">
+                <table class="leaderboard-table weekly-stats-table">
+                    <thead>
+                        <tr>
+                            <th class="player-col">Player</th>
+                            <th class="record-col">Record</th>
+                            <th class="num-col">Staked</th>
+                            <th class="num-col">Winnings</th>
+                            <th class="num-col">Net</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range $week.Rows}}
+                        <tr{{if .IsCurrentUser}} class="current-user-row"{{end}}>
+                            <td class="player-col">{{.Username}}</td>
+                            <td class="record-col">
+                                <span class="record-wins">{{.Wins}}W</span><span class="record-separator">-</span><span class="record-losses">{{.Losses}}L</span>{{if .Pushes}}<span class="record-separator">-</span><span class="record-pushes">{{.Pushes}}P</span>{{end}}
+                                {{if .Pending}}<span class="pending-note">{{.Pending}} pending</span>{{end}}
+                            </td>
+                            <td class="num-col">${{.Staked.StringFixed 2}}</td>
+                            <td class="num-col">${{.Winnings.StringFixed 2}}</td>
+                            <td class="num-col {{if .Net.IsPositive}}net-positive{{else if .Net.IsNegative}}net-negative{{end}}">
+                                {{- if .Net.IsNegative}}−${{.Net.Abs.StringFixed 2}}{{else}}${{.Net.StringFixed 2}}{{end -}}
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </details>
+        {{end}}
+    </details>
+    {{end}}
+</div>
+{{end}}

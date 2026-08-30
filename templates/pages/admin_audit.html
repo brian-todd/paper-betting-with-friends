@@ -1,0 +1,39 @@
+{{define "content"}}
+<div class="admin-page">
+    <div class="admin-header">
+        <h1>Audit Log</h1>
+        <a href="/admin" class="btn btn-secondary btn-sm">← Back to Admin</a>
+    </div>
+
+    <p class="admin-subtitle">The most recent actions taken through the admin portal.</p>
+
+    <div class="admin-table-container">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                    <th>Target</th>
+                    <th>Detail</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Entries}}
+                <tr>
+                    <td class="text-muted">{{localTime .CreatedAt "shortdatetime"}}</td>
+                    <td>{{.ActorUsername}}</td>
+                    <td><code>{{.Action}}</code></td>
+                    <td class="text-muted">{{.TargetType}}</td>
+                    <td>{{.Detail}}</td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="5" class="text-center text-muted">Nothing recorded yet.</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}

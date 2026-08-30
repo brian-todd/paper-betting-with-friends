@@ -1,0 +1,53 @@
+{{define "content"}}
+<div class="admin-page">
+    <div class="admin-header">
+        <h1>Games</h1>
+        <a href="/admin" class="btn btn-secondary btn-sm">← Back to Admin</a>
+    </div>
+
+    <form action="/admin/games" method="GET" class="filter-form">
+        <input type="text" name="q" value="{{.Query}}" placeholder="Team name, e.g. Alabama" required>
+        <button type="submit" class="btn btn-sm btn-primary">Search</button>
+    </form>
+
+    {{if .Query}}
+    <div class="admin-table-container">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Kickoff</th>
+                    <th>Matchup</th>
+                    <th>Sport</th>
+                    <th>Status</th>
+                    <th>Score</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Games}}
+                <tr>
+                    <td class="text-muted">{{localTime .ScheduledAt "shortdatetime"}}</td>
+                    <td>{{.AwayTeam.Name}} @ {{.HomeTeam.Name}}</td>
+                    <td class="text-muted">{{.Sport}}</td>
+                    <td><span class="badge badge-member">{{.Status}}</span></td>
+                    <td>
+                        {{if .Result}}
+                        {{.Result.AwayScore}} &ndash; {{.Result.HomeScore}}
+                        {{if not .Result.FinalizedAt}}<span class="badge badge-warning">provisional</span>{{end}}
+                        {{else}}
+                        <span class="text-muted">none</span>
+                        {{end}}
+                    </td>
+                    <td><a href="/admin/games/{{.ID}}" class="btn btn-sm btn-secondary">Inspect</a></td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="6" class="text-center text-muted">No games matched that team.</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+</div>
+{{end}}

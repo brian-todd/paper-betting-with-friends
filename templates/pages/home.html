@@ -1,0 +1,54 @@
+{{define "content"}}
+<div class="hero">
+    <h1>College Football Betting Tracker</h1>
+    <p class="hero-subtitle">Track your bets, compete with friends, and dominate your leagues.</p>
+    
+    {{if .User}}
+        <div class="dashboard-preview">
+            <h2>Welcome back, {{.User.Username}}!</h2>
+            
+            <div class="action-cards">
+                <div class="card">
+                    <h3>🏈 Place Bets</h3>
+                    <p>Browse upcoming games and make your picks.</p>
+                    <a href="/games" class="btn btn-primary">View Games</a>
+                </div>
+                
+                <div class="card">
+                    <h3>📊 My Bets</h3>
+                    <p>Track your picks and see your performance.</p>
+                    <a href="/bets" class="btn btn-primary">View Bets</a>
+                </div>
+                
+                <div class="card">
+                    <h3>🏆 My Leagues</h3>
+                    <p>Join or create leagues to compete with friends.</p>
+                    <a href="/leagues" class="btn btn-primary">View Leagues</a>
+                </div>
+            </div>
+        </div>
+    {{else}}
+        <div class="cta-buttons">
+            <a href="/register" class="btn btn-primary btn-lg">Get Started</a>
+            <a href="/login" class="btn btn-secondary btn-lg">Sign In</a>
+        </div>
+        
+        <div class="features">
+            <div class="feature">
+                <h3>📊 Track Your Bets</h3>
+                <p>Log your picks and monitor your win rate over the season.</p>
+            </div>
+            
+            <div class="feature">
+                <h3>🏆 Compete in Leagues</h3>
+                <p>Create or join leagues with friends and see who has the best picks.</p>
+            </div>
+            
+            <div class="feature">
+                <h3>🎯 Paper Betting</h3>
+                <p>All the fun of tracking bets without real money on the line.</p>
+            </div>
+        </div>
+    {{end}}
+</div>
+{{end}}

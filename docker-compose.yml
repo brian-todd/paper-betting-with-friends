@@ -1,0 +1,62 @@
+services:
+  # PostgreSQL database
+  db:
+    image: postgres:16-alpine
+    container_name: betting_tracker_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: betting_tracker
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Application server (development with hot reload)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: betting_tracker_app
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/betting_tracker?sslmode=disable
+      SESSION_KEY: development-secret-key-32-bytes-ok
+      PORT: "8080"
+      ENV: development
+      APP_TIMEZONE: America/New_York
+      # The administrator is provisioned on boot. A development default is given
+      # here for the same reason SESSION_KEY has one: without it the server
+      # refuses to start rather than come up with no way in.
+      ADMIN_USERNAME: cfb-pbwf-admin
+      ADMIN_PASSWORD: development-admin-password
+    volumes:
+      - .:/app
+      - go_modules:/go/pkg/mod
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "go mod download && go tool air -c .air.toml"
+
+  # Migration runner
+  migrate:
+    image: migrate/migrate:v4.17.0
+    container_name: betting_tracker_migrate
+    volumes:
+      - ./migrations:/migrations
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["migrate", "-path", "/migrations", "-database", "postgres://postgres:postgres@db:5432/betting_tracker?sslmode=disable"]
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+  go_modules:

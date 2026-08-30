@@ -1,0 +1,44 @@
+{{define "content"}}
+<div class="admin-dashboard">
+    <h1>Admin Dashboard</h1>
+    <p class="admin-subtitle">Signed in as {{.User.Username}}. Every action on these pages is recorded in the audit log.</p>
+
+    <div class="admin-cards">
+        <a href="/admin/users" class="admin-card">
+            <div class="admin-card-icon">👥</div>
+            <h3>Users</h3>
+            <p>Reset passwords, rename accounts, remove users.</p>
+        </a>
+
+        <a href="/admin/leagues" class="admin-card">
+            <div class="admin-card-icon">🏆</div>
+            <h3>Leagues</h3>
+            <p>Create leagues, manage members and purse balances.</p>
+        </a>
+
+        <a href="/admin/bets" class="admin-card">
+            <div class="admin-card-icon">🎟️</div>
+            <h3>Bets</h3>
+            <p>Browse every bet and correct a settlement.</p>
+        </a>
+
+        <a href="/admin/games" class="admin-card">
+            <div class="admin-card-icon">🏟️</div>
+            <h3>Games</h3>
+            <p>Inspect odds and results, re-settle a game.</p>
+        </a>
+
+        <a href="/admin/sync" class="admin-card">
+            <div class="admin-card-icon">🔄</div>
+            <h3>Sync &amp; Health</h3>
+            <p>Job status, manual runs, row counts.</p>
+        </a>
+
+        <a href="/admin/audit" class="admin-card">
+            <div class="admin-card-icon">📜</div>
+            <h3>Audit Log</h3>
+            <p>What was changed here, by whom, and when.</p>
+        </a>
+    </div>
+</div>
+{{end}}

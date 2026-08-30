@@ -1,0 +1,33 @@
+{{define "content"}}
+<div class="auth-container">
+    <div class="auth-card">
+        <h1>Sign In</h1>
+        <p class="auth-subtitle">Welcome back! Enter your credentials to continue.</p>
+        
+        <div id="auth-error" role="alert" aria-live="polite">
+            {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+        </div>
+        
+        <form action="/login" method="POST" class="auth-form" hx-post="/login" hx-swap="innerHTML" hx-target="#auth-error">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autofocus placeholder="johndoe" autocomplete="username">
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required placeholder="••••••••">
+            </div>
+            
+            <button type="submit" class="btn btn-primary btn-block">
+                <span class="htmx-indicator">Signing in...</span>
+                <span class="btn-text">Sign In</span>
+            </button>
+        </form>
+        
+        <p class="auth-footer">
+            Don't have an account? <a href="/register">Create one</a>
+        </p>
+    </div>
+</div>
+{{end}}

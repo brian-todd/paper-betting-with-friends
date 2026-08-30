@@ -1,0 +1,106 @@
+{{define "content"}}
+{{$detail := .Detail}}
+<div class="admin-page">
+    <div class="admin-header">
+        <h1>{{$detail.Game.AwayTeam.Name}} @ {{$detail.Game.HomeTeam.Name}}</h1>
+        <a href="/admin/games" class="btn btn-secondary btn-sm">← Back to Games</a>
+    </div>
+
+    {{if .Success}}
+    <div class="alert alert-success">{{.Success}}</div>
+    {{end}}
+
+    <div class="card">
+        <dl class="health-list">
+            <dt>Kickoff</dt><dd>{{localTime $detail.Game.ScheduledAt "mediumdatetime"}}</dd>
+            <dt>Sport</dt><dd>{{$detail.Game.Sport}}</dd>
+            <dt>Season</dt><dd>{{$detail.Game.Season}} {{$detail.Game.SeasonType}}</dd>
+            <dt>Status</dt><dd>{{$detail.Game.Status}}</dd>
+            <dt>Completed flag</dt><dd>{{$detail.Game.Completed}}</dd>
+        </dl>
+    </div>
+
+    <h2 class="section-title">Result</h2>
+
+    {{if $detail.Result}}
+    <div class="card">
+        <p class="score-line">
+            {{$detail.Game.AwayTeam.Abbreviation}} {{$detail.Result.AwayScore}}
+            &ndash;
+            {{$detail.Result.HomeScore}} {{$detail.Game.HomeTeam.Abbreviation}}
+        </p>
+
+        {{if $detail.ResultFinal}}
+        <p><span class="badge badge-won">final</span> settled at {{localTime $detail.FinalizedAt "mediumdatetime"}}</p>
+        {{else}}
+        <p>
+            <span class="badge badge-warning">provisional</span>
+            The provider has recorded a score but has not called the game complete. Bets
+            do not settle against a provisional score.
+        </p>
+        {{end}}
+
+        <div class="action-forms">
+            <form action="/admin/games/{{$detail.Game.ID}}/evaluate" method="POST" class="inline-form">
+                <button type="submit" class="btn btn-sm btn-primary">Re-evaluate Bets</button>
+            </form>
+
+            {{if not $detail.ResultFinal}}
+            <form action="/admin/games/{{$detail.Game.ID}}/finalize" method="POST" class="inline-form danger-form">
+                <button type="submit" class="btn btn-sm btn-danger">Mark Final &amp; Settle</button>
+            </form>
+            {{end}}
+        </div>
+
+        <p class="text-muted admin-footnote">
+            Marking a score final settles every pending bet on this game and pays out real
+            balances. Use it only when the provider has stopped updating a game that is
+            actually over.
+        </p>
+    </div>
+    {{else}}
+    <div class="card text-center">
+        <p class="text-muted">No score reported yet. There is nothing to settle against.</p>
+    </div>
+    {{end}}
+
+    <h2 class="section-title">Lines</h2>
+
+    <div class="admin-table-container">
+        <table class="admin-table">
+            <thead>
+                <tr><th>Type</th><th>Source</th><th>Line</th></tr>
+            </thead>
+            <tbody>
+                {{range $detail.SpreadOdds}}
+                <tr>
+                    <td>Spread</td>
+                    <td>{{.Source}}</td>
+                    <td>
+                        {{$detail.Game.HomeTeam.Abbreviation}} {{.HomeSpread}} ({{.HomeOdds}})
+                        / {{$detail.Game.AwayTeam.Abbreviation}} {{.AwaySpread}} ({{.AwayOdds}})
+                    </td>
+                </tr>
+                {{end}}
+                {{range $detail.MoneyLineOdds}}
+                <tr>
+                    <td>Money line</td>
+                    <td>{{.Source}}</td>
+                    <td>
+                        {{$detail.Game.HomeTeam.Abbreviation}} {{.HomeOdds}}
+                        / {{$detail.Game.AwayTeam.Abbreviation}} {{.AwayOdds}}
+                    </td>
+                </tr>
+                {{end}}
+                {{range $detail.OverUnderOdds}}
+                <tr>
+                    <td>Total</td>
+                    <td>{{.Source}}</td>
+                    <td>{{.Total}} (O {{.OverOdds}} / U {{.UnderOdds}})</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}

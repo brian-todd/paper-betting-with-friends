@@ -1,0 +1,92 @@
+{{define "content"}}
+<div class="admin-page">
+    <div class="admin-header">
+        <h1>Manage Bets</h1>
+        <a href="/admin" class="btn btn-secondary btn-sm">← Back to Admin</a>
+    </div>
+
+    {{if .Error}}
+    <div class="alert alert-error">{{.Error}}</div>
+    {{end}}
+
+    {{if .Success}}
+    <div class="alert alert-success">{{.Success}}</div>
+    {{end}}
+
+    <form action="/admin/bets" method="GET" class="filter-form">
+        <select name="league_id">
+            <option value="">All leagues</option>
+            {{range .Leagues}}
+            <option value="{{.ID}}" {{if eq $.SelectedLeague (printf "%s" .ID)}}selected{{end}}>{{.Name}}</option>
+            {{end}}
+        </select>
+        <select name="user_id">
+            <option value="">All users</option>
+            {{range .Users}}
+            <option value="{{.ID}}" {{if eq $.SelectedUser (printf "%s" .ID)}}selected{{end}}>{{.Username}}</option>
+            {{end}}
+        </select>
+        <select name="status">
+            <option value="">All statuses</option>
+            {{range .Statuses}}
+            <option value="{{.}}" {{if eq $.SelectedStatus (printf "%s" .)}}selected{{end}}>{{.}}</option>
+            {{end}}
+        </select>
+        <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+        <a href="/admin/bets" class="btn btn-sm btn-secondary">Reset</a>
+    </form>
+
+    <div class="admin-table-container">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Kickoff</th>
+                    <th>Game</th>
+                    <th>User</th>
+                    <th>League</th>
+                    <th>Pick</th>
+                    <th>Stake</th>
+                    <th>Status</th>
+                    <th>Set Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Bets}}
+                <tr>
+                    <td class="text-muted">{{localTime .Game.ScheduledAt "shortdatetime"}}</td>
+                    <td>
+                        <a href="/admin/games/{{.Game.ID}}">{{.Game.AwayTeam.Abbreviation}} @ {{.Game.HomeTeam.Abbreviation}}</a>
+                    </td>
+                    <td>{{.User.Username}}</td>
+                    <td>{{.League.Name}}</td>
+                    <td>{{.Pick}} <span class="text-muted">{{.Line}}</span></td>
+                    <td>{{.Stake.StringFixed 2}}</td>
+                    <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+                    <td>
+                        <form action="/admin/bets/{{.Type}}/{{.ID}}/status" method="POST" class="inline-form">
+                            <select name="status" required>
+                                {{range $.SettleableStatus}}
+                                <option value="{{.}}">{{.}}</option>
+                                {{end}}
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-danger">Apply</button>
+                        </form>
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="8" class="text-center text-muted">No bets match these filters.</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    <p class="text-muted admin-footnote">
+        Changing a status moves the purse by the difference between what the old status
+        had returned and what the new one returns, so a correction is safe to repeat and
+        safe to undo. A correction always lands, which means it can push a balance
+        negative if the money has since been spent.
+    </p>
+</div>
+{{end}}

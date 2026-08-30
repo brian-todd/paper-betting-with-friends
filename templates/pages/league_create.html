@@ -1,0 +1,43 @@
+{{define "content"}}
+<div class="create-league-page">
+    <div class="page-header">
+        <h1>Create a League</h1>
+        <a href="/leagues" class="btn btn-secondary btn-sm">← Back to Leagues</a>
+    </div>
+
+    {{if .Error}}
+    <div class="alert alert-error">{{.Error}}</div>
+    {{end}}
+
+    <div class="card create-card">
+        <form action="/leagues" method="POST" class="create-form">
+            <div class="form-group">
+                <label for="name">League Name</label>
+                <input type="text" id="name" name="name" placeholder="Enter a name for your league" required autofocus>
+            </div>
+
+            <div class="form-group">
+                <label for="starting_balance">Starting Balance</label>
+                <input type="number" id="starting_balance" name="starting_balance" value="1000" min="1" step="1" class="form-input">
+                <small class="form-hint">The amount each member starts with when joining this league.</small>
+            </div>
+
+            <div class="form-group checkbox-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" name="is_public" checked>
+                    <span class="checkbox-text">
+                        <strong>Public League</strong>
+                        <small>Anyone can find and join this league</small>
+                    </span>
+                </label>
+            </div>
+
+            <div class="form-hint">
+                <p>Private leagues require an invite code to join. You'll be able to share the code with friends after creating the league.</p>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">Create League</button>
+        </form>
+    </div>
+</div>
+{{end}}

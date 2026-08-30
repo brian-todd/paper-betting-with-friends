@@ -1,0 +1,40 @@
+# The build context is uploaded to the Docker daemon -- or, on a hosted
+# platform, over the network -- on every build. `tmp/` alone is ~25MB of Air's
+# rebuild artefacts, and none of what follows is an input to `go build`.
+#
+# The runtime stage copies only the compiled binary, so nothing here was ever
+# going to reach the shipped image. Keeping `.env` out of the builder stage is
+# still worth doing: intermediate layers are cached, and on a shared or remote
+# builder that cache is not somewhere to leave real credentials.
+
+# Local secrets
+.env
+.env.local
+.env.*.local
+
+# Build artefacts and version control
+.git
+.gitignore
+tmp/
+bin/
+dist/
+build/
+*.log
+
+# Editor and tool state
+.claude/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# CI and local orchestration -- not used inside the image
+.github/
+.air.toml
+docker-compose.yml
+Dockerfile
+Dockerfile.dev
+
+# Docs
+*.md
+LICENSE

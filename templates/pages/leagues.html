@@ -1,0 +1,91 @@
+{{define "content"}}
+<div class="leagues-page">
+    <div class="page-header">
+        <h1>My Leagues</h1>
+        <a href="/leagues/create" class="btn btn-primary">Create League</a>
+    </div>
+
+    {{if .Error}}
+    <div class="alert alert-error">
+        {{if eq .Error "not_found"}}League not found.{{end}}
+        {{if eq .Error "already_member"}}You're already a member of this league.{{end}}
+        {{if eq .Error "not_public"}}This league is invite-only.{{end}}
+        {{if eq .Error "invalid_code"}}Invalid invite code.{{end}}
+        {{if eq .Error "code_required"}}Please enter an invite code.{{end}}
+        {{if eq .Error "error"}}An error occurred. Please try again.{{end}}
+    </div>
+    {{end}}
+
+    {{if .Success}}
+    <div class="alert alert-success">
+        {{if eq .Success "left"}}You have left the league.{{end}}
+        {{if eq .Success "joined"}}Successfully joined the league!{{end}}
+        {{if eq .Success "deleted"}}League deleted successfully.{{end}}
+    </div>
+    {{end}}
+
+    <section class="leagues-section">
+        <h2 class="section-title">Your Leagues</h2>
+        {{if .MyLeagues}}
+        <div class="leagues-grid">
+            {{range .MyLeagues}}
+            <a href="/leagues/{{.ID}}" class="league-card-link">
+                <div class="league-card">
+                    <h3>{{.Name}}</h3>
+                    <div class="league-meta">
+                        <span class="badge {{if .IsPublic}}badge-public{{else}}badge-private{{end}}">
+                            {{if .IsPublic}}Public{{else}}Private{{end}}
+                        </span>
+                        <span class="member-count">{{len .Members}} members</span>
+                    </div>
+                    <p class="text-muted">Created by {{.Creator.Username}}</p>
+                </div>
+            </a>
+            {{end}}
+        </div>
+        {{else}}
+        <div class="card text-center">
+            <p class="text-muted">You haven't joined any leagues yet.</p>
+            <p class="text-muted">Create your own or browse public leagues below!</p>
+        </div>
+        {{end}}
+    </section>
+
+    <section class="leagues-section">
+        <h2 class="section-title">Join by Invite Code</h2>
+        <div class="card join-code-card">
+            <form action="/leagues/join" method="POST" class="join-code-form">
+                <div class="form-group">
+                    <label for="code">Invite Code</label>
+                    <input type="text" id="code" name="code" placeholder="Enter 8-character code" maxlength="16" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Join League</button>
+            </form>
+        </div>
+    </section>
+
+    <section class="leagues-section">
+        <h2 class="section-title">Browse Public Leagues</h2>
+        {{if .AvailableLeagues}}
+        <div class="leagues-grid">
+            {{range .AvailableLeagues}}
+            <div class="league-card">
+                <h3>{{.Name}}</h3>
+                <div class="league-meta">
+                    <span class="member-count">{{len .Members}} members</span>
+                </div>
+                <p class="text-muted">Created by {{.Creator.Username}}</p>
+                <form action="/leagues/{{.ID}}/join" method="POST" class="join-form">
+                    <button type="submit" class="btn btn-primary btn-sm">Join League</button>
+                </form>
+            </div>
+            {{end}}
+        </div>
+        {{else}}
+        <div class="card text-center">
+            <p class="text-muted">No public leagues available to join.</p>
+        </div>
+        {{end}}
+    </section>
+</div>
+{{end}}

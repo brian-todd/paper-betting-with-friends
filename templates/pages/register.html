@@ -1,0 +1,58 @@
+{{define "content"}}
+<div class="auth-container">
+    <div class="auth-card">
+        <h1>Create Account</h1>
+        <p class="auth-subtitle">Join the competition and start tracking your picks.</p>
+        
+        <div id="auth-error" role="alert" aria-live="polite">
+            {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+        </div>
+        
+        <form action="/register" method="POST" class="auth-form" hx-post="/register" hx-swap="innerHTML" hx-target="#auth-error">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autofocus placeholder="johndoe" maxlength="50" autocomplete="username">
+                <small class="form-hint">3-50 characters, letters and numbers only</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required minlength="8" placeholder="••••••••">
+                <small class="form-hint">At least 8 characters</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="confirm_password">Confirm Password</label>
+                <input type="password" id="confirm_password" name="confirm_password" required minlength="8" placeholder="••••••••">
+            </div>
+            
+            <button type="submit" class="btn btn-primary btn-block">
+                <span class="htmx-indicator">Creating account...</span>
+                <span class="btn-text">Create Account</span>
+            </button>
+        </form>
+        
+        <p class="auth-footer">
+            Already have an account? <a href="/login">Sign in</a>
+        </p>
+    </div>
+</div>
+
+<script>
+    // Catch a password mismatch before it costs a round trip. The server still
+    // validates independently -- this is only a faster path to the same answer.
+    (function () {
+        const password = document.getElementById('password');
+        const confirmPassword = document.getElementById('confirm_password');
+        if (!password || !confirmPassword) return;
+
+        function validateMatch() {
+            const mismatched = confirmPassword.value !== '' && confirmPassword.value !== password.value;
+            confirmPassword.setCustomValidity(mismatched ? 'Passwords do not match' : '');
+        }
+
+        password.addEventListener('input', validateMatch);
+        confirmPassword.addEventListener('input', validateMatch);
+    })();
+</script>
+{{end}}

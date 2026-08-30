@@ -1,0 +1,326 @@
+{{define "content"}}
+<div class="bets-page">
+    <div class="page-header">
+        <div class="header-left">
+            <h1>My Bets</h1>
+        </div>
+        <div class="header-controls">
+            <form id="filter-form" class="filter-form" method="GET" action="/bets">
+                {{if .Seasons}}
+                <select name="season" class="select-input" onchange="updateFilters()">
+                    <option value="">All Seasons</option>
+                    {{range .Seasons}}
+                    <option value="{{.}}" {{if and $.SelectedSeason (eq . (deref $.SelectedSeason))}}selected{{end}}>{{.}} Season</option>
+                    {{end}}
+                </select>
+                {{end}}
+
+                {{if .Weeks}}
+                <select name="week" class="select-input" onchange="this.form.submit()">
+                    <option value="">All Weeks</option>
+                    {{range .Weeks}}
+                    <option value="{{.}}" {{if and $.SelectedWeek (eq . (deref $.SelectedWeek))}}selected{{end}}>Week {{.}}</option>
+                    {{end}}
+                </select>
+                {{end}}
+
+                {{if .Leagues}}
+                <select name="league" class="select-input" onchange="this.form.submit()">
+                    <option value="">All Leagues</option>
+                    {{range .Leagues}}
+                    <option value="{{.ID}}" {{if and $.SelectedLeague (eq .ID.String (uuidToString $.SelectedLeague))}}selected{{end}}>{{.Name}}</option>
+                    {{end}}
+                </select>
+                {{end}}
+            </form>
+        </div>
+    </div>
+
+    {{if .Bets}}
+    <div class="bets-table-container">
+        <table class="bets-table">
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>Week</th>
+                    <th>Bet Date</th>
+                    <th>Game Date</th>
+                    <th>Matchup</th>
+                    <th>Type</th>
+                    <th>Pick</th>
+                    <th>Line</th>
+                    <th>Stake</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range $index, $bet := .Bets}}
+                <tr class="bet-row" data-index="{{$index}}">
+                    <td class="expand-cell">
+                        <button type="button" class="expand-btn" onclick="toggleDetails(this.closest('tr').dataset.index)">
+                            <span class="expand-icon">▶</span>
+                        </button>
+                    </td>
+                    <td>{{$bet.Game.Week.Number}}</td>
+                    <td class="text-muted">{{localTime $bet.CreatedAt "date"}}</td>
+                    <td class="text-muted">{{localTime $bet.Game.ScheduledAt "date"}}</td>
+                    <td class="matchup-cell">
+                        <div class="matchup-mini">
+                            {{if $bet.Game.AwayTeam.LogoURL}}<img src="{{$bet.Game.AwayTeam.LogoURL}}" class="team-logo-mini" alt="">{{end}}
+                            <span>{{$bet.Game.AwayTeam.Abbreviation}}</span>
+                            <span class="at-symbol">@</span>
+                            {{if $bet.Game.HomeTeam.LogoURL}}<img src="{{$bet.Game.HomeTeam.LogoURL}}" class="team-logo-mini" alt="">{{end}}
+                            <span>{{$bet.Game.HomeTeam.Abbreviation}}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="badge badge-type-{{$bet.Type}}">
+                            {{if eq $bet.Type "spread"}}Spread{{end}}
+                            {{if eq $bet.Type "moneyline"}}ML{{end}}
+                            {{if eq $bet.Type "overunder"}}O/U{{end}}
+                        </span>
+                    </td>
+                    <td class="pick-cell"><strong>{{$bet.Pick}}</strong></td>
+                    <td class="line-cell">{{$bet.Line}}</td>
+                    <td class="stake-cell">{{$bet.Stake}}</td>
+                    <td>
+                        <span class="badge badge-status-{{$bet.Status}}">
+                            {{if eq $bet.Status "pending"}}Pending{{end}}
+                            {{if eq $bet.Status "won"}}Won{{end}}
+                            {{if eq $bet.Status "lost"}}Lost{{end}}
+                            {{if eq $bet.Status "push"}}Push{{end}}
+                            {{if eq $bet.Status "void"}}Void{{end}}
+                        </span>
+                    </td>
+                </tr>
+                <tr class="bet-details-row" id="details-{{$index}}" style="display: none;">
+                    <td colspan="10">
+                        <div class="bet-details">
+                            <div class="details-grid">
+                                <div class="detail-section">
+                                    <h4>Game Details</h4>
+                                    <dl class="detail-list">
+                                        <dt>Home Team</dt>
+                                        <dd>{{$bet.Game.HomeTeam.Name}}</dd>
+                                        <dt>Away Team</dt>
+                                        <dd>{{$bet.Game.AwayTeam.Name}}</dd>
+                                        <dt>Venue</dt>
+                                        <dd>{{$bet.Game.Venue.Name}}</dd>
+                                        <dt>Game Status</dt>
+                                        <dd>
+                                            <span class="badge badge-game-{{$bet.Game.Status}}">
+                                                {{if eq $bet.Game.Status "scheduled"}}Scheduled{{end}}
+                                                {{if eq $bet.Game.Status "in_progress"}}Live{{end}}
+                                                {{if eq $bet.Game.Status "final"}}Final{{end}}
+                                                {{if eq $bet.Game.Status "postponed"}}Postponed{{end}}
+                                                {{if eq $bet.Game.Status "cancelled"}}Cancelled{{end}}
+                                            </span>
+                                        </dd>
+                                        {{if $bet.Game.Result}}
+                                        <dt>{{if $bet.Game.Result.IsFinal}}Final Score{{else}}Current Score{{end}}</dt>
+                                        <dd class="final-score">
+                                            {{$bet.Game.AwayTeam.Abbreviation}} {{$bet.Game.Result.AwayScore}} - {{$bet.Game.Result.HomeScore}} {{$bet.Game.HomeTeam.Abbreviation}}
+                                        </dd>
+                                        {{end}}
+                                    </dl>
+                                </div>
+                                <div class="detail-section">
+                                    <h4>Bet Details</h4>
+                                    <dl class="detail-list">
+                                        <dt>Bet Type</dt>
+                                        <dd>
+                                            {{if eq $bet.Type "spread"}}Point Spread{{end}}
+                                            {{if eq $bet.Type "moneyline"}}Moneyline{{end}}
+                                            {{if eq $bet.Type "overunder"}}Over/Under{{end}}
+                                        </dd>
+                                        <dt>League</dt>
+                                        <dd>{{$bet.League.Name}}</dd>
+                                        <dt>Odds at Bet</dt>
+                                        <dd class="odds-value">{{if $bet.OddsSnapshot.IsPositive}}+{{end}}{{$bet.OddsSnapshot.StringFixed 0}}</dd>
+                                        <dt>Placed</dt>
+                                        <dd>{{localTime $bet.CreatedAt "mediumdatetime"}}</dd>
+                                    </dl>
+                                </div>
+                            </div>
+                            <div class="details-actions">
+                                <a href="/games/{{$bet.Game.ID}}" class="btn btn-secondary btn-sm">View Game</a>
+                                {{/* Editable comes from the service and matches the gate it
+                                     enforces, so the page never offers an edit the server
+                                     will refuse. */}}
+                                {{if $bet.Editable}}
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEdit('{{$index}}')">Edit Bet</button>
+                                <form action="/bets/{{$bet.Type}}/{{$bet.ID}}/cancel" method="POST" class="inline">
+                                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Cancel this bet?')">Cancel Bet</button>
+                                </form>
+                                {{end}}
+                            </div>
+
+                            {{if $bet.Editable}}
+                            <form id="edit-{{$index}}" class="bet-edit-form" data-index="{{$index}}"
+                                  action="/bets/{{$bet.Type}}/{{$bet.ID}}/edit" method="POST" hidden>
+                                <h4>Edit Bet</h4>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="edit-stake-{{$index}}">Stake</label>
+                                        <input type="number" class="form-input" id="edit-stake-{{$index}}" name="stake"
+                                               value="{{$bet.Stake}}" min="0.01" step="0.01" required>
+                                        <small class="form-hint">Only the difference moves in or out of your purse.</small>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="edit-pick-{{$index}}">Pick</label>
+                                        <select class="form-select" id="edit-pick-{{$index}}" name="pick">
+                                            {{if eq $bet.Type "overunder"}}
+                                            <option value="over" {{if eq $bet.PickSide "over"}}selected{{end}}>Over</option>
+                                            <option value="under" {{if eq $bet.PickSide "under"}}selected{{end}}>Under</option>
+                                            {{else}}
+                                            <option value="home" {{if eq $bet.PickSide "home"}}selected{{end}}>{{$bet.Game.HomeTeam.Abbreviation}} (home)</option>
+                                            <option value="away" {{if eq $bet.PickSide "away"}}selected{{end}}>{{$bet.Game.AwayTeam.Abbreviation}} (away)</option>
+                                            {{end}}
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="edit-odds-{{$index}}">Line</label>
+                                        <select class="form-select" id="edit-odds-{{$index}}" name="odds_id" onchange="syncCustomLine('{{$index}}')">
+                                            {{range $bet.LineOptions}}
+                                            <option value="{{.OddsID}}" {{if eq .OddsID.String $bet.OddsID.String}}selected{{end}}>{{.Label}}</option>
+                                            {{end}}
+                                            <option value="">Custom line...</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {{/* An empty odds_id is what tells the handler to build a
+                                     custom line, so these inputs are only sent -- and only
+                                     required -- when "Custom line" is selected. */}}
+                                <div class="custom-line-fields form-row" hidden>
+                                    {{if eq $bet.Type "spread"}}
+                                    <div class="form-group">
+                                        <label for="edit-custom-spread-{{$index}}">Spread</label>
+                                        <input type="number" class="form-input" id="edit-custom-spread-{{$index}}"
+                                               name="custom_spread" step="0.5" placeholder="-7.5">
+                                        <small class="form-hint">Relative to the team you picked.</small>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="edit-custom-odds-{{$index}}">Odds</label>
+                                        <input type="number" class="form-input" id="edit-custom-odds-{{$index}}"
+                                               name="custom_odds" step="1" value="{{$bet.OddsSnapshot.StringFixed 0}}">
+                                    </div>
+                                    {{end}}
+                                    {{if eq $bet.Type "moneyline"}}
+                                    <div class="form-group">
+                                        <label for="edit-custom-home-odds-{{$index}}">{{$bet.Game.HomeTeam.Abbreviation}} odds</label>
+                                        <input type="number" class="form-input" id="edit-custom-home-odds-{{$index}}"
+                                               name="custom_home_odds" step="1" placeholder="-150">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="edit-custom-away-odds-{{$index}}">{{$bet.Game.AwayTeam.Abbreviation}} odds</label>
+                                        <input type="number" class="form-input" id="edit-custom-away-odds-{{$index}}"
+                                               name="custom_away_odds" step="1" placeholder="+130">
+                                    </div>
+                                    {{end}}
+                                    {{if eq $bet.Type "overunder"}}
+                                    <div class="form-group">
+                                        <label for="edit-custom-total-{{$index}}">Total</label>
+                                        <input type="number" class="form-input" id="edit-custom-total-{{$index}}"
+                                               name="custom_total" step="0.5" placeholder="54.5">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="edit-custom-over-odds-{{$index}}">Over odds</label>
+                                        <input type="number" class="form-input" id="edit-custom-over-odds-{{$index}}"
+                                               name="custom_over_odds" step="1" placeholder="-110">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="edit-custom-under-odds-{{$index}}">Under odds</label>
+                                        <input type="number" class="form-input" id="edit-custom-under-odds-{{$index}}"
+                                               name="custom_under_odds" step="1" placeholder="-110">
+                                    </div>
+                                    {{end}}
+                                </div>
+
+                                <div class="details-actions">
+                                    <button type="submit" class="btn btn-primary btn-sm">Save Changes</button>
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEdit('{{$index}}')">Discard</button>
+                                </div>
+                            </form>
+                            {{end}}
+                        </div>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{else}}
+    <div class="empty-state">
+        <div class="empty-icon">🎰</div>
+        <h2>No Bets Found</h2>
+        {{if or .SelectedSeason .SelectedWeek .SelectedLeague}}
+        <p>No bets match your current filters. Try adjusting the filters or <a href="/bets">view all bets</a>.</p>
+        {{else}}
+        <p>You haven't placed any bets yet. Browse games to get started!</p>
+        <a href="/games" class="btn btn-primary" style="margin-top: 1rem;">Browse Games</a>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+
+<script>
+function toggleDetails(index) {
+    const detailsRow = document.getElementById('details-' + index);
+    const betRow = document.querySelector('.bet-row[data-index="' + index + '"]');
+    const icon = betRow.querySelector('.expand-icon');
+    
+    if (detailsRow.style.display === 'none') {
+        detailsRow.style.display = 'table-row';
+        icon.textContent = '▼';
+        betRow.classList.add('expanded');
+    } else {
+        detailsRow.style.display = 'none';
+        icon.textContent = '▶';
+        betRow.classList.remove('expanded');
+    }
+}
+
+function toggleEdit(index) {
+    const form = document.getElementById('edit-' + index);
+    if (!form) return;
+    form.hidden = !form.hidden;
+}
+
+// Reveal the custom-line inputs only when "Custom line" is selected, and make
+// them required only then -- a hidden required input silently blocks submission
+// with a validation message the reader cannot see.
+function syncCustomLine(index) {
+    const form = document.getElementById('edit-' + index);
+    if (!form) return;
+
+    const select = form.querySelector('select[name="odds_id"]');
+    const custom = form.querySelector('.custom-line-fields');
+    if (!select || !custom) return;
+
+    const isCustom = select.value === '';
+    custom.hidden = !isCustom;
+    custom.querySelectorAll('input').forEach(function (input) {
+        input.required = isCustom;
+    });
+}
+
+function updateFilters() {
+    // When season changes, clear week filter and submit.
+    const form = document.getElementById('filter-form');
+    const weekSelect = form.querySelector('select[name="week"]');
+    if (weekSelect) {
+        weekSelect.value = '';
+    }
+    form.submit();
+}
+
+// A game with no book lines leaves "Custom line" as the only choice, so the
+// initial state has to be settled here rather than waiting for a change event.
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.bet-edit-form').forEach(function (form) {
+        syncCustomLine(form.dataset.index);
+    });
+});
+</script>
+{{end}}

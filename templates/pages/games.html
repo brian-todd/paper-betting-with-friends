@@ -1,0 +1,380 @@
+{{define "content"}}
+<div class="games-page">
+    <div class="page-header">
+        <div class="header-left">
+            <h1>🏈 {{if .Week}}Week {{.WeekNumber}}{{else}}Games{{end}}</h1>
+            {{if .Week}}
+            <p class="week-dates">
+                {{localTime .Week.StartDate "date"}} - {{localTime .Week.EndDate "mediumdate"}}
+            </p>
+            {{end}}
+        </div>
+        <div class="header-controls">
+            {{if .Seasons}}
+            <div class="week-navigation">
+                <select class="select-input" id="season-select" onchange="navigateToSeason(this.value)">
+                    {{range .Seasons}}
+                    <option value="{{.}}" {{if eq . $.Season}}selected{{end}}>{{.}} Season</option>
+                    {{end}}
+                </select>
+                {{if .SeasonTypes}}
+                <div class="season-type-tabs">
+                    {{range .SeasonTypes}}
+                    <button class="season-type-tab {{if eq . $.SeasonType}}active{{end}}" 
+                            onclick="navigateToSeasonType('{{.}}')">
+                        {{if eq . "regular"}}Regular{{else}}Postseason{{end}}
+                    </button>
+                    {{end}}
+                </div>
+                {{end}}
+                {{if .SeasonWeeks}}
+                <select class="select-input" id="week-select" onchange="navigateToWeek(this.value)">
+                    {{range .SeasonWeeks}}
+                    <option value="{{.Number}}" {{if eq .Number $.WeekNumber}}selected{{end}}>Week {{.Number}}</option>
+                    {{end}}
+                </select>
+                {{end}}
+            </div>
+            {{end}}
+        </div>
+    </div>
+
+    {{if .Week}}
+    <!-- Filters. Everything here is a plain GET form: the server does the
+         narrowing, so what the page ships is what the filter matched. The
+         hidden "applied" field is what tells the handler an empty form is a
+         deliberate "show everything" rather than an untouched default. -->
+    <form class="games-filters" method="GET" action="{{.WeekPath}}">
+        <input type="hidden" name="applied" value="1">
+
+        <div class="filters-row">
+            <div class="filter-group">
+                <label class="filter-label" for="team-filter">Team</label>
+                <input type="search" class="filter-input team-input" id="team-filter" name="team"
+                       value="{{.Filter.Team}}" placeholder="Name or abbreviation">
+            </div>
+            <div class="filter-group">
+                <label class="filter-label" for="status-filter">Status</label>
+                <select class="select-input" id="status-filter" name="status">
+                    {{range .StatusOptions}}
+                    <option value="{{.Value}}" {{if eq .Value $.Filter.Status}}selected{{end}}>{{.Label}}</option>
+                    {{end}}
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Division</label>
+                <div class="checkbox-row">
+                    {{range .TierOptions}}
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="tier" value="{{.Code}}"
+                               {{if index $.SelectedTiers .Code}}checked{{end}}>
+                        <span>{{.Label}}</span>
+                    </label>
+                    {{end}}
+                </div>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Lines</label>
+                <div class="checkbox-row">
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="bettable" value="1" {{if .Filter.Bettable}}checked{{end}}>
+                        <span>Bettable only</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="filters-row">
+            <div class="filter-group">
+                <label class="filter-label">Kickoff day</label>
+                <div class="checkbox-row">
+                    {{range .WeekdayOptions}}
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="day" value="{{.Value}}"
+                               {{if index $.SelectedWeekdays .Value}}checked{{end}}>
+                        <span>{{.Label}}</span>
+                    </label>
+                    {{end}}
+                </div>
+            </div>
+            <div class="filter-group range-filter">
+                <!-- These are wall-clock hours in the app timezone, resolved on
+                     the server, so a shared link means the same games for
+                     everyone. Kickoff times on the cards stay per-reader. -->
+                <label class="filter-label">Kickoff window ({{.Zone}})</label>
+                <div class="range-inputs">
+                    <select class="select-input" name="from" aria-label="Earliest kickoff">
+                        <option value="">Any</option>
+                        {{range .HourOptions}}
+                        <option value="{{.Value}}" {{if eq .Value $.Filter.FromValue}}selected{{end}}>{{.Label}}</option>
+                        {{end}}
+                    </select>
+                    <span class="range-separator">to</span>
+                    <select class="select-input" name="to" aria-label="Latest kickoff">
+                        <option value="">Any</option>
+                        {{range .HourOptions}}
+                        <option value="{{.Value}}" {{if eq .Value $.Filter.ToValue}}selected{{end}}>{{.Label}}</option>
+                        {{end}}
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="filters-row odds-filters">
+            <div class="filter-group range-filter">
+                <label class="filter-label">Spread</label>
+                <div class="range-inputs">
+                    <input type="number" class="filter-input" name="spread_min" value="{{.Filter.SpreadMinValue}}"
+                           placeholder="0" step="0.5" min="0" aria-label="Minimum spread">
+                    <span class="range-separator">to</span>
+                    <input type="number" class="filter-input" name="spread_max" value="{{.Filter.SpreadMaxValue}}"
+                           placeholder="∞" step="0.5" min="0" aria-label="Maximum spread">
+                </div>
+            </div>
+            <div class="filter-group range-filter">
+                <label class="filter-label">Total (O/U)</label>
+                <div class="range-inputs">
+                    <input type="number" class="filter-input" name="total_min" value="{{.Filter.TotalMinValue}}"
+                           placeholder="Min" step="0.5" aria-label="Minimum total">
+                    <span class="range-separator">to</span>
+                    <input type="number" class="filter-input" name="total_max" value="{{.Filter.TotalMaxValue}}"
+                           placeholder="Max" step="0.5" aria-label="Maximum total">
+                </div>
+            </div>
+            <div class="filter-group range-filter">
+                <label class="filter-label">Money Line</label>
+                <div class="range-inputs">
+                    <input type="number" class="filter-input" name="ml_min" value="{{.Filter.MoneyLineMinValue}}"
+                           placeholder="Min" aria-label="Minimum money line">
+                    <span class="range-separator">to</span>
+                    <input type="number" class="filter-input" name="ml_max" value="{{.Filter.MoneyLineMaxValue}}"
+                           placeholder="Max" aria-label="Maximum money line">
+                </div>
+            </div>
+        </div>
+
+        {{if .ConferenceGroups}}
+        <details class="conference-filter"{{if .Filter.Conferences}} open{{end}}>
+            <summary>
+                Conferences
+                {{if .Filter.Conferences}}<span class="filter-badge">{{len .Filter.Conferences}} selected</span>{{end}}
+            </summary>
+            <div class="conference-groups">
+                {{range .ConferenceGroups}}
+                <fieldset class="conference-group">
+                    <legend>{{.Label}}</legend>
+                    <div class="checkbox-row">
+                        {{range .Conferences}}
+                        <label class="checkbox-chip">
+                            <input type="checkbox" name="conf" value="{{.Conference}}"
+                                   {{if index $.SelectedConferences .Conference}}checked{{end}}>
+                            <span>{{.Conference}} <span class="conf-count">{{.Games}}</span></span>
+                        </label>
+                        {{end}}
+                    </div>
+                </fieldset>
+                {{end}}
+            </div>
+        </details>
+        {{end}}
+
+        <div class="filter-actions">
+            <button type="submit" class="btn btn-primary btn-sm">Apply filters</button>
+            {{if .FilterActive}}<a href="{{.ClearURL}}" class="btn btn-secondary btn-sm">Clear</a>{{end}}
+            <span class="filter-results">
+                {{if .Page.Total}}
+                Showing {{.Page.First}}-{{.Page.Last}} of {{.Page.Total}}
+                {{else}}
+                No matching games
+                {{end}}
+                {{if ne .Page.Total .TotalInWeek}}<span class="text-muted">({{.TotalInWeek}} in week)</span>{{end}}
+                {{if .Filter.Defaulted}}<span class="filter-note">Showing bettable FBS games by default</span>{{end}}
+            </span>
+        </div>
+    </form>
+    {{end}}
+
+    {{if .Games}}
+    <div class="games-grid">
+        {{range .Games}}
+        <a href="/games/{{.Game.ID}}" class="game-card-link">
+            <div class="game-card">
+                <div class="game-status {{.Game.Status}}">
+                    {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
+                    {{if eq .Game.Status "in_progress"}}Live{{end}}
+                    {{if eq .Game.Status "final"}}Final{{end}}
+                    {{if eq .Game.Status "postponed"}}Postponed{{end}}
+                    {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
+                </div>
+                <div class="game-matchup">
+                    <div class="team away-team">
+                        <div class="team-identity">
+                            {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
+                            <div class="team-text">
+                                <span class="team-abbr">{{.Game.AwayTeam.Abbreviation}}</span>
+                                <span class="team-name">{{.Game.AwayTeam.Name}}</span>
+                            </div>
+                        </div>
+                        {{if .Result}}<span class="team-score{{if not .Result.IsFinal}} live{{end}}">{{.Result.AwayScore}}</span>{{end}}
+                    </div>
+                    <div class="game-at">@</div>
+                    <div class="team home-team">
+                        <div class="team-identity">
+                            {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
+                            <div class="team-text">
+                                <span class="team-abbr">{{.Game.HomeTeam.Abbreviation}}</span>
+                                <span class="team-name">{{.Game.HomeTeam.Name}}</span>
+                            </div>
+                        </div>
+                        {{if .Result}}<span class="team-score{{if not .Result.IsFinal}} live{{end}}">{{.Result.HomeScore}}</span>{{end}}
+                    </div>
+                </div>
+                
+                {{if or .Spread .OverUnder .MoneyLine}}
+                <!-- Books stop moving a line once the game kicks off, so what is
+                     stored for a started game is where it closed. Say so rather
+                     than implying these are still bettable. -->
+                {{if ne .Game.Status "scheduled"}}<div class="odds-table-label">Closing lines</div>{{end}}
+                <table class="card-odds-table">
+                    <thead>
+                        <tr>
+                            <th>Team</th>
+                            <th>Spread</th>
+                            <th>Total</th>
+                            <th>ML</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Home Team Row (First) -->
+                        <tr>
+                            <td class="team-abbr-cell">{{.Game.HomeTeam.Abbreviation}}</td>
+                            <td>
+                                {{if .Spread}}
+                                    {{if .Spread.HomeSpread.IsNegative}}
+                                        {{.Spread.HomeSpread}}
+                                    {{else}}
+                                        +{{.Spread.HomeSpread}}
+                                    {{end}}
+                                {{else}}
+                                    <span class="text-muted">-</span>
+                                {{end}}
+                            </td>
+                            <td>
+                                {{if .OverUnder}}U {{.OverUnder.Total}}{{else}}<span class="text-muted">-</span>{{end}}
+                            </td>
+                            <td>
+                                {{if .MoneyLine}}
+                                    {{if .MoneyLine.HomeOdds.IsPositive}}+{{end}}{{.MoneyLine.HomeOdds.IntPart}}
+                                {{else}}
+                                    <span class="text-muted">-</span>
+                                {{end}}
+                            </td>
+                        </tr>
+                        <!-- Away Team Row (Second) -->
+                        <tr>
+                            <td class="team-abbr-cell">{{.Game.AwayTeam.Abbreviation}}</td>
+                            <td>
+                                {{if .Spread}}
+                                    {{if .Spread.AwaySpread.IsNegative}}
+                                        {{.Spread.AwaySpread}}
+                                    {{else}}
+                                        +{{.Spread.AwaySpread}}
+                                    {{end}}
+                                {{else}}
+                                    <span class="text-muted">-</span>
+                                {{end}}
+                            </td>
+                            <td>
+                                {{if .OverUnder}}O {{.OverUnder.Total}}{{else}}<span class="text-muted">-</span>{{end}}
+                            </td>
+                            <td>
+                                {{if .MoneyLine}}
+                                    {{if .MoneyLine.AwayOdds.IsPositive}}+{{end}}{{.MoneyLine.AwayOdds.IntPart}}
+                                {{else}}
+                                    <span class="text-muted">-</span>
+                                {{end}}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                {{end}}
+
+                <div class="game-details">
+                    <div class="game-time">{{localTime .Game.ScheduledAt "datetime"}}</div>
+                    <div class="game-venue">
+                        {{.Game.Venue.Name}}
+                    </div>
+                </div>
+            </div>
+        </a>
+        {{end}}
+    </div>
+
+    {{if gt .Page.Pages 1}}
+    <nav class="pagination" aria-label="Games pages">
+        {{if .Page.HasPrev}}
+        <a class="btn btn-secondary btn-sm" href="{{.PrevURL}}" rel="prev">← Previous</a>
+        {{else}}
+        <span class="btn btn-secondary btn-sm is-disabled" aria-disabled="true">← Previous</span>
+        {{end}}
+        <span class="pagination-status">Page {{.Page.Number}} of {{.Page.Pages}}</span>
+        {{if .Page.HasNext}}
+        <a class="btn btn-secondary btn-sm" href="{{.NextURL}}" rel="next">Next →</a>
+        {{else}}
+        <span class="btn btn-secondary btn-sm is-disabled" aria-disabled="true">Next →</span>
+        {{end}}
+    </nav>
+    {{end}}
+    {{else}}
+    <div class="empty-state">
+        <div class="empty-icon">📅</div>
+        {{if and .Week .TotalInWeek}}
+        <!-- The week has games; the filter is what is hiding them, so point at
+             the filter rather than implying the schedule is empty. -->
+        <h2>No Games Match</h2>
+        <p>All {{.TotalInWeek}} games in Week {{.WeekNumber}} were filtered out. Try widening the filter.</p>
+        <a href="{{.ClearURL}}" class="btn btn-primary btn-sm">Clear filters</a>
+        {{else if .Week}}
+        <h2>No Games Scheduled</h2>
+        <p>There are no games scheduled for Week {{.WeekNumber}} of the {{.Season}} season.</p>
+        {{else}}
+        <h2>No Games Scheduled</h2>
+        <p>No game data is available yet. Check back later!</p>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+
+<script>
+function getSeasonType() {
+    const activeTab = document.querySelector('.season-type-tab.active');
+    return activeTab ? activeTab.textContent.trim().toLowerCase() === 'regular' ? 'regular' : 'postseason' : 'regular';
+}
+
+// The active filter rides along to the new week, minus the page number --
+// page 3 of one week rarely means anything in another.
+const filterQuery = {{.FilterQuery}};
+
+function gamesURL(season, seasonType, week) {
+    const path = '/games/' + season + '/' + seasonType + '/' + week;
+    return filterQuery ? path + '?' + filterQuery : path;
+}
+
+function navigateToSeason(season) {
+    window.location.href = gamesURL(season, getSeasonType(), 1);
+}
+
+function navigateToSeasonType(seasonType) {
+    window.location.href = gamesURL(document.getElementById('season-select').value, seasonType, 1);
+}
+
+function navigateToWeek(week) {
+    window.location.href = gamesURL(document.getElementById('season-select').value, getSeasonType(), week);
+}
+
+// Game times are localized by static/js/localtime.js, which handles every
+// <time> element the localTime template function emits.
+// Filtering and pagination are server-side, so there is nothing to wire up
+// here beyond the season and week navigation below.
+</script>
+{{end}}

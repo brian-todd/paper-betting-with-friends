@@ -1,0 +1,150 @@
+{{define "content"}}
+<div class="games-page">
+    <div class="page-header">
+        <div class="header-left">
+            <h1>Basketball</h1>
+        </div>
+        <div class="header-controls">
+            <div class="week-navigation">
+                <a href="/basketball/games?date={{.PrevDate}}" class="btn btn-sm btn-secondary">&larr; Prev</a>
+                <input type="date" class="select-input" id="date-picker" value="{{.DateStr}}" onchange="navigateToDate(this.value)">
+                <a href="/basketball/games?date={{.NextDate}}" class="btn btn-sm btn-secondary">Next &rarr;</a>
+            </div>
+            <div class="search-bar" style="margin-left: 1rem;">
+                <form action="/basketball/games" method="GET" style="display:flex;gap:0.5rem;">
+                    <input type="hidden" name="date" value="{{.DateStr}}">
+                    <input type="text" name="search" class="filter-input" placeholder="Search teams..." value="{{.Search}}" style="min-width:200px;">
+                    <button type="submit" class="btn btn-sm btn-primary">Search</button>
+                    {{if .Search}}
+                    <a href="/basketball/games?date={{.DateStr}}" class="btn btn-sm btn-secondary">Clear</a>
+                    {{end}}
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="filter-results">
+        <!-- .Date is the calendar day the server resolved in the app timezone, not an
+             instant, so it is formatted here rather than localized per reader. -->
+        <span>{{.Date.Format "Monday, January 2, 2006"}} &mdash; {{.TotalGames}} games{{if .Search}} matching "{{.Search}}"{{end}}</span>
+    </div>
+
+    {{if .Games}}
+    <div class="games-grid">
+        {{range .Games}}
+        <a href="/games/{{.Game.ID}}" class="game-card-link"
+           data-status="{{.Game.Status}}"
+           data-home-conference="{{.Game.HomeTeam.Conference}}"
+           data-away-conference="{{.Game.AwayTeam.Conference}}">
+            <div class="game-card">
+                <div class="game-status {{.Game.Status}}">
+                    {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
+                    {{if eq .Game.Status "in_progress"}}Live{{end}}
+                    {{if eq .Game.Status "final"}}Final{{end}}
+                    {{if eq .Game.Status "postponed"}}Postponed{{end}}
+                    {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
+                </div>
+                <div class="game-matchup">
+                    <div class="team away-team">
+                        <div class="team-identity">
+                            {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
+                            <div class="team-text">
+                                <span class="team-abbr">
+                                    {{if .Game.AwaySeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.AwaySeed}})</span> {{end}}{{.Game.AwayTeam.Abbreviation}}
+                                </span>
+                                <span class="team-name">{{.Game.AwayTeam.Name}}</span>
+                            </div>
+                        </div>
+                        {{if .Result}}<span class="team-score{{if not .Result.IsFinal}} live{{end}}">{{.Result.AwayScore}}</span>{{end}}
+                    </div>
+                    <div class="game-at">@</div>
+                    <div class="team home-team">
+                        <div class="team-identity">
+                            {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
+                            <div class="team-text">
+                                <span class="team-abbr">
+                                    {{if .Game.HomeSeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.HomeSeed}})</span> {{end}}{{.Game.HomeTeam.Abbreviation}}
+                                </span>
+                                <span class="team-name">{{.Game.HomeTeam.Name}}</span>
+                            </div>
+                        </div>
+                        {{if .Result}}<span class="team-score{{if not .Result.IsFinal}} live{{end}}">{{.Result.HomeScore}}</span>{{end}}
+                    </div>
+                </div>
+
+                {{if or .Spread .OverUnder .MoneyLine}}
+                <!-- See games.html: a started game's stored lines are closing
+                     lines, not live ones. -->
+                {{if ne .Game.Status "scheduled"}}<div class="odds-table-label">Closing lines</div>{{end}}
+                <table class="card-odds-table">
+                    <thead>
+                        <tr>
+                            <th>Team</th>
+                            <th>Spread</th>
+                            <th>Total</th>
+                            <th>ML</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="team-abbr-cell">{{.Game.HomeTeam.Abbreviation}}</td>
+                            <td>
+                                {{if .Spread}}
+                                    {{if .Spread.HomeSpread.IsNegative}}{{.Spread.HomeSpread}}{{else}}+{{.Spread.HomeSpread}}{{end}}
+                                {{else}}<span class="text-muted">-</span>{{end}}
+                            </td>
+                            <td>{{if .OverUnder}}U {{.OverUnder.Total}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+                            <td>
+                                {{if .MoneyLine}}
+                                    {{if .MoneyLine.HomeOdds.IsPositive}}+{{end}}{{.MoneyLine.HomeOdds.IntPart}}
+                                {{else}}<span class="text-muted">-</span>{{end}}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="team-abbr-cell">{{.Game.AwayTeam.Abbreviation}}</td>
+                            <td>
+                                {{if .Spread}}
+                                    {{if .Spread.AwaySpread.IsNegative}}{{.Spread.AwaySpread}}{{else}}+{{.Spread.AwaySpread}}{{end}}
+                                {{else}}<span class="text-muted">-</span>{{end}}
+                            </td>
+                            <td>{{if .OverUnder}}O {{.OverUnder.Total}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+                            <td>
+                                {{if .MoneyLine}}
+                                    {{if .MoneyLine.AwayOdds.IsPositive}}+{{end}}{{.MoneyLine.AwayOdds.IntPart}}
+                                {{else}}<span class="text-muted">-</span>{{end}}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                {{end}}
+
+                <div class="game-details">
+                    <div class="game-time">{{localTime .Game.ScheduledAt "datetime"}}</div>
+                    <div class="game-venue">
+                        {{.Game.Venue.Name}}{{if .Game.Tournament}} &bull; {{derefStr .Game.Tournament}}{{end}}
+                    </div>
+                </div>
+            </div>
+        </a>
+        {{end}}
+    </div>
+    {{else}}
+    <div class="empty-state">
+        <div class="empty-icon">🏀</div>
+        <h2>No Games Found</h2>
+        {{if .Search}}
+        <p>No basketball games matching "{{.Search}}" on this date.</p>
+        {{else}}
+        <p>No basketball games scheduled for this date.</p>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+
+<script>
+function navigateToDate(date) {
+    window.location.href = '/basketball/games?date=' + date;
+}
+// Game times are localized by static/js/localtime.js.
+</script>
+{{end}}

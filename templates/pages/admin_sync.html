@@ -1,0 +1,112 @@
+{{define "content"}}
+<div class="admin-page">
+    <div class="admin-header">
+        <h1>Sync &amp; Health</h1>
+        <a href="/admin" class="btn btn-secondary btn-sm">← Back to Admin</a>
+    </div>
+
+    {{if .Error}}
+    <div class="alert alert-error">{{.Error}}</div>
+    {{end}}
+
+    {{if .Success}}
+    <div class="alert alert-success">{{.Success}}</div>
+    {{end}}
+
+    <h2 class="section-title">Background Jobs</h2>
+
+    <div class="admin-table-container">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Job</th>
+                    <th>Last Run</th>
+                    <th>Last Success</th>
+                    <th>Next Due</th>
+                    <th>State</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Jobs}}
+                <tr>
+                    <td>
+                        <strong>{{.Name}}</strong>
+                        {{if .Label}}<span class="text-muted">{{.Label}}</span>{{end}}
+                    </td>
+                    <td class="text-muted">{{if .LastRun.IsZero}}never{{else}}{{localTime .LastRun "relative"}}{{end}}</td>
+                    <td class="text-muted">{{if .LastSuccess.IsZero}}never{{else}}{{localTime .LastSuccess "relative"}}{{end}}</td>
+                    <td class="text-muted">{{if .NextRun.IsZero}}&mdash;{{else}}{{localTime .NextRun "relative"}}{{end}}</td>
+                    <td>
+                        {{if .Running}}
+                        <span class="badge badge-admin">running</span>
+                        {{else if .LastError}}
+                        <span class="badge badge-lost">failing</span>
+                        <div class="sync-error">{{.LastError}}</div>
+                        {{else if .LastSuccess.IsZero}}
+                        <span class="badge badge-member">awaiting first run</span>
+                        {{else}}
+                        <span class="badge badge-won">ok</span>
+                        {{end}}
+                    </td>
+                    <td>
+                        <form action="/admin/sync/{{.Name}}/run" method="POST" class="inline-form">
+                            <button type="submit" class="btn btn-sm btn-primary">Run Now</button>
+                        </form>
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="6" class="text-center text-muted">
+                        No jobs registered. Both API keys are probably unset.
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    <p class="text-muted admin-footnote">
+        A manual run happens on the job's own goroutine, so it cannot overlap a run
+        already in progress, and it resets the schedule. Football data is metered
+        monthly &mdash; a second request while one is already queued is refused rather
+        than spending another call.
+    </p>
+
+    <h2 class="section-title">System</h2>
+
+    <div class="card">
+        <dl class="health-list">
+            <dt>Environment</dt><dd>{{.Health.Env}}</dd>
+            <dt>Timezone</dt><dd>{{.Health.TimeZone}}</dd>
+            <dt>Football API key</dt>
+            <dd>{{if .Health.CFBConfigured}}configured{{else}}<strong>missing &mdash; football sync is disabled</strong>{{end}}</dd>
+            <dt>Basketball API key</dt>
+            <dd>{{if .Health.CBBConfigured}}configured{{else}}<strong>missing &mdash; basketball sync is disabled</strong>{{end}}</dd>
+            <dt>Current week</dt>
+            <dd>
+                {{if .Health.WeekFound}}
+                {{.Health.Season}} week {{.Health.Week}} ({{.Health.SeasonType}})
+                {{else}}
+                <strong>none resolved</strong> &mdash; the syncs will fall back to the calendar year
+                {{end}}
+            </dd>
+        </dl>
+
+        <dl class="health-list">
+            <dt>Users</dt><dd>{{.Health.Counts.Users}}</dd>
+            <dt>Leagues</dt><dd>{{.Health.Counts.Leagues}}</dd>
+            <dt>Teams</dt><dd>{{.Health.Counts.Teams}}</dd>
+            <dt>Games</dt><dd>{{.Health.Counts.Games}}</dd>
+            <dt>Results</dt><dd>{{.Health.Counts.Results}} ({{.Health.Counts.FinalResults}} final)</dd>
+            <dt>Pending bets</dt><dd>{{.Health.Counts.PendingBets}}</dd>
+        </dl>
+    </div>
+
+    <p class="text-muted admin-footnote">
+        If "current week" points at the wrong season, the syncs are fetching a year that
+        holds none of the games being watched &mdash; scores never arrive and bets never
+        settle, while every job still reports success.
+    </p>
+</div>
+{{end}}

@@ -1,0 +1,545 @@
+{{define "content"}}
+<div class="game-detail-page">
+    <div class="page-header">
+        {{if .Game.Week}}
+        <a href="/games/{{.Game.Week.Season}}/{{.Game.Week.SeasonType}}/{{.Game.Week.Number}}" class="back-link">
+            ← Back to Week {{.Game.Week.Number}}
+        </a>
+        {{else}}
+        <a href="/basketball/games" class="back-link">
+            ← Back to Basketball Games
+        </a>
+        {{end}}
+    </div>
+
+    <div class="game-hero">
+        <div class="game-status-badge {{.Game.Status}}">
+            {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
+            {{if eq .Game.Status "in_progress"}}Live{{end}}
+            {{if eq .Game.Status "final"}}Final{{end}}
+            {{if eq .Game.Status "postponed"}}Postponed{{end}}
+            {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
+        </div>
+        
+        <div class="matchup-display">
+            <div class="team-display away">
+                {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 48px; height: 48px; margin-bottom: 8px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
+                <div class="team-abbr-large">{{.Game.AwayTeam.Abbreviation}}</div>
+                <div class="team-name-full">{{.Game.AwayTeam.Name}}</div>
+                {{if .Result}}
+                <div class="team-score-large{{if not .Result.IsFinal}} live{{end}}">{{.Result.AwayScore}}</div>
+                {{end}}
+            </div>
+            
+            <div class="matchup-vs">
+                <span class="vs-text">@</span>
+                <div class="game-datetime">
+                    {{localTime .Game.ScheduledAt "longdate"}}
+                    <br>
+                    {{localTime .Game.ScheduledAt "time"}}
+                </div>
+            </div>
+            
+            <div class="team-display home">
+                {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 48px; height: 48px; margin-bottom: 8px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
+                <div class="team-abbr-large">{{.Game.HomeTeam.Abbreviation}}</div>
+                <div class="team-name-full">{{.Game.HomeTeam.Name}}</div>
+                {{if .Result}}
+                <div class="team-score-large{{if not .Result.IsFinal}} live{{end}}">{{.Result.HomeScore}}</div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+
+    <div class="game-info-section">
+        <div class="info-card">
+            <h3>Game Information</h3>
+            <dl class="info-list">
+                <dt>Venue</dt>
+                <dd>{{.Game.Venue.Name}}</dd>
+                <dt>Location</dt>
+                <dd>{{.Game.Venue.City}}, {{.Game.Venue.State}}</dd>
+                {{if .Game.ConferenceGame}}
+                <dt>Type</dt>
+                <dd>Conference Game</dd>
+                {{end}}
+                {{if .Game.NeutralSite}}
+                <dt>Site</dt>
+                <dd>Neutral Site</dd>
+                {{end}}
+            </dl>
+        </div>
+    </div>
+
+    {{if .UnifiedOdds}}
+    <div class="betting-section">
+        <h2>Betting Lines</h2>
+        
+        <table class="odds-table unified">
+            <thead>
+                <tr>
+                    <th>Source</th>
+                    <th>Spread</th>
+                    <th>Over/Under</th>
+                    <th colspan="2">Moneyline</th>
+                    <th>Updated</th>
+                </tr>
+                <tr class="subheader">
+                    <th></th>
+                    <th>{{.Game.HomeTeam.Abbreviation}} / {{.Game.AwayTeam.Abbreviation}}</th>
+                    <th>Total</th>
+                    <th colspan="2">{{.Game.HomeTeam.Abbreviation}} / {{.Game.AwayTeam.Abbreviation}}</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .UnifiedOdds}}
+                <tr>
+                    <td class="source-name">{{.Source}}</td>
+                    {{if .Spread}}
+                    <td class="spread-value clickable-odds" data-bet-type="spread" data-odds-id="{{.Spread.ID}}" data-home-spread="{{.Spread.HomeSpread}}" data-away-spread="{{.Spread.AwaySpread}}">
+                        {{if .Spread.HomeSpread.IsNegative}}{{.Spread.HomeSpread}}{{else}}+{{.Spread.HomeSpread}}{{end}} / 
+                        {{if .Spread.AwaySpread.IsNegative}}{{.Spread.AwaySpread}}{{else}}+{{.Spread.AwaySpread}}{{end}}
+                    </td>
+                    {{else}}
+                    <td class="no-data">—</td>
+                    {{end}}
+                    {{if .OverUnder}}
+                    <td class="total-value clickable-odds" data-bet-type="overunder" data-odds-id="{{.OverUnder.ID}}" data-total="{{.OverUnder.Total}}">{{.OverUnder.Total}}</td>
+                    {{else}}
+                    <td class="no-data">—</td>
+                    {{end}}
+                    {{if .MoneyLine}}
+                    <td class="total-value clickable-odds" data-bet-type="moneyline" data-odds-id="{{.MoneyLine.ID}}" data-home-odds="{{.MoneyLine.HomeOdds}}" data-away-odds="{{.MoneyLine.AwayOdds}}" colspan="2">
+                        {{if .MoneyLine.HomeOdds.IsPositive}}+{{end}}{{.MoneyLine.HomeOdds.IntPart}} / 
+                        {{if .MoneyLine.AwayOdds.IsPositive}}+{{end}}{{.MoneyLine.AwayOdds.IntPart}}
+                    </td>
+                    {{else}}
+                    <td class="no-data" colspan="2">—</td>
+                    {{end}}
+                    {{if .Spread}}
+                    <td class="timestamp">{{localTime .Spread.UpdatedAt "shortdatetime"}}</td>
+                    {{else if .OverUnder}}
+                    <td class="timestamp">{{localTime .OverUnder.UpdatedAt "shortdatetime"}}</td>
+                    {{else if .MoneyLine}}
+                    <td class="timestamp">{{localTime .MoneyLine.UpdatedAt "shortdatetime"}}</td>
+                    {{else}}
+                    <td class="no-data">—</td>
+                    {{end}}
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{else}}
+    <div class="empty-state">
+        <div class="empty-icon">📊</div>
+        <h2>No Betting Lines Available</h2>
+        <p>Betting lines for this game have not been loaded yet.</p>
+    </div>
+    {{end}}
+
+    {{if eq .Game.Status "scheduled"}}
+    {{if gt (len .UserLeagues) 0}}
+    <div class="bet-slip-section">
+        <h2>Place a Bet</h2>
+        
+        <div id="bet-response"></div>
+
+        <div class="bet-slip">
+            <div class="bet-type-tabs">
+                <button type="button" class="bet-tab active" data-bet-type="spread">Spread</button>
+                <button type="button" class="bet-tab" data-bet-type="moneyline">Moneyline</button>
+                <button type="button" class="bet-tab" data-bet-type="overunder">Over/Under</button>
+            </div>
+
+            <!-- Spread Bet Form -->
+            <form id="spread-form" class="bet-form active" hx-post="/bets/spread" hx-target="#bet-response" hx-swap="innerHTML">
+                <input type="hidden" name="game_id" value="{{.Game.ID}}">
+                
+                <div class="form-group">
+                    <label>Odds Source</label>
+                    <select name="odds_id" id="spread-source" class="form-select source-select">
+                        {{range .UnifiedOdds}}
+                        {{if .Spread}}
+                        <option value="{{.Spread.ID}}" data-home-spread="{{.Spread.HomeSpread}}" data-away-spread="{{.Spread.AwaySpread}}">
+                            {{.Source}}
+                        </option>
+                        {{end}}
+                        {{end}}
+                        <option value="">Custom</option>
+                    </select>
+                </div>
+
+                <div id="spread-custom-fields" class="custom-fields" style="display: none;">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Spread (for your pick)</label>
+                            <input type="number" name="custom_spread" step="0.5" placeholder="-7" class="form-input">
+                            <small class="form-hint">Negative = favorite, positive = underdog</small>
+                        </div>
+                        <div class="form-group">
+                            <label>Odds</label>
+                            <input type="number" name="custom_odds" step="1" value="-110" class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Pick</label>
+                    <div class="pick-selector" id="spread-picks">
+                        <label class="pick-option">
+                            <input type="radio" name="pick" value="home" required>
+                            <span class="pick-label">{{.Game.HomeTeam.Abbreviation}} <span class="pick-odds"></span></span>
+                        </label>
+                        <label class="pick-option">
+                            <input type="radio" name="pick" value="away">
+                            <span class="pick-label">{{.Game.AwayTeam.Abbreviation}} <span class="pick-odds"></span></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>League</label>
+                        <select name="league_id" required class="form-select league-select" onchange="updateBalanceDisplay(this, 'spread')">
+                            {{range .UserLeagues}}
+                            <option value="{{.ID}}" data-balance="{{index $.PurseBalances .ID.String}}">{{.Name}}</option>
+                            {{end}}
+                        </select>
+                        <small class="balance-hint" id="spread-balance">Available: $<span class="balance-value">{{with $first := index .UserLeagues 0}}{{index $.PurseBalances $first.ID.String}}{{end}}</span></small>
+                    </div>
+                    <div class="form-group">
+                        <label>Stake</label>
+                        <input type="number" name="stake" min="1" step="1" required placeholder="100" class="form-input stake-input" id="spread-stake">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block">
+                    <span class="btn-text">Place Spread Bet</span>
+                    <span class="htmx-indicator">Placing...</span>
+                </button>
+            </form>
+
+            <!-- Moneyline Bet Form -->
+            <form id="moneyline-form" class="bet-form" hx-post="/bets/moneyline" hx-target="#bet-response" hx-swap="innerHTML">
+                <input type="hidden" name="game_id" value="{{.Game.ID}}">
+                
+                <div class="form-group">
+                    <label>Odds Source</label>
+                    <select name="odds_id" id="moneyline-source" class="form-select source-select">
+                        {{range .UnifiedOdds}}
+                        {{if .MoneyLine}}
+                        <option value="{{.MoneyLine.ID}}" data-home-odds="{{.MoneyLine.HomeOdds}}" data-away-odds="{{.MoneyLine.AwayOdds}}">
+                            {{.Source}}
+                        </option>
+                        {{end}}
+                        {{end}}
+                        <option value="">Custom</option>
+                    </select>
+                </div>
+
+                <div id="moneyline-custom-fields" class="custom-fields" style="display: none;">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>{{.Game.HomeTeam.Abbreviation}} Odds</label>
+                            <input type="number" name="custom_home_odds" step="1" placeholder="-150" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>{{.Game.AwayTeam.Abbreviation}} Odds</label>
+                            <input type="number" name="custom_away_odds" step="1" placeholder="+130" class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Pick</label>
+                    <div class="pick-selector" id="moneyline-picks">
+                        <label class="pick-option">
+                            <input type="radio" name="pick" value="home" required>
+                            <span class="pick-label">{{.Game.HomeTeam.Abbreviation}} <span class="pick-odds"></span></span>
+                        </label>
+                        <label class="pick-option">
+                            <input type="radio" name="pick" value="away">
+                            <span class="pick-label">{{.Game.AwayTeam.Abbreviation}} <span class="pick-odds"></span></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>League</label>
+                        <select name="league_id" required class="form-select league-select" onchange="updateBalanceDisplay(this, 'moneyline')">
+                            {{range .UserLeagues}}
+                            <option value="{{.ID}}" data-balance="{{index $.PurseBalances .ID.String}}">{{.Name}}</option>
+                            {{end}}
+                        </select>
+                        <small class="balance-hint" id="moneyline-balance">Available: $<span class="balance-value">{{with $first := index .UserLeagues 0}}{{index $.PurseBalances $first.ID.String}}{{end}}</span></small>
+                    </div>
+                    <div class="form-group">
+                        <label>Stake</label>
+                        <input type="number" name="stake" min="1" step="1" required placeholder="100" class="form-input stake-input" id="moneyline-stake">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block">
+                    <span class="btn-text">Place Moneyline Bet</span>
+                    <span class="htmx-indicator">Placing...</span>
+                </button>
+            </form>
+
+            <!-- Over/Under Bet Form -->
+            <form id="overunder-form" class="bet-form" hx-post="/bets/overunder" hx-target="#bet-response" hx-swap="innerHTML">
+                <input type="hidden" name="game_id" value="{{.Game.ID}}">
+                
+                <div class="form-group">
+                    <label>Odds Source</label>
+                    <select name="odds_id" id="overunder-source" class="form-select source-select">
+                        {{range .UnifiedOdds}}
+                        {{if .OverUnder}}
+                        <option value="{{.OverUnder.ID}}" data-total="{{.OverUnder.Total}}">
+                            {{.Source}}
+                        </option>
+                        {{end}}
+                        {{end}}
+                        <option value="">Custom</option>
+                    </select>
+                </div>
+
+                <div id="overunder-custom-fields" class="custom-fields" style="display: none;">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Total</label>
+                            <input type="number" name="custom_total" step="0.5" placeholder="54.5" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>Over Odds</label>
+                            <input type="number" name="custom_over_odds" step="1" value="-110" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>Under Odds</label>
+                            <input type="number" name="custom_under_odds" step="1" value="-110" class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Pick</label>
+                    <div class="pick-selector" id="overunder-picks">
+                        <label class="pick-option">
+                            <input type="radio" name="pick" value="over" required>
+                            <span class="pick-label">Over <span class="pick-odds"></span></span>
+                        </label>
+                        <label class="pick-option">
+                            <input type="radio" name="pick" value="under">
+                            <span class="pick-label">Under <span class="pick-odds"></span></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>League</label>
+                        <select name="league_id" required class="form-select league-select" onchange="updateBalanceDisplay(this, 'overunder')">
+                            {{range .UserLeagues}}
+                            <option value="{{.ID}}" data-balance="{{index $.PurseBalances .ID.String}}">{{.Name}}</option>
+                            {{end}}
+                        </select>
+                        <small class="balance-hint" id="overunder-balance">Available: $<span class="balance-value">{{with $first := index .UserLeagues 0}}{{index $.PurseBalances $first.ID.String}}{{end}}</span></small>
+                    </div>
+                    <div class="form-group">
+                        <label>Stake</label>
+                        <input type="number" name="stake" min="1" step="1" required placeholder="100" class="form-input stake-input" id="overunder-stake">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block">
+                    <span class="btn-text">Place Over/Under Bet</span>
+                    <span class="htmx-indicator">Placing...</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Dismiss alert with animation.
+        function dismissAlert() {
+            const response = document.getElementById('bet-response');
+            if (response) {
+                response.style.transition = 'opacity 0.2s ease';
+                response.style.opacity = '0';
+                setTimeout(() => {
+                    response.innerHTML = '';
+                    response.style.opacity = '1';
+                }, 200);
+            }
+        }
+
+        // Bet responses are wired up here rather than with hx-on, which htmx
+        // compiles with `new Function` -- that needs 'unsafe-eval' in the
+        // Content-Security-Policy, and the whole point of the policy is not to
+        // grant it. An ordinary listener on the same htmx event is equivalent:
+        // htmx fires it on the element that made the request, so event.target
+        // is still the form.
+        document.querySelectorAll('.bet-form').forEach(form => {
+            form.addEventListener('htmx:afterRequest', handleBetResponse);
+        });
+
+        // Handle HTMX bet response - update balance if successful.
+        function handleBetResponse(event) {
+            const response = document.getElementById('bet-response');
+            if (!response) return;
+
+            // Check if the response contains a success alert and new balance.
+            const newBalanceEl = response.querySelector('[data-new-balance]');
+            const leagueIdEl = response.querySelector('[data-league-id]');
+            
+            if (newBalanceEl && leagueIdEl) {
+                const newBalance = newBalanceEl.dataset.newBalance;
+                const leagueId = leagueIdEl.dataset.leagueId;
+                
+                // Update all league selects with the new balance.
+                document.querySelectorAll('.league-select').forEach(select => {
+                    const option = select.querySelector(`option[value="${leagueId}"]`);
+                    if (option) {
+                        option.dataset.balance = newBalance;
+                        // Update displayed balance if this league is selected.
+                        if (option.selected) {
+                            const formType = select.closest('form').id.replace('-form', '');
+                            const balanceSpan = document.querySelector(`#${formType}-balance .balance-value`);
+                            if (balanceSpan) balanceSpan.textContent = newBalance;
+                        }
+                    }
+                });
+
+                // Reset the form that was submitted.
+                event.target.reset();
+            }
+        }
+
+        // Convert source name to title case.
+        function toTitleCase(str) {
+            return str.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        // Format spread/odds value with +/- prefix.
+        function formatOdds(val) {
+            const num = parseFloat(val);
+            if (isNaN(num)) return '';
+            return num >= 0 ? '+' + num : num.toString();
+        }
+
+        // Format source select options to title case.
+        document.querySelectorAll('.source-select').forEach(select => {
+            Array.from(select.options).forEach(opt => {
+                if (opt.value) opt.textContent = toTitleCase(opt.textContent.trim());
+            });
+        });
+
+        // Update pick button odds display based on selected source.
+        function updatePickOdds(type) {
+            const select = document.getElementById(type + '-source');
+            const picks = document.getElementById(type + '-picks');
+            if (!select || !picks) return;
+
+            const opt = select.options[select.selectedIndex];
+            const homeSpan = picks.querySelector('input[value="home"], input[value="over"]')?.closest('.pick-option')?.querySelector('.pick-odds');
+            const awaySpan = picks.querySelector('input[value="away"], input[value="under"]')?.closest('.pick-option')?.querySelector('.pick-odds');
+
+            if (!opt || !opt.value) {
+                if (homeSpan) homeSpan.textContent = '';
+                if (awaySpan) awaySpan.textContent = '';
+                return;
+            }
+
+            if (type === 'spread') {
+                if (homeSpan) homeSpan.textContent = formatOdds(opt.dataset.homeSpread);
+                if (awaySpan) awaySpan.textContent = formatOdds(opt.dataset.awaySpread);
+            } else if (type === 'moneyline') {
+                if (homeSpan) homeSpan.textContent = formatOdds(opt.dataset.homeOdds);
+                if (awaySpan) awaySpan.textContent = formatOdds(opt.dataset.awayOdds);
+            } else if (type === 'overunder') {
+                const total = opt.dataset.total || '';
+                if (homeSpan) homeSpan.textContent = total;
+                if (awaySpan) awaySpan.textContent = total;
+            }
+        }
+
+        // Bet type tab switching.
+        function switchBetTab(betType) {
+            document.querySelectorAll('.bet-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.bet-form').forEach(f => f.classList.remove('active'));
+            document.querySelector(`.bet-tab[data-bet-type="${betType}"]`)?.classList.add('active');
+            document.getElementById(betType + '-form')?.classList.add('active');
+        }
+
+        document.querySelectorAll('.bet-tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                switchBetTab(this.dataset.betType);
+            });
+        });
+
+        // Show/hide custom fields and update pick odds based on source selection.
+        ['spread', 'moneyline', 'overunder'].forEach(type => {
+            const select = document.getElementById(type + '-source');
+            const customFields = document.getElementById(type + '-custom-fields');
+
+            if (select) {
+                select.addEventListener('change', function() {
+                    if (customFields) customFields.style.display = this.value === '' ? 'block' : 'none';
+                    updatePickOdds(type);
+                });
+                // Initialize on load.
+                updatePickOdds(type);
+            }
+        });
+
+        // Handle clickable odds in the betting lines table.
+        document.querySelectorAll('.clickable-odds').forEach(cell => {
+            cell.style.cursor = 'pointer';
+            cell.addEventListener('click', function() {
+                const betType = this.dataset.betType;
+                const oddsId = this.dataset.oddsId;
+
+                // Switch to the appropriate tab.
+                switchBetTab(betType);
+
+                // Select the matching odds source.
+                const select = document.getElementById(betType + '-source');
+                if (select) {
+                    for (let i = 0; i < select.options.length; i++) {
+                        if (select.options[i].value === oddsId) {
+                            select.selectedIndex = i;
+                            select.dispatchEvent(new Event('change'));
+                            break;
+                        }
+                    }
+                }
+
+                // Scroll to bet slip.
+                document.querySelector('.bet-slip-section')?.scrollIntoView({ behavior: 'smooth' });
+            });
+        });
+
+        // Update balance display when league selection changes.
+        function updateBalanceDisplay(select, formType) {
+            const selectedOption = select.options[select.selectedIndex];
+            const balance = selectedOption.getAttribute('data-balance') || '0.00';
+            const balanceHint = document.getElementById(formType + '-balance');
+            if (balanceHint) {
+                balanceHint.querySelector('.balance-value').textContent = balance;
+            }
+        }
+    </script>
+    {{else}}
+    <div class="bet-slip-section">
+        <div class="empty-state small">
+            <h3>Join a League to Bet</h3>
+            <p>You need to be a member of at least one league to place bets.</p>
+            <a href="/leagues" class="btn btn-primary">Browse Leagues</a>
+        </div>
+    </div>
+    {{end}}
+    {{end}}
+</div>
+{{end}}

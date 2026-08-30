@@ -1,0 +1,84 @@
+{{define "content"}}
+<div class="admin-page">
+    <div class="admin-header">
+        <h1>Manage Users</h1>
+        <a href="/admin" class="btn btn-secondary btn-sm">← Back to Admin</a>
+    </div>
+
+    {{if .Error}}
+    <div class="alert alert-error">{{.Error}}</div>
+    {{end}}
+
+    {{if .Success}}
+    <div class="alert alert-success">{{.Success}}</div>
+    {{end}}
+
+    <div class="admin-table-container">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Role</th>
+                    <th>Purses</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Users}}
+                <tr>
+                    <td><strong>{{.User.Username}}</strong></td>
+                    <td>
+                        {{if .User.IsAdmin}}
+                        <span class="badge badge-admin">Admin</span>
+                        {{else}}
+                        <span class="badge badge-member">Member</span>
+                        {{end}}
+                    </td>
+                    <td>
+                        {{range .Purses}}
+                        <div class="purse-line">{{.League.Name}} <strong>{{.Balance.StringFixed 2}}</strong></div>
+                        {{else}}
+                        <span class="text-muted">None</span>
+                        {{end}}
+                    </td>
+                    <td class="text-muted">{{localTime .User.CreatedAt "mediumdate"}}</td>
+                    <td>
+                        <div class="action-forms">
+                            <form action="/admin/users/{{.User.ID}}/password" method="POST" class="inline-form">
+                                <input type="password" name="password" placeholder="New password" minlength="8" required>
+                                <button type="submit" class="btn btn-sm btn-primary">Set Password</button>
+                            </form>
+
+                            {{if .Protected}}
+                            <p class="text-muted protected-note">
+                                This is the site administrator account. It cannot be renamed or
+                                deleted here, so there is always a way back in.
+                            </p>
+                            {{else}}
+                            <form action="/admin/users/{{.User.ID}}/username" method="POST" class="inline-form">
+                                <input type="text" name="username" placeholder="New username" required>
+                                <button type="submit" class="btn btn-sm btn-secondary">Rename</button>
+                            </form>
+                            <form action="/admin/users/{{.User.ID}}/delete" method="POST" class="inline-form danger-form">
+                                <input type="text" name="confirm" placeholder="Type {{.User.Username}}" required>
+                                <button type="submit" class="btn btn-sm btn-danger">Delete User</button>
+                            </form>
+                            {{end}}
+                        </div>
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="5" class="text-center text-muted">No users found.</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    <p class="text-muted admin-footnote">
+        Deleting a user also deletes every bet they have placed and every purse they hold.
+    </p>
+</div>
+{{end}}

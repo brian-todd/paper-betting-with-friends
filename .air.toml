@@ -1,0 +1,53 @@
+# Air configuration for hot reload in development
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  # Build command
+  cmd = "go build -buildvcs=false -o ./tmp/main ./cmd/server"
+  # Binary to run
+  bin = "./tmp/main"
+  # Watch these extensions
+  include_ext = ["go", "html", "css"]
+  # Exclude directories
+  exclude_dir = ["tmp", "vendor", ".git", "static"]
+  # Include subdirectories
+  include_dir = []
+  # Exclude files matching these patterns
+  exclude_file = []
+  # Exclude regex patterns
+  exclude_regex = ["_test.go"]
+  # Exclude unchanged files
+  exclude_unchanged = false
+  # Follow symlinks
+  follow_symlink = false
+  # Working directory
+  full_bin = ""
+  # Delay before rebuilding (ms)
+  delay = 1000
+  # Stop old binary before building
+  stop_on_error = true
+  # Send interrupt signal to stop
+  send_interrupt = false
+  # Kill delay (ms)
+  kill_delay = 500
+  # Rerun when binary changes
+  rerun = false
+  # Rerun delay (ms)
+  rerun_delay = 500
+
+[log]
+  # Show log time
+  time = false
+
+[color]
+  # Customize colors
+  main = "magenta"
+  watcher = "cyan"
+  build = "yellow"
+  runner = "green"
+
+[misc]
+  # Clean on exit
+  clean_on_exit = true
