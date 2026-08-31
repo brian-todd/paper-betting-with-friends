@@ -39,6 +39,15 @@ type Job struct {
 	// miscomputes cannot spin the loop.
 	NextDelay func(now time.Time) time.Duration
 
+	// ManualOnly marks a job with no schedule at all: it runs only when Trigger
+	// asks for it. It exists for work that is genuinely occasional -- seeding a
+	// season's teams and venues, say -- which still wants everything the
+	// scheduler provides (a run timeout, panic recovery, recorded status, and
+	// the guarantee of no overlapping runs) and none of what a timer provides.
+	//
+	// Interval and NextDelay are ignored when it is set.
+	ManualOnly bool
+
 	// Timeout bounds a single invocation of Run. Zero means no timeout beyond
 	// cancellation of the scheduler's context.
 	Timeout time.Duration
@@ -72,6 +81,11 @@ type Status struct {
 
 	// Running is true while a run is in flight.
 	Running bool
+
+	// Manual reports a job that only ever runs when asked. It lets the admin
+	// page distinguish "no next run because it is never scheduled" from "no
+	// next run recorded yet", which look identical through NextRun alone.
+	Manual bool
 }
 
 // Errors returned by Trigger.
@@ -83,6 +97,20 @@ var (
 // ErrJobPanic wraps a value recovered from a panicking job.
 var ErrJobPanic = errors.New("job panicked")
 
+// argsKey carries a manual run's arguments on the run context.
+type argsKey struct{}
+
+// ArgsFrom returns the arguments the Trigger call that started this run
+// supplied, and nil for a run the schedule started.
+//
+// They travel on the context rather than in Run's signature so that the jobs
+// which take no arguments -- which is most of them -- stay declarable as a
+// plain method value. A job that wants one opts in by reading this.
+func ArgsFrom(ctx context.Context) []string {
+	args, _ := ctx.Value(argsKey{}).([]string)
+	return args
+}
+
 // Scheduler runs a set of Jobs concurrently, one goroutine per job.
 type Scheduler struct {
 	logger *slog.Logger
@@ -93,7 +121,7 @@ type Scheduler struct {
 	// request handlers, so it is touched far more often than it is written.
 	statusMu      sync.RWMutex
 	status        map[string]*Status
-	triggers      map[string]chan struct{}
+	triggers      map[string]chan []string
 	recordSuccess func(job string, at time.Time)
 }
 
@@ -136,7 +164,7 @@ func New(logger *slog.Logger) *Scheduler {
 	return &Scheduler{
 		logger:   logger,
 		status:   make(map[string]*Status),
-		triggers: make(map[string]chan struct{}),
+		triggers: make(map[string]chan []string),
 	}
 }
 
@@ -212,7 +240,11 @@ func (s *Scheduler) recordRun(name string, at time.Time, err error) {
 // non-positive Interval and no NextDelay), are ignored so callers can add jobs
 // conditionally without extra branching.
 func (s *Scheduler) Add(j Job) {
-	if j.Run == nil || (j.NextDelay == nil && j.Interval <= 0) {
+	if j.Run == nil {
+		s.logger.Warn("skipping scheduler job with no work to do", "job", j.Name)
+		return
+	}
+	if !j.ManualOnly && j.NextDelay == nil && j.Interval <= 0 {
 		s.logger.Warn("skipping invalid scheduler job", "job", j.Name, "interval", j.Interval)
 		return
 	}
@@ -221,12 +253,12 @@ func (s *Scheduler) Add(j Job) {
 	// Register up front so a job that has not run yet still reports itself,
 	// rather than vanishing from the UI until its first tick.
 	s.statusMu.Lock()
-	s.status[j.Name] = &Status{Name: j.Name, Label: j.Label}
+	s.status[j.Name] = &Status{Name: j.Name, Label: j.Label, Manual: j.ManualOnly}
 	// Capacity one, because the buffer is the debounce: a second Trigger while
 	// a run is already queued is rejected rather than queued behind it. That
 	// matters against a metered upstream, where an impatient double click on
 	// the admin page would otherwise buy two runs.
-	s.triggers[j.Name] = make(chan struct{}, 1)
+	s.triggers[j.Name] = make(chan []string, 1)
 	s.statusMu.Unlock()
 }
 
@@ -235,9 +267,14 @@ func (s *Scheduler) Add(j Job) {
 // cannot overlap a run already in progress, and it is recorded in Status and
 // through the success recorder exactly like a scheduled one.
 //
+// Any args are handed to the run and readable with ArgsFrom. They travel in the
+// trigger channel rather than in a field somewhere, so the value a run uses is
+// the one its own trigger supplied -- a second, rejected trigger cannot change
+// what an already-queued run is about to do.
+//
 // It returns ErrUnknownJob if no job of that name is registered, and
 // ErrRunPending if one has already been requested and not yet started.
-func (s *Scheduler) Trigger(name string) error {
+func (s *Scheduler) Trigger(name string, args ...string) error {
 	s.statusMu.RLock()
 	ch, ok := s.triggers[name]
 	s.statusMu.RUnlock()
@@ -247,8 +284,8 @@ func (s *Scheduler) Trigger(name string) error {
 	}
 
 	select {
-	case ch <- struct{}{}:
-		s.logger.Info("background job triggered manually", "job", name)
+	case ch <- args:
+		s.logger.Info("background job triggered manually", "job", name, "args", args)
 		return nil
 	default:
 		return ErrRunPending
@@ -278,29 +315,46 @@ func (s *Scheduler) runJob(ctx context.Context, j Job) {
 	trigger := s.triggers[j.Name]
 	s.statusMu.RUnlock()
 
-	delay := j.delay()
-	s.recordNext(j.Name, time.Now().Add(delay))
+	// A manual-only job has no timer. timerC stays nil, and a receive from a
+	// nil channel blocks forever, so the select below simply never has a
+	// scheduled case to choose.
+	var (
+		timer  *time.Timer
+		timerC <-chan time.Time
+	)
 
-	// A timer rather than a ticker, because the wait is recomputed after every
-	// run: a NextDelay job changes its own cadence as the week moves.
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
+	if j.ManualOnly {
+		s.logger.Info("background job started", "job", j.Name, "schedule", "manual")
+	} else {
+		delay := j.delay()
+		s.recordNext(j.Name, time.Now().Add(delay))
 
-	s.logger.Info("background job started", "job", j.Name, "delay", delay)
+		// A timer rather than a ticker, because the wait is recomputed after
+		// every run: a NextDelay job changes its own cadence as the week moves.
+		timer = time.NewTimer(delay)
+		defer timer.Stop()
+		timerC = timer.C
+
+		s.logger.Info("background job started", "job", j.Name, "delay", delay)
+	}
+
 	defer s.logger.Info("background job stopped", "job", j.Name)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-			s.invoke(ctx, j)
+		case <-timerC:
+			s.invoke(ctx, j, nil)
 			s.reschedule(j, timer, false)
-		case <-trigger:
-			s.invoke(ctx, j)
+		case args := <-trigger:
+			s.invoke(ctx, j, args)
 			// A manual run resets the clock rather than leaving the scheduled
-			// one to fire moments later on data that was just refreshed.
-			s.reschedule(j, timer, true)
+			// one to fire moments later on data that was just refreshed. There
+			// is no clock to reset on a manual-only job.
+			if timer != nil {
+				s.reschedule(j, timer, true)
+			}
 		}
 	}
 }
@@ -337,11 +391,16 @@ func (j Job) delay() time.Duration {
 
 // invoke runs the job once, bounded by j.Timeout. A failing run is logged and
 // the loop continues; a transient upstream error must not kill the schedule.
-func (s *Scheduler) invoke(ctx context.Context, j Job) {
+func (s *Scheduler) invoke(ctx context.Context, j Job, args []string) {
 	runCtx := ctx
+	if len(args) > 0 {
+		runCtx = context.WithValue(runCtx, argsKey{}, args)
+	}
 	if j.Timeout > 0 {
 		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, j.Timeout)
+		// Derived from runCtx, not ctx: deriving from ctx would drop the args
+		// attached just above, silently, for every job that sets a timeout.
+		runCtx, cancel = context.WithTimeout(runCtx, j.Timeout)
 		defer cancel()
 	}
 

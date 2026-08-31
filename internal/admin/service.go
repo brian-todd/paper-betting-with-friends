@@ -28,6 +28,9 @@ var (
 	ErrUsernameTaken  = errors.New("username is already taken")
 	ErrInvalidBalance = errors.New("balance must be a number")
 
+	// ErrInvalidSeason backs the optional season on a manual seed.
+	ErrInvalidSeason = errors.New("season is not a plausible year")
+
 	// ErrConfirmationMismatch backs the type-the-name confirmation on the
 	// destructive actions.
 	ErrConfirmationMismatch = errors.New("confirmation did not match")

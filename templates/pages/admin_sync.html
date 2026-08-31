@@ -15,6 +15,15 @@
 
     <h2 class="section-title">Background Jobs</h2>
 
+    <p class="text-muted">
+        The <code>*-seed</code> jobs run only when you ask. A seed loads venues,
+        teams and the calendar as well as games and lines &mdash; the periodic
+        jobs cover games and lines only, and skip any game whose teams are not
+        already stored. Run a seed once per season, or whenever a sport shows no
+        games at all. Leave the season blank to load the current one, or set it
+        to backfill an earlier year.
+    </p>
+
     <div class="admin-table-container">
         <table class="admin-table">
             <thead>
@@ -36,7 +45,7 @@
                     </td>
                     <td class="text-muted">{{if .LastRun.IsZero}}never{{else}}{{localTime .LastRun "relative"}}{{end}}</td>
                     <td class="text-muted">{{if .LastSuccess.IsZero}}never{{else}}{{localTime .LastSuccess "relative"}}{{end}}</td>
-                    <td class="text-muted">{{if .NextRun.IsZero}}&mdash;{{else}}{{localTime .NextRun "relative"}}{{end}}</td>
+                    <td class="text-muted">{{if .Manual}}on request{{else if .NextRun.IsZero}}&mdash;{{else}}{{localTime .NextRun "relative"}}{{end}}</td>
                     <td>
                         {{if .Running}}
                         <span class="badge badge-admin">running</span>
@@ -44,13 +53,18 @@
                         <span class="badge badge-lost">failing</span>
                         <div class="sync-error">{{.LastError}}</div>
                         {{else if .LastSuccess.IsZero}}
-                        <span class="badge badge-member">awaiting first run</span>
+                        <span class="badge badge-member">{{if .Manual}}never run{{else}}awaiting first run{{end}}</span>
                         {{else}}
                         <span class="badge badge-won">ok</span>
                         {{end}}
                     </td>
                     <td>
                         <form action="/admin/sync/{{.Name}}/run" method="POST" class="inline-form">
+                            {{if .Manual}}
+                            <input type="number" name="season" class="form-input seed-season"
+                                   min="2002" step="1" placeholder="season"
+                                   title="Season to load. Leave blank for the current season.">
+                            {{end}}
                             <button type="submit" class="btn btn-sm btn-primary">Run Now</button>
                         </form>
                     </td>

@@ -2787,3 +2787,11 @@ button.btn {
     font-size: 1.25rem;
     font-weight: 600;
 }
+
+/* Season box on the manual seed rows: wide enough for a four-digit year and no
+   wider, so it sits inline with the Run Now button. */
+.seed-season {
+    width: 6.5rem;
+    display: inline-block;
+    margin-right: 0.4rem;
+}

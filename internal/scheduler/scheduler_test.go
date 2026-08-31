@@ -765,3 +765,179 @@ func TestSchedulerPanicErrorIsIdentifiable(t *testing.T) {
 		t.Errorf("err = %v, want it to name the panic value", err)
 	}
 }
+
+// A manual-only job is registered, reports itself, and waits -- it must never
+// fire on its own, however long the process runs.
+func TestSchedulerManualOnlyJobNeverRunsOnItsOwn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var runs atomic.Int64
+
+		s := New(discardLogger())
+		s.Add(Job{
+			Name:       "seed",
+			ManualOnly: true,
+			Run: func(ctx context.Context) error {
+				runs.Add(1)
+				return nil
+			},
+		})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		s.Start(ctx)
+
+		synctest.Sleep(72 * time.Hour)
+		if got := runs.Load(); got != 0 {
+			t.Fatalf("runs = %d after three days, want 0", got)
+		}
+
+		status := s.Status()[0]
+		if !status.Manual {
+			t.Error("Status.Manual = false, want true so the page can say why there is no next run")
+		}
+		if !status.NextRun.IsZero() {
+			t.Errorf("NextRun = %v, want zero for a job that is never scheduled", status.NextRun)
+		}
+
+		cancel()
+		s.Wait()
+	})
+}
+
+// Triggering it runs it once, through the same path as any other job: the run
+// is recorded, and a second trigger while one is pending is still refused.
+func TestSchedulerManualOnlyJobRunsWhenTriggered(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var runs atomic.Int64
+
+		s := New(discardLogger())
+		s.Add(Job{
+			Name:       "seed",
+			ManualOnly: true,
+			Run: func(ctx context.Context) error {
+				runs.Add(1)
+				return nil
+			},
+		})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		s.Start(ctx)
+		synctest.Wait()
+
+		if err := s.Trigger("seed"); err != nil {
+			t.Fatalf("Trigger() = %v, want nil", err)
+		}
+		synctest.Wait()
+
+		if got := runs.Load(); got != 1 {
+			t.Fatalf("runs = %d, want 1", got)
+		}
+		if status := s.Status()[0]; status.LastSuccess.IsZero() {
+			t.Error("LastSuccess is zero, want a manual run recorded like any other")
+		}
+
+		// And it stays manual: no timer was armed by the run just completed.
+		synctest.Sleep(72 * time.Hour)
+		if got := runs.Load(); got != 1 {
+			t.Errorf("runs = %d after a manual run plus three days, want 1", got)
+		}
+
+		cancel()
+		s.Wait()
+	})
+}
+
+func TestSchedulerAcceptsManualOnlyJobWithoutSchedule(t *testing.T) {
+	s := New(discardLogger())
+	s.Add(Job{Name: "seed", ManualOnly: true, Run: func(ctx context.Context) error { return nil }})
+
+	if len(s.jobs) != 1 {
+		t.Fatalf("registered %d jobs, want 1 (ManualOnly is a schedule in its own right)", len(s.jobs))
+	}
+}
+
+// A manual trigger can hand the run a value. The plumbing matters because the
+// alternative -- a field somewhere that the trigger sets and the run reads --
+// lets a second, rejected trigger change what an already-queued run will do.
+func TestSchedulerTriggerPassesArgsToTheRun(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		got := make(chan []string, 1)
+
+		s := New(discardLogger())
+		s.Add(Job{
+			Name:       "seed",
+			ManualOnly: true,
+			// A Timeout is essential to this test, not incidental: it makes
+			// invoke derive a second context, which is where the args were
+			// once dropped.
+			Timeout: time.Hour,
+			Run: func(ctx context.Context) error {
+				got <- ArgsFrom(ctx)
+				return nil
+			},
+		})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		s.Start(ctx)
+		synctest.Wait()
+
+		if err := s.Trigger("seed", "2019"); err != nil {
+			t.Fatalf("Trigger() = %v, want nil", err)
+		}
+		synctest.Wait()
+
+		args := <-got
+		if len(args) != 1 || args[0] != "2019" {
+			t.Fatalf("ArgsFrom() = %v, want [2019]", args)
+		}
+
+		cancel()
+		s.Wait()
+	})
+}
+
+// A scheduled run was triggered by nobody, so it must not inherit the arguments
+// of whatever manual run happened to come before it.
+func TestSchedulerScheduledRunHasNoArgs(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		got := make(chan []string, 2)
+
+		s := New(discardLogger())
+		s.Add(Job{
+			Name:     "sync",
+			Interval: time.Minute,
+			Run: func(ctx context.Context) error {
+				got <- ArgsFrom(ctx)
+				return nil
+			},
+		})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		s.Start(ctx)
+		synctest.Wait()
+
+		if err := s.Trigger("sync", "2019"); err != nil {
+			t.Fatalf("Trigger() = %v, want nil", err)
+		}
+		synctest.Wait()
+		if args := <-got; len(args) != 1 {
+			t.Fatalf("manual run args = %v, want [2019]", args)
+		}
+
+		// The next run comes from the timer, not from anyone asking.
+		synctest.Sleep(time.Minute)
+		if args := <-got; args != nil {
+			t.Errorf("scheduled run args = %v, want nil", args)
+		}
+
+		cancel()
+		s.Wait()
+	})
+}
+
+// ArgsFrom on a context that never carried any must not panic on the type
+// assertion -- scheduled runs take exactly this path.
+func TestArgsFromPlainContext(t *testing.T) {
+	if args := ArgsFrom(t.Context()); args != nil {
+		t.Errorf("ArgsFrom() = %v, want nil", args)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"syscall"
 	"time"
 	// Embed the IANA timezone database so LoadLocation works regardless of
@@ -40,6 +41,12 @@ const syncRunTimeout = 5 * time.Minute
 // calendarRunTimeout bounds a single calendar sync run, which covers many
 // seasons and so takes longer than an incremental game sync.
 const calendarRunTimeout = 10 * time.Minute
+
+// seedRunTimeout bounds a full seed. A seed walks venues, teams, the calendar
+// and then every game and line of a season, so it is far longer than any
+// incremental run -- and it is triggered by hand, not on a schedule, so a
+// generous bound costs nothing.
+const seedRunTimeout = 30 * time.Minute
 
 func main() {
 	// Load configuration.
@@ -304,6 +311,20 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			Timeout:  calendarRunTimeout,
 			Run:      syncService.SyncAllCalendars,
 		})
+
+		// Teams and venues are synced by nothing else. The periodic job covers
+		// games and lines only, and syncGames skips any game whose teams it
+		// cannot find -- so on an unseeded database every sync reports success
+		// and stores nothing. This is the one action that fills that gap, and
+		// it is manual because it is needed once a season, not on a timer.
+		sched.Add(scheduler.Job{
+			Name:       "cfb-seed",
+			ManualOnly: true,
+			Timeout:    seedRunTimeout,
+			Run: func(ctx context.Context) error {
+				return syncService.SeedAll(ctx, seedSeason(ctx, syncService.GetCurrentSeasonYear()), nil, nil)
+			},
+		})
 	} else {
 		logger.Warn("CFB_DATA_API_KEY not set, football sync disabled")
 	}
@@ -319,9 +340,42 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			Timeout:  syncRunTimeout,
 			Run:      cbbSyncService.SyncGamesAndLines,
 		})
+
+		// As above, and more so: the basketball incremental sync only looks at
+		// a few days either side of today, so the season only exists at all if
+		// something seeded it.
+		sched.Add(scheduler.Job{
+			Name:       "cbb-seed",
+			ManualOnly: true,
+			Timeout:    seedRunTimeout,
+			Run: func(ctx context.Context) error {
+				return cbbSyncService.SeedAll(ctx, seedSeason(ctx, cbbdata.GetCurrentSeason()))
+			},
+		})
 	} else {
 		logger.Warn("CBB_DATA_API_KEY not set, basketball sync disabled")
 	}
+}
+
+// seedSeason is the season a manual seed was asked for, or fallback when the
+// trigger named none.
+//
+// The value has already been validated by the admin service, which is where an
+// operator can be told what went wrong. Reaching here with something
+// unparseable would mean a caller bypassed that, so the safe reading is the
+// current season rather than a year nobody asked for.
+func seedSeason(ctx context.Context, fallback int) int {
+	args := scheduler.ArgsFrom(ctx)
+	if len(args) == 0 {
+		return fallback
+	}
+
+	year, err := strconv.Atoi(args[0])
+	if err != nil {
+		slog.Warn("ignoring unparseable seed season", "value", args[0], "using", fallback)
+		return fallback
+	}
+	return year
 }
 
 // applyMiddleware applies middleware in reverse order (first middleware wraps outermost).

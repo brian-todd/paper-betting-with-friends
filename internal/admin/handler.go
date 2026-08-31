@@ -130,6 +130,8 @@ func errorMessage(err error) string {
 		return "No sync job by that name is registered."
 	case errors.Is(err, scheduler.ErrRunPending):
 		return "That sync is already queued to run."
+	case errors.Is(err, ErrInvalidSeason):
+		return "Enter a season year from 2002 onwards, or leave it blank for the current season."
 	default:
 		return "Something went wrong. Check the logs for details."
 	}
@@ -478,7 +480,11 @@ func (h *Handler) renderSync(w http.ResponseWriter, r *http.Request, status int,
 func (h *Handler) RunSync(w http.ResponseWriter, r *http.Request) {
 	job := r.PathValue("job")
 
-	if err := h.service.TriggerSync(auth.UserFromContext(r.Context()), job); err != nil {
+	// Only the seed jobs read a season, and it is optional even for them: blank
+	// means whatever season the app currently believes it is in.
+	season := strings.TrimSpace(r.FormValue("season"))
+
+	if err := h.service.TriggerSync(auth.UserFromContext(r.Context()), job, season); err != nil {
 		slog.Error("failed to trigger sync", "job", job, "error", err)
 		h.renderSync(w, r, http.StatusBadRequest, errorMessage(err))
 		return
