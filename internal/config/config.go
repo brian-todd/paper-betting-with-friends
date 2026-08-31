@@ -23,6 +23,11 @@ const (
 // the repository, so it authenticates nobody -- see Validate.
 const defaultSessionKey = "development-secret-key-change-in-production"
 
+// defaultDatabaseURL is the local development database Load falls back to.
+// Reaching for it in production means DATABASE_URL never arrived -- see
+// Validate.
+const defaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/betting_tracker?sslmode=disable"
+
 // minSessionKeyBytes is the shortest session key accepted in production. The
 // key is the HMAC secret behind every session cookie, and it is the only thing
 // standing between a forged cookie and the admin portal.
@@ -75,7 +80,7 @@ func Load() *Config {
 	_ = godotenv.Load()
 
 	return &Config{
-		DatabaseURL:         getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/betting_tracker?sslmode=disable"),
+		DatabaseURL:         getEnv("DATABASE_URL", defaultDatabaseURL),
 		SessionKey:          getEnv("SESSION_KEY", defaultSessionKey),
 		Port:                getEnv("PORT", "8080"),
 		Env:                 getEnv("ENV", EnvDevelopment),
@@ -110,6 +115,18 @@ func (c *Config) Validate() error {
 
 	if !c.IsProduction() {
 		return nil
+	}
+
+	// getEnv treats an empty value as absent, so an unset variable and one set
+	// to "" -- which is what an unresolved platform reference like
+	// ${{Postgres.DATABASE_URL}} produces -- both land here. Without this the
+	// server dials localhost and reports "connection refused" against an
+	// address nobody configured, which says nothing about the actual mistake.
+	if c.DatabaseURL == defaultDatabaseURL {
+		return errors.New("DATABASE_URL is not set; the server fell back to the localhost " +
+			"development default. If it is set through a platform reference such as " +
+			"${{Postgres.DATABASE_URL}}, check that the reference resolves and that the " +
+			"database service name matches")
 	}
 
 	if c.SessionKey == defaultSessionKey {

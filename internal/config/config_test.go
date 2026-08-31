@@ -205,10 +205,13 @@ func TestValidate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := tt.cfg
-			// Every case above is about the session key or ENV. Give the pool a
-			// usable size so none of them can pass for the wrong reason; the
-			// pool has its own test below.
+			// Every case above is about the session key or ENV. Give the pool
+			// and the database URL usable values so none of them can pass or
+			// fail for the wrong reason; both have their own tests below.
 			cfg.DBMaxOpenConns = 20
+			if cfg.DatabaseURL == "" {
+				cfg.DatabaseURL = "postgres://user:pw@db.example.com:5432/app"
+			}
 
 			err := cfg.Validate()
 
@@ -224,6 +227,41 @@ func TestValidate(t *testing.T) {
 
 // An unlimited pool is database/sql's default and is the thing the setting
 // exists to prevent, so zero must not quietly pass through as "no limit".
+// An unresolved platform reference resolves to an empty string, which getEnv
+// treats as absent -- so the server would otherwise dial localhost in
+// production and report "connection refused" for an address nobody configured.
+func TestValidateRejectsTheDevelopmentDatabaseInProduction(t *testing.T) {
+	base := Config{Env: EnvProduction, SessionKey: strings.Repeat("a", minSessionKeyBytes), DBMaxOpenConns: 20}
+
+	t.Run("production rejects the development default", func(t *testing.T) {
+		cfg := base
+		cfg.DatabaseURL = defaultDatabaseURL
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("Validate() = nil, want an error")
+		}
+		if !strings.Contains(err.Error(), "DATABASE_URL") {
+			t.Errorf("error = %q, want it to name DATABASE_URL", err)
+		}
+	})
+
+	t.Run("production accepts a real database url", func(t *testing.T) {
+		cfg := base
+		cfg.DatabaseURL = "postgres://user:pw@db.example.com:5432/app"
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() = %v, want nil", err)
+		}
+	})
+
+	// Development is where the default belongs, so it must stay usable there.
+	t.Run("development accepts the default", func(t *testing.T) {
+		cfg := Config{Env: EnvDevelopment, SessionKey: defaultSessionKey, DatabaseURL: defaultDatabaseURL, DBMaxOpenConns: 20}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() = %v, want nil", err)
+		}
+	})
+}
+
 func TestValidateRejectsUnusablePoolSize(t *testing.T) {
 	for _, size := range []int{0, -1} {
 		cfg := Config{Env: EnvDevelopment, SessionKey: defaultSessionKey, DBMaxOpenConns: size}
@@ -238,6 +276,7 @@ func TestValidateRejectsUnusablePoolSize(t *testing.T) {
 func TestLoadDefaultsAreValidForDevelopment(t *testing.T) {
 	t.Setenv("ENV", "")
 	t.Setenv("SESSION_KEY", "")
+	t.Setenv("DATABASE_URL", "")
 
 	if err := Load().Validate(); err != nil {
 		t.Errorf("default configuration does not validate: %v", err)

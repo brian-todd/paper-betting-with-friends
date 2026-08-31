@@ -137,9 +137,21 @@ func (r *Renderer) loadTemplates() error {
 	layoutPath := path.Join(templateDir, "layouts", "base.html")
 
 	// Load page templates.
-	pages, err := fs.Glob(r.files, path.Join(templateDir, "pages", "*.html"))
+	pagesDir := path.Join(templateDir, "pages")
+	pages, err := fs.Glob(r.files, path.Join(pagesDir, "*.html"))
 	if err != nil {
 		return fmt.Errorf("failed to glob page templates: %w", err)
+	}
+
+	// fs.Glob reports a directory that does not exist as no matches rather than
+	// an error, so without this the renderer builds successfully with nothing in
+	// it and the failure only surfaces as a 500 on every page. The way that
+	// actually happens in production is ENV being unset: main then passes
+	// os.DirFS(".") instead of the embedded assets, and the image contains
+	// nothing but the binary.
+	if len(pages) == 0 {
+		return fmt.Errorf("found no page templates in %s; if this is a deployment, "+
+			"check that ENV is set to production so the embedded assets are used", pagesDir)
 	}
 
 	// Template functions available in all templates.
