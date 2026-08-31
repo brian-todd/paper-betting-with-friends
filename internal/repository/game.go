@@ -68,7 +68,7 @@ type GameFilter struct {
 
 	// Location resolves Weekdays and StartHour/EndHour. Those are calendar
 	// questions, not instants, so they are meaningless without it -- see the
-	// timezone rules in CLAUDE.md. Required only when one of them is set.
+	// timezone rules in AGENTS.md. Required only when one of them is set.
 	Location *time.Location
 }
 
