@@ -43,6 +43,7 @@ type Service struct {
 	moneyLineOddsRepo *repository.MoneyLineOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
 	betPeriodRepo     *repository.BetPeriodRepository
+	holyLockRepo      *repository.HolyLockRepository
 }
 
 // NewService creates a new bets service.
@@ -61,6 +62,7 @@ func NewService(db *gorm.DB) *Service {
 		moneyLineOddsRepo: repository.NewMoneyLineOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
 		betPeriodRepo:     repository.NewBetPeriodRepository(db),
+		holyLockRepo:      repository.NewHolyLockRepository(db),
 	}
 }
 
@@ -71,6 +73,9 @@ type CreateSpreadBetInput struct {
 	GameID   uuid.UUID
 	Pick     models.SpreadPick
 	Stake    decimal.Decimal
+	// HolyLock nominates this bet as the week's Holy Lock as it is placed.
+	// Placement is refused outright if the week's slot is already taken.
+	HolyLock bool
 	// For existing odds.
 	OddsID *uuid.UUID
 	// For custom odds.
@@ -102,6 +107,16 @@ func (s *Service) CreateSpreadBet(input CreateSpreadBetInput) (*models.SpreadBet
 		return nil, ErrNotLeagueMember
 	}
 
+	// Checked before the stake is deducted and before the odds are resolved: a
+	// custom line is written as a side effect of resolving, so a refusal after
+	// that point would leave an orphan odds row behind as well as needing a
+	// compensating refund.
+	if input.HolyLock {
+		if err := s.ensureHolyLockAvailable(input.UserID, input.LeagueID, *game); err != nil {
+			return nil, err
+		}
+	}
+
 	selection, err := s.resolveSpreadOdds(input.GameID, input.Pick, input.OddsID, input.CustomSpread, input.CustomOdds)
 	if err != nil {
 		return nil, err
@@ -125,6 +140,7 @@ func (s *Service) CreateSpreadBet(input CreateSpreadBetInput) (*models.SpreadBet
 		OddsSnapshot:   selection.Odds,
 		Stake:          input.Stake,
 		Status:         models.BetStatusPending,
+		IsHolyLock:     input.HolyLock,
 	}
 
 	if err := s.spreadBetRepo.Create(bet); err != nil {
@@ -143,6 +159,9 @@ type CreateMoneyLineBetInput struct {
 	GameID   uuid.UUID
 	Pick     models.MoneyLinePick
 	Stake    decimal.Decimal
+	// HolyLock nominates this bet as the week's Holy Lock as it is placed.
+	// Placement is refused outright if the week's slot is already taken.
+	HolyLock bool
 	// For existing odds.
 	OddsID *uuid.UUID
 	// For custom odds.
@@ -174,6 +193,16 @@ func (s *Service) CreateMoneyLineBet(input CreateMoneyLineBetInput) (*models.Mon
 		return nil, ErrNotLeagueMember
 	}
 
+	// Checked before the stake is deducted and before the odds are resolved: a
+	// custom line is written as a side effect of resolving, so a refusal after
+	// that point would leave an orphan odds row behind as well as needing a
+	// compensating refund.
+	if input.HolyLock {
+		if err := s.ensureHolyLockAvailable(input.UserID, input.LeagueID, *game); err != nil {
+			return nil, err
+		}
+	}
+
 	selection, err := s.resolveMoneyLineOdds(input.GameID, input.Pick, input.OddsID, input.CustomHomeOdds, input.CustomAwayOdds)
 	if err != nil {
 		return nil, err
@@ -196,6 +225,7 @@ func (s *Service) CreateMoneyLineBet(input CreateMoneyLineBetInput) (*models.Mon
 		OddsSnapshot:    selection.Odds,
 		Stake:           input.Stake,
 		Status:          models.BetStatusPending,
+		IsHolyLock:      input.HolyLock,
 	}
 
 	if err := s.moneyLineBetRepo.Create(bet); err != nil {
@@ -214,6 +244,9 @@ type CreateOverUnderBetInput struct {
 	GameID   uuid.UUID
 	Pick     models.OverUnderPick
 	Stake    decimal.Decimal
+	// HolyLock nominates this bet as the week's Holy Lock as it is placed.
+	// Placement is refused outright if the week's slot is already taken.
+	HolyLock bool
 	// For existing odds.
 	OddsID *uuid.UUID
 	// For custom odds.
@@ -246,6 +279,16 @@ func (s *Service) CreateOverUnderBet(input CreateOverUnderBetInput) (*models.Ove
 		return nil, ErrNotLeagueMember
 	}
 
+	// Checked before the stake is deducted and before the odds are resolved: a
+	// custom line is written as a side effect of resolving, so a refusal after
+	// that point would leave an orphan odds row behind as well as needing a
+	// compensating refund.
+	if input.HolyLock {
+		if err := s.ensureHolyLockAvailable(input.UserID, input.LeagueID, *game); err != nil {
+			return nil, err
+		}
+	}
+
 	selection, err := s.resolveOverUnderOdds(
 		input.GameID, input.Pick, input.OddsID,
 		input.CustomTotal, input.CustomOverOdds, input.CustomUnderOdds,
@@ -272,6 +315,7 @@ func (s *Service) CreateOverUnderBet(input CreateOverUnderBetInput) (*models.Ove
 		OddsSnapshot:    selection.Odds,
 		Stake:           input.Stake,
 		Status:          models.BetStatusPending,
+		IsHolyLock:      input.HolyLock,
 	}
 
 	if err := s.overUnderBetRepo.Create(bet); err != nil {
@@ -311,6 +355,8 @@ func (s *Service) CancelSpreadBet(betID, userID uuid.UUID) error {
 	}
 
 	bet.Status = models.BetStatusVoid
+	// A cancelled bet gives its week's Holy Lock slot back.
+	bet.IsHolyLock = false
 	if err := s.spreadBetRepo.Update(bet); err != nil {
 		return err
 	}
@@ -347,6 +393,8 @@ func (s *Service) CancelMoneyLineBet(betID, userID uuid.UUID) error {
 	}
 
 	bet.Status = models.BetStatusVoid
+	// A cancelled bet gives its week's Holy Lock slot back.
+	bet.IsHolyLock = false
 	if err := s.moneyLineBetRepo.Update(bet); err != nil {
 		return err
 	}
@@ -383,6 +431,8 @@ func (s *Service) CancelOverUnderBet(betID, userID uuid.UUID) error {
 	}
 
 	bet.Status = models.BetStatusVoid
+	// A cancelled bet gives its week's Holy Lock slot back.
+	bet.IsHolyLock = false
 	if err := s.overUnderBetRepo.Update(bet); err != nil {
 		return err
 	}
@@ -580,6 +630,13 @@ type BetView struct {
 	// LineOptions are the lines on offer for this game, populated only for an
 	// editable bet since nothing else needs them.
 	LineOptions []BetLineOption
+
+	// IsHolyLock marks the bet its owner nominated for this league and week.
+	IsHolyLock bool
+	// HolyLockEligible is true while the page may offer to nominate this bet.
+	// It is set only for a user's own list -- see GetUserBets -- since the
+	// admin browser spans every user and has no button to offer.
+	HolyLockEligible bool
 }
 
 // BetLineOption is one line a bet can be moved to in the edit form.
@@ -628,6 +685,7 @@ func (s *Service) GetUserBets(userID uuid.UUID, filter BetListFilter) (*BetListR
 	}
 
 	bets := s.betViews(spreadBets, moneyLineBets, overUnderBets)
+	s.markHolyLockEligibility(userID, bets)
 
 	// Get filter options from the periods the user actually has bets in.
 	periods, err := s.betPeriodRepo.FindByUser(userID)
@@ -679,9 +737,11 @@ func (s *Service) betViews(spreadBets []models.SpreadBet, moneyLineBets []models
 			CreatedAt:    bet.CreatedAt,
 			OddsID:       bet.SpreadOddsID,
 			Editable:     editable(bet.Status, bet.Game, now),
+			IsHolyLock:   bet.IsHolyLock,
 		}
 		if view.Editable {
-			view.LineOptions = lines.spread(bet.Game)
+			view.LineOptions = withCurrentLine(lines.spread(bet.Game), bet.SpreadOddsID,
+				fmt.Sprintf("Your line: %s %s (%s)", pick, formatSpread(bet.SpreadSnapshot), formatOdds(bet.OddsSnapshot)))
 		}
 		bets = append(bets, view)
 	}
@@ -707,9 +767,11 @@ func (s *Service) betViews(spreadBets []models.SpreadBet, moneyLineBets []models
 			CreatedAt:    bet.CreatedAt,
 			OddsID:       bet.MoneyLineOddsID,
 			Editable:     editable(bet.Status, bet.Game, now),
+			IsHolyLock:   bet.IsHolyLock,
 		}
 		if view.Editable {
-			view.LineOptions = lines.moneyLine(bet.Game)
+			view.LineOptions = withCurrentLine(lines.moneyLine(bet.Game), bet.MoneyLineOddsID,
+				fmt.Sprintf("Your line: %s %s", pick, formatOdds(bet.OddsSnapshot)))
 		}
 		bets = append(bets, view)
 	}
@@ -735,9 +797,11 @@ func (s *Service) betViews(spreadBets []models.SpreadBet, moneyLineBets []models
 			CreatedAt:    bet.CreatedAt,
 			OddsID:       bet.OverUnderOddsID,
 			Editable:     editable(bet.Status, bet.Game, now),
+			IsHolyLock:   bet.IsHolyLock,
 		}
 		if view.Editable {
-			view.LineOptions = lines.overUnder(bet.Game)
+			view.LineOptions = withCurrentLine(lines.overUnder(bet.Game), bet.OverUnderOddsID,
+				fmt.Sprintf("Your line: %s %s (%s)", pick, bet.TotalSnapshot.String(), formatOdds(bet.OddsSnapshot)))
 		}
 		bets = append(bets, view)
 	}
@@ -802,6 +866,22 @@ func editable(status models.BetStatus, game models.Game, now time.Time) bool {
 	return status == models.BetStatusPending && game.ScheduledAt.After(now)
 }
 
+// withCurrentLine keeps the line a bet is actually on selectable in its edit
+// form.
+//
+// Custom lines are left out of the book list above, so a bet placed on one has
+// no matching entry. Without this the select would open on an unrelated line,
+// and an edit that only meant to change the stake would silently move the bet
+// onto it.
+func withCurrentLine(options []BetLineOption, oddsID uuid.UUID, label string) []BetLineOption {
+	for _, option := range options {
+		if option.OddsID == oddsID {
+			return options
+		}
+	}
+	return append([]BetLineOption{{OddsID: oddsID, Label: label}}, options...)
+}
+
 // lineOptionCache builds the line choices for the edit form, remembering each
 // game so a list holding several bets on one game queries its odds once.
 type lineOptionCache struct {
@@ -825,7 +905,7 @@ func (c *lineOptionCache) spread(game models.Game) []BetLineOption {
 		return cached
 	}
 
-	odds, err := c.service.spreadOddsRepo.FindByGame(game.ID)
+	odds, err := c.service.spreadOddsRepo.FindBookLinesByGame(game.ID)
 	if err != nil {
 		// A missing line list costs the reader the dropdown, not the page, and
 		// they can still enter a custom line.
@@ -854,7 +934,7 @@ func (c *lineOptionCache) moneyLine(game models.Game) []BetLineOption {
 		return cached
 	}
 
-	odds, err := c.service.moneyLineOddsRepo.FindByGame(game.ID)
+	odds, err := c.service.moneyLineOddsRepo.FindBookLinesByGame(game.ID)
 	if err != nil {
 		slog.Error("failed to load money lines for bet edit", "game", game.ID, "error", err)
 		odds = nil
@@ -881,7 +961,7 @@ func (c *lineOptionCache) overUnder(game models.Game) []BetLineOption {
 		return cached
 	}
 
-	odds, err := c.service.overUnderOddsRepo.FindByGame(game.ID)
+	odds, err := c.service.overUnderOddsRepo.FindBookLinesByGame(game.ID)
 	if err != nil {
 		slog.Error("failed to load totals for bet edit", "game", game.ID, "error", err)
 		odds = nil

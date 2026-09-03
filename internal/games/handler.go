@@ -14,12 +14,28 @@ import (
 	"gorm.io/gorm"
 )
 
+// HolyLockReader reports which of a user's leagues already have their Holy Lock
+// taken for the week a game belongs to, keyed by league ID.
+//
+// It is a narrow interface for the same reason cfbdata's BetEvaluator is: the
+// bet slip needs one method off the bets service and nothing else of it.
+type HolyLockReader interface {
+	HolyLockConflicts(userID uuid.UUID, game models.Game) (map[string]string, error)
+}
+
 // Handler handles game HTTP requests.
 type Handler struct {
 	service    *Service
 	templates  *templates.Renderer
 	leagueRepo *repository.LeagueRepository
 	purseRepo  *repository.PurseRepository
+	holyLocks  HolyLockReader
+}
+
+// SetHolyLockReader wires in the source of Holy Lock conflicts for the bet slip.
+// The slip degrades to offering the checkbox unconditionally without it.
+func (h *Handler) SetHolyLockReader(reader HolyLockReader) {
+	h.holyLocks = reader
 }
 
 // NewHandler creates a new games handler.
@@ -219,6 +235,16 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		purseBalances[purse.LeagueID.String()] = purse.Balance.StringFixed(2)
 	}
 
+	// Which leagues already have this week's Holy Lock spoken for, so the slip
+	// can say so before the reader fills it in rather than only on submit.
+	var holyLockConflicts map[string]string
+	if h.holyLocks != nil {
+		holyLockConflicts, err = h.holyLocks.HolyLockConflicts(user.ID, gameDetail.Game)
+		if err != nil {
+			slog.Error("failed to fetching holy lock conflicts", "error", err)
+		}
+	}
+
 	// Build title from matchup.
 	title := gameDetail.Game.AwayTeam.Abbreviation + " @ " + gameDetail.Game.HomeTeam.Abbreviation
 
@@ -230,8 +256,11 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		"UnifiedOdds":   gameDetail.UnifiedOdds,
 		"UserLeagues":   userLeagues,
 		"PurseBalances": purseBalances,
-		"Success":       r.URL.Query().Get("success"),
-		"Error":         r.URL.Query().Get("error"),
+		// Basketball games carry no week, so their bets can never be a Holy Lock.
+		"HolyLockEligible":  gameDetail.Game.WeekID != nil,
+		"HolyLockConflicts": holyLockConflicts,
+		"Success":           r.URL.Query().Get("success"),
+		"Error":             r.URL.Query().Get("error"),
 	})
 }
 

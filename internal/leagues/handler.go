@@ -170,6 +170,13 @@ func (h *Handler) ShowLeague(w http.ResponseWriter, r *http.Request) {
 		weeklyStats = nil
 	}
 
+	holyLocks, err := h.service.GetHolyLocks(leagueID, user.ID)
+	if err != nil {
+		slog.Error("failed to fetch holy locks", "error", err)
+		// Continue without the Holy Lock section.
+		holyLocks = nil
+	}
+
 	h.templates.Render(w, "league_detail", map[string]any{
 		"Title":        details.League.Name,
 		"User":         user,
@@ -180,6 +187,7 @@ func (h *Handler) ShowLeague(w http.ResponseWriter, r *http.Request) {
 		"PurseBalance": purseBalance,
 		"Leaderboard":  leaderboard,
 		"WeeklyStats":  weeklyStats,
+		"HolyLocks":    holyLocks,
 		"Success":      r.URL.Query().Get("success"),
 		"Error":        r.URL.Query().Get("error"),
 	})

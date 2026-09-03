@@ -1009,12 +1009,14 @@ button.btn {
     background: rgba(180, 83, 9, 0.06);
 }
 
-/* Weekly Breakdown */
-.weekly-stats-card {
+/* Weekly Breakdown and Holy Locks -- the same disclosure card */
+.weekly-stats-card,
+.holy-locks-card {
     margin-top: 1.5rem;
 }
 
-.weekly-stats-card summary {
+.weekly-stats-card summary,
+.holy-locks-card summary {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -1023,25 +1025,30 @@ button.btn {
     user-select: none;
 }
 
-.weekly-stats-card summary::-webkit-details-marker {
+.weekly-stats-card summary::-webkit-details-marker,
+.holy-locks-card summary::-webkit-details-marker {
     display: none;
 }
 
-.weekly-stats-card summary::before {
+.weekly-stats-card summary::before,
+.holy-locks-card summary::before {
     content: "▸";
     color: var(--color-text-muted);
     transition: transform 0.15s ease;
 }
 
-.weekly-stats-card[open] summary::before {
+.weekly-stats-card[open] summary::before,
+.holy-locks-card[open] summary::before {
     transform: rotate(90deg);
 }
 
-.weekly-stats-card summary h3 {
+.weekly-stats-card summary h3,
+.holy-locks-card summary h3 {
     margin: 0;
 }
 
-.weekly-stats-card[open] summary {
+.weekly-stats-card[open] summary,
+.holy-locks-card[open] summary {
     margin-bottom: 1rem;
     padding-bottom: 0.75rem;
     border-bottom: 1px solid var(--color-border);
@@ -2287,6 +2294,43 @@ button.btn {
 .badge-type-overunder {
     background: rgba(245, 158, 11, 0.2);
     color: #fcd34d;
+}
+
+.holy-lock-group {
+    border-top: 1px solid var(--color-border);
+    padding-top: 0.75rem;
+}
+
+.holy-lock-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.holy-lock-option input:disabled {
+    cursor: not-allowed;
+}
+
+.holy-lock-option:has(input:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.holy-lock-conflict {
+    display: block;
+    margin-top: 0.35rem;
+    color: var(--color-warning);
+}
+
+.badge-holy-lock {
+    background: rgba(234, 179, 8, 0.2);
+    color: #fcd34d;
+    padding: 0.1rem 0.3rem;
+}
+
+.lock-record {
+    white-space: nowrap;
 }
 
 /* Bet Status Badges */

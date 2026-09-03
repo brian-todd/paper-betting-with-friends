@@ -2,6 +2,7 @@ package bets
 
 import (
 	"errors"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -48,6 +49,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authMiddleware func(http.Ha
 	mux.Handle("POST /bets/spread/{id}/edit", wrap(h.UpdateSpreadBet))
 	mux.Handle("POST /bets/moneyline/{id}/edit", wrap(h.UpdateMoneyLineBet))
 	mux.Handle("POST /bets/overunder/{id}/edit", wrap(h.UpdateOverUnderBet))
+	mux.Handle("POST /bets/{type}/{id}/holy-lock", wrap(h.SetHolyLock))
+	mux.Handle("POST /bets/{type}/{id}/holy-lock/clear", wrap(h.ClearHolyLock))
 }
 
 // ListBets displays all bets for the current user.
@@ -86,7 +89,10 @@ func (h *Handler) ListBets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.templates.Render(w, "bets", map[string]any{
+	// A template that panics mid-render has already sent a 200 and part of the
+	// page, so this cannot become a 500 -- but an unchecked error here is how a
+	// truncated page reaches the reader with nothing in the log to explain it.
+	err = h.templates.Render(w, "bets", map[string]any{
 		"Title":          "My Bets",
 		"User":           user,
 		"Bets":           result.Bets,
@@ -97,6 +103,9 @@ func (h *Handler) ListBets(w http.ResponseWriter, r *http.Request) {
 		"SelectedWeek":   filter.Week,
 		"SelectedLeague": filter.LeagueID,
 	})
+	if err != nil {
+		slog.Error("failed to render bets page", "user", user.ID, "error", err)
+	}
 }
 
 // CreateSpreadBet handles creating a new spread bet.
@@ -137,6 +146,7 @@ func (h *Handler) CreateSpreadBet(w http.ResponseWriter, r *http.Request) {
 		GameID:   gameID,
 		Pick:     pick,
 		Stake:    stake,
+		HolyLock: r.FormValue("holy_lock") != "",
 	}
 
 	// Check if using existing odds or custom.
@@ -173,7 +183,7 @@ func (h *Handler) CreateSpreadBet(w http.ResponseWriter, r *http.Request) {
 	_, err = h.service.CreateSpreadBet(input)
 	if err != nil {
 		slog.Error("failed to creating spread bet", "error", err)
-		respondWithError(w, r, gameID, err)
+		h.respondWithError(w, r, gameID, user.ID, leagueID, err)
 		return
 	}
 
@@ -224,6 +234,7 @@ func (h *Handler) CreateMoneyLineBet(w http.ResponseWriter, r *http.Request) {
 		GameID:   gameID,
 		Pick:     pick,
 		Stake:    stake,
+		HolyLock: r.FormValue("holy_lock") != "",
 	}
 
 	// Check if using existing odds or custom.
@@ -260,7 +271,7 @@ func (h *Handler) CreateMoneyLineBet(w http.ResponseWriter, r *http.Request) {
 	_, err = h.service.CreateMoneyLineBet(input)
 	if err != nil {
 		slog.Error("failed to creating money line bet", "error", err)
-		respondWithError(w, r, gameID, err)
+		h.respondWithError(w, r, gameID, user.ID, leagueID, err)
 		return
 	}
 
@@ -311,6 +322,7 @@ func (h *Handler) CreateOverUnderBet(w http.ResponseWriter, r *http.Request) {
 		GameID:   gameID,
 		Pick:     pick,
 		Stake:    stake,
+		HolyLock: r.FormValue("holy_lock") != "",
 	}
 
 	// Check if using existing odds or custom.
@@ -354,7 +366,7 @@ func (h *Handler) CreateOverUnderBet(w http.ResponseWriter, r *http.Request) {
 	_, err = h.service.CreateOverUnderBet(input)
 	if err != nil {
 		slog.Error("failed to creating over/under bet", "error", err)
-		respondWithError(w, r, gameID, err)
+		h.respondWithError(w, r, gameID, user.ID, leagueID, err)
 		return
 	}
 
@@ -664,11 +676,24 @@ func respondWithSuccess(w http.ResponseWriter, r *http.Request, gameID, leagueID
 }
 
 // respondWithError sends an error HTML fragment for HTMX or redirects.
-func respondWithError(w http.ResponseWriter, r *http.Request, gameID uuid.UUID, err error) {
+//
+// It is a method rather than a plain function because a Holy Lock conflict has
+// to name the bet already holding the week, which a sentinel error cannot carry
+// and which is worth a query only once the placement has already failed.
+func (h *Handler) respondWithError(w http.ResponseWriter, r *http.Request, gameID, userID, leagueID uuid.UUID, err error) {
+	message := errorMessageText(err)
+	if errors.Is(err, ErrHolyLockExists) {
+		if detail := h.service.DescribeHolyLock(userID, leagueID, gameID); detail != "" {
+			message = "You already have a Holy Lock this week: " + detail + ". Remove it from My Bets to move it."
+		}
+	}
+
 	if isHTMXRequest(r) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// The detail is composed from team abbreviations, so it is escaped
+		// rather than trusted: this builds HTML by concatenation.
 		html := `<div class="alert alert-error alert-dismissible">
-			<span>` + errorMessageText(err) + `</span>
+			<span>` + template.HTMLEscapeString(message) + `</span>
 			<button type="button" class="alert-close" onclick="dismissAlert()">&times;</button>
 		</div>`
 		w.Write([]byte(html))
@@ -696,6 +721,12 @@ func errorMessageText(err error) string {
 		return "You must be a member of the selected league."
 	case errors.Is(err, ErrInsufficientFunds):
 		return "Insufficient funds in your purse for this bet."
+	case errors.Is(err, ErrBetNotFootballWeek):
+		return "Only bets on football games can be a Holy Lock."
+	case errors.Is(err, ErrHolyLockSettled):
+		return "This week's Holy Lock is locked in — its game has started."
+	case errors.Is(err, ErrHolyLockExists):
+		return "You already have a Holy Lock this week."
 	default:
 		return "An error occurred. Please try again."
 	}
@@ -720,7 +751,48 @@ func errorMessageCode(err error) string {
 		return "not_league_member"
 	case errors.Is(err, ErrInsufficientFunds):
 		return "insufficient_funds"
+	case errors.Is(err, ErrBetNotFootballWeek):
+		return "not_football_week"
+	case errors.Is(err, ErrHolyLockSettled):
+		return "holy_lock_settled"
+	case errors.Is(err, ErrHolyLockExists):
+		return "holy_lock_exists"
 	default:
 		return "error"
 	}
+}
+
+// SetHolyLock designates a bet as the caller's Holy Lock for its week.
+func (h *Handler) SetHolyLock(w http.ResponseWriter, r *http.Request) {
+	h.holyLock(w, r, h.service.SetHolyLock, "failed to set holy lock")
+}
+
+// ClearHolyLock removes the Holy Lock designation from a bet.
+func (h *Handler) ClearHolyLock(w http.ResponseWriter, r *http.Request) {
+	h.holyLock(w, r, h.service.ClearHolyLock, "failed to clear holy lock")
+}
+
+// holyLock is the shape both designation handlers share. The bet type comes
+// from the path rather than from three separate routes, as it does for the
+// admin status route, because the service already switches on it.
+func (h *Handler) holyLock(w http.ResponseWriter, r *http.Request, action func(string, uuid.UUID, uuid.UUID) error, logMsg string) {
+	user := auth.UserFromContext(r.Context())
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	betID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "Invalid bet ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := action(r.PathValue("type"), betID, user.ID); err != nil {
+		slog.Error(logMsg, "bet", betID, "error", err)
+		http.Error(w, errorMessageText(err), http.StatusBadRequest)
+		return
+	}
+
+	redirectBack(w, r)
 }

@@ -109,3 +109,110 @@ func TestBuildWeeklyStats(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildHolyLockWeeks(t *testing.T) {
+	me := uuid.New()
+	alice := uuid.New()
+	zed := uuid.New()
+
+	line := func(v string) *string { return &v }
+	row := func(user uuid.UUID, name string, week int, seasonType, betType, pick string, lineValue *string, odds string) repository.LeagueHolyLockRow {
+		return repository.LeagueHolyLockRow{
+			UserID:       user,
+			Username:     name,
+			Season:       2026,
+			Week:         week,
+			SeasonType:   seasonType,
+			BetType:      betType,
+			Status:       "pending",
+			Pick:         pick,
+			LineValue:    lineValue,
+			OddsSnapshot: decimal.RequireFromString(odds),
+			Stake:        decimal.RequireFromString("50"),
+			HomeAbbr:     "GT",
+			AwayAbbr:     "CLEM",
+		}
+	}
+
+	rows := []repository.LeagueHolyLockRow{
+		// Week 1, deliberately out of alphabetical order.
+		row(zed, "zed", 1, "regular", "overunder", "over", line("54.5"), "-110"),
+		row(alice, "Alice", 1, "regular", "moneyline", "away", nil, "150"),
+		row(me, "Me", 1, "regular", "spread", "home", line("-7.0"), "-110"),
+		// Week 2.
+		row(me, "Me", 2, "regular", "spread", "away", line("3.5"), "-110"),
+		// Postseason week 1 must not merge with regular week 1.
+		row(me, "Me", 1, "postseason", "overunder", "under", line("48.0"), "-110"),
+	}
+
+	weeks := buildHolyLockWeeks(rows, me)
+
+	if len(weeks) != 3 {
+		t.Fatalf("got %d week groups, want 3 (regular 1, regular 2, postseason 1)", len(weeks))
+	}
+
+	// Newest first, and the postseason sorts ahead of the regular season it follows.
+	wantLabels := []string{"2026 · Week 1 · Postseason", "2026 · Week 2", "2026 · Week 1"}
+	for i, want := range wantLabels {
+		if weeks[i].Label != want {
+			t.Errorf("week %d label = %q, want %q", i, weeks[i].Label, want)
+		}
+	}
+
+	// Regular week 1: current user first, then case-insensitive alphabetical.
+	regularWeek1 := weeks[2]
+	wantOrder := []string{"Me", "Alice", "zed"}
+	if len(regularWeek1.Rows) != len(wantOrder) {
+		t.Fatalf("regular week 1 has %d rows, want %d", len(regularWeek1.Rows), len(wantOrder))
+	}
+	for i, want := range wantOrder {
+		if regularWeek1.Rows[i].Username != want {
+			t.Errorf("regular week 1 row %d is %q, want %q", i, regularWeek1.Rows[i].Username, want)
+		}
+	}
+	if !regularWeek1.Rows[0].IsCurrentUser {
+		t.Error("the current user's row is not flagged")
+	}
+	if regularWeek1.Rows[1].IsCurrentUser {
+		t.Error("another member's row is flagged as the current user's")
+	}
+
+	// Each bet type renders its own pick shape.
+	wantPicks := map[string]string{"Me": "GT -7", "Alice": "CLEM +150", "zed": "Over 54.5"}
+	for _, entry := range regularWeek1.Rows {
+		if got := entry.Pick; got != wantPicks[entry.Username] {
+			t.Errorf("%s's pick = %q, want %q", entry.Username, got, wantPicks[entry.Username])
+		}
+		if entry.Matchup != "CLEM @ GT" {
+			t.Errorf("%s's matchup = %q, want %q", entry.Username, entry.Matchup, "CLEM @ GT")
+		}
+	}
+
+	// A positive spread keeps its sign, or a +3.5 dog reads as a favourite.
+	if got := weeks[1].Rows[0].Pick; got != "CLEM +3.5" {
+		t.Errorf("week 2 pick = %q, want %q", got, "CLEM +3.5")
+	}
+	if got := weeks[0].Rows[0].Pick; got != "Under 48" {
+		t.Errorf("postseason pick = %q, want %q", got, "Under 48")
+	}
+}
+
+func TestHolyLockWeekLabel(t *testing.T) {
+	tests := []struct {
+		season, week int
+		seasonType   string
+		want         string
+	}{
+		{2026, 1, "regular", "2026 · Week 1"},
+		// Without the suffix this collides with the line above, and a member
+		// legitimately holding both looks like a broken invariant.
+		{2026, 1, "postseason", "2026 · Week 1 · Postseason"},
+		{2026, -1, "regular", "2026"},
+	}
+
+	for _, tt := range tests {
+		if got := holyLockWeekLabel(tt.season, tt.week, tt.seasonType); got != tt.want {
+			t.Errorf("holyLockWeekLabel(%d, %d, %q) = %q, want %q", tt.season, tt.week, tt.seasonType, got, tt.want)
+		}
+	}
+}

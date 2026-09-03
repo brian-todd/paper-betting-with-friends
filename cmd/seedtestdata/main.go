@@ -268,13 +268,13 @@ func attachOdds(
 	for _, g := range games {
 		gm := gameOdds{game: g}
 
-		if odds, err := moneyLineRepo.FindByGame(g.ID); err == nil && len(odds) > 0 {
+		if odds, err := moneyLineRepo.FindBookLinesByGame(g.ID); err == nil && len(odds) > 0 {
 			gm.moneyLine = &odds[0]
 		}
-		if odds, err := spreadRepo.FindByGame(g.ID); err == nil && len(odds) > 0 {
+		if odds, err := spreadRepo.FindBookLinesByGame(g.ID); err == nil && len(odds) > 0 {
 			gm.spread = &odds[0]
 		}
-		if odds, err := overUnderRepo.FindByGame(g.ID); err == nil && len(odds) > 0 {
+		if odds, err := overUnderRepo.FindBookLinesByGame(g.ID); err == nil && len(odds) > 0 {
 			gm.overUnder = &odds[0]
 		}
 

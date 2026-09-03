@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/brian/paper-betting-with-friends/internal/bets"
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/google/uuid"
@@ -28,6 +30,7 @@ type Service struct {
 	leagueRepo    *repository.LeagueRepository
 	purseRepo     *repository.PurseRepository
 	betRecordRepo *repository.BetRecordRepository
+	holyLockRepo  *repository.HolyLockRepository
 }
 
 // NewService creates a new leagues service.
@@ -36,6 +39,7 @@ func NewService(db *gorm.DB) *Service {
 		leagueRepo:    repository.NewLeagueRepository(db),
 		purseRepo:     repository.NewPurseRepository(db),
 		betRecordRepo: repository.NewBetRecordRepository(db),
+		holyLockRepo:  repository.NewHolyLockRepository(db),
 	}
 }
 
@@ -286,6 +290,10 @@ type LeaderboardEntry struct {
 	Wins     int
 	Losses   int
 	Pushes   int
+	// The Lock* counts are the same record over the Holy Locks alone.
+	LockWins   int
+	LockLosses int
+	LockPushes int
 }
 
 // WeeklyUserStats aggregates one member's bets for one week.
@@ -443,9 +451,121 @@ func (s *Service) GetLeaderboard(leagueID uuid.UUID) ([]LeaderboardEntry, error)
 			entry.Wins = rec.Wins
 			entry.Losses = rec.Losses
 			entry.Pushes = rec.Pushes
+			entry.LockWins = rec.LockWins
+			entry.LockLosses = rec.LockLosses
+			entry.LockPushes = rec.LockPushes
 		}
 		entries = append(entries, entry)
 	}
 
 	return entries, nil
+}
+
+// HolyLockEntry is one member's Holy Lock for a week, as displayed.
+type HolyLockEntry struct {
+	Username      string
+	IsCurrentUser bool
+	Matchup       string // "CLEM @ GT"
+	Pick          string // "GT -7" / "GT +150" / "Over 54.5"
+	Stake         decimal.Decimal
+	Status        models.BetStatus
+	ScheduledAt   time.Time
+}
+
+// HolyLockWeek groups a week's Holy Locks.
+type HolyLockWeek struct {
+	Label string
+	Rows  []HolyLockEntry
+}
+
+// GetHolyLocks returns each member's Holy Lock per week, newest week first.
+// Within each week the current user's row sorts first, matching GetWeeklyStats.
+func (s *Service) GetHolyLocks(leagueID, currentUserID uuid.UUID) ([]HolyLockWeek, error) {
+	rows, err := s.holyLockRepo.FindLeagueLocks(leagueID)
+	if err != nil {
+		return nil, err
+	}
+	return buildHolyLockWeeks(rows, currentUserID), nil
+}
+
+// buildHolyLockWeeks groups flat lock rows by week.
+//
+// A member with no lock that week simply does not appear, the same way the
+// weekly breakdown drops a member with no bets, which keeps this a pure
+// function over the rows it is handed.
+func buildHolyLockWeeks(rows []repository.LeagueHolyLockRow, currentUserID uuid.UUID) []HolyLockWeek {
+	type weekKey struct {
+		season     int
+		week       int
+		seasonType string
+	}
+
+	grouped := make(map[weekKey][]HolyLockEntry)
+	for _, row := range rows {
+		key := weekKey{season: row.Season, week: row.Week, seasonType: row.SeasonType}
+		grouped[key] = append(grouped[key], HolyLockEntry{
+			Username:      row.Username,
+			IsCurrentUser: row.UserID == currentUserID,
+			Matchup:       row.AwayAbbr + " @ " + row.HomeAbbr,
+			Pick:          bets.HolyLockPick(row),
+			Stake:         row.Stake,
+			Status:        models.BetStatus(row.Status),
+			ScheduledAt:   row.ScheduledAt,
+		})
+	}
+
+	weeks := make([]weekKey, 0, len(grouped))
+	for wk := range grouped {
+		weeks = append(weeks, wk)
+	}
+	// Newest first. The postseason sorts ahead of every regular week because it
+	// is played after all of them -- its week numbers restart at 1, so ranking
+	// the season type has to come before comparing them.
+	sort.Slice(weeks, func(i, j int) bool {
+		if weeks[i].season != weeks[j].season {
+			return weeks[i].season > weeks[j].season
+		}
+		if ri, rj := seasonTypeRank(weeks[i].seasonType), seasonTypeRank(weeks[j].seasonType); ri != rj {
+			return ri > rj
+		}
+		return weeks[i].week > weeks[j].week
+	})
+
+	result := make([]HolyLockWeek, 0, len(weeks))
+	for _, wk := range weeks {
+		entries := grouped[wk]
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].IsCurrentUser != entries[j].IsCurrentUser {
+				return entries[i].IsCurrentUser
+			}
+			return strings.ToLower(entries[i].Username) < strings.ToLower(entries[j].Username)
+		})
+		result = append(result, HolyLockWeek{
+			Label: holyLockWeekLabel(wk.season, wk.week, wk.seasonType),
+			Rows:  entries,
+		})
+	}
+	return result
+}
+
+// seasonTypeRank orders the parts of a season chronologically.
+func seasonTypeRank(seasonType string) int {
+	if seasonType == string(models.SeasonTypePostseason) {
+		return 1
+	}
+	return 0
+}
+
+// holyLockWeekLabel names a week, distinguishing the postseason.
+//
+// weekLabel alone collapses regular week 1 and postseason week 1 onto one
+// heading. The one-lock-per-week rule is keyed on the week row, which treats
+// them as different weeks, so without the suffix a member legitimately holding
+// both would appear twice under a single heading and read as a bug.
+func holyLockWeekLabel(season, week int, seasonType string) string {
+	label := weekLabel(season, week)
+	if seasonType == string(models.SeasonTypePostseason) {
+		return label + " · Postseason"
+	}
+	return label
 }

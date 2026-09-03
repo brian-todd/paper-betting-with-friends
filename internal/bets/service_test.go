@@ -7,6 +7,7 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -374,4 +375,40 @@ func TestFilterOptions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWithCurrentLine(t *testing.T) {
+	book := uuid.New()
+	mine := uuid.New()
+	options := []BetLineOption{{OddsID: book, Label: "DraftKings: GT -7 (-110) / CLEM +7 (-110)"}}
+
+	t.Run("a bet on a book line is left alone", func(t *testing.T) {
+		got := withCurrentLine(options, book, "Your line: GT -7 (-110)")
+		if len(got) != 1 || got[0].OddsID != book {
+			t.Errorf("options = %+v, want the book line unchanged", got)
+		}
+	})
+
+	// Custom lines are not listed for anyone else, so a bet on one has nothing
+	// to select. Without its own entry the select would open on the book line
+	// and an edit that only changed the stake would move the bet onto it.
+	t.Run("a bet on a custom line gets its own entry", func(t *testing.T) {
+		got := withCurrentLine(options, mine, "Your line: GT -7 (-110)")
+		if len(got) != 2 {
+			t.Fatalf("options = %+v, want the bet's own line added", got)
+		}
+		if got[0].OddsID != mine {
+			t.Errorf("the bet's own line is at %d, want first", 0)
+		}
+		if got[0].Label != "Your line: GT -7 (-110)" {
+			t.Errorf("label = %q", got[0].Label)
+		}
+	})
+
+	t.Run("the original slice is not modified", func(t *testing.T) {
+		withCurrentLine(options, mine, "Your line")
+		if len(options) != 1 {
+			t.Errorf("the shared per-game options grew to %d", len(options))
+		}
+	})
 }

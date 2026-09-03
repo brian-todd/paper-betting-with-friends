@@ -209,3 +209,84 @@ func TestBetsPageOmitsWeekFilterWithNoWeeks(t *testing.T) {
 		t.Error("week filter rendered with no weeks to choose from")
 	}
 }
+
+func TestBetsPageOffersHolyLock(t *testing.T) {
+	bet, _, _ := editableBet(t)
+	bet.HolyLockEligible = true
+
+	html := renderBetsPage(t, bet)
+
+	if !strings.Contains(html, `action="/bets/spread/`+bet.ID.String()+`/holy-lock"`) {
+		t.Error("page does not offer to make an eligible bet the Holy Lock")
+	}
+	if strings.Contains(html, "/holy-lock/clear") {
+		t.Error("page offered to clear a designation the bet does not hold")
+	}
+}
+
+func TestBetsPageMarksHolyLock(t *testing.T) {
+	bet, _, _ := editableBet(t)
+	bet.IsHolyLock = true
+	bet.HolyLockEligible = true
+
+	html := renderBetsPage(t, bet)
+
+	if !strings.Contains(html, "badge-holy-lock") {
+		t.Error("the Holy Lock badge is missing from the marked bet")
+	}
+	if !strings.Contains(html, `action="/bets/spread/`+bet.ID.String()+`/holy-lock/clear"`) {
+		t.Error("page does not offer to remove the designation")
+	}
+	if strings.Contains(html, `action="/bets/spread/`+bet.ID.String()+`/holy-lock"`) {
+		t.Error("page offered to set a designation the bet already holds")
+	}
+}
+
+// A basketball bet, or one in a week whose lock has kicked off, gets no action
+// at all -- the service would refuse it.
+func TestBetsPageHidesHolyLockForIneligibleBet(t *testing.T) {
+	bet, _, _ := editableBet(t)
+	bet.HolyLockEligible = false
+	bet.IsHolyLock = false
+
+	html := renderBetsPage(t, bet)
+
+	if strings.Contains(html, "holy-lock") {
+		t.Error("page offered a Holy Lock action for an ineligible bet")
+	}
+}
+
+// A marked bet in a week that has closed keeps its badge but loses the action.
+func TestBetsPageKeepsBadgeOnFrozenHolyLock(t *testing.T) {
+	bet, _, _ := editableBet(t)
+	bet.IsHolyLock = true
+	bet.HolyLockEligible = false
+
+	html := renderBetsPage(t, bet)
+
+	if !strings.Contains(html, "badge-holy-lock") {
+		t.Error("a frozen Holy Lock lost its badge")
+	}
+	if strings.Contains(html, "/holy-lock/clear") {
+		t.Error("page offered to clear a designation that can no longer move")
+	}
+}
+
+// Basketball games carry no week, so Game.Week is nil on their bets. The page
+// used to dereference it unguarded, which fails at template execution -- and
+// the row is rendered mid-table, so the reader got a truncated page.
+func TestBetsPageRendersBetOnGameWithNoWeek(t *testing.T) {
+	bet, _, _ := editableBet(t)
+	bet.Game.Week = nil
+	bet.Game.WeekID = nil
+
+	html := renderBetsPage(t, bet)
+
+	if !strings.Contains(html, "CLEM") || !strings.Contains(html, "GT") {
+		t.Error("the matchup is missing from a bet on a game with no week")
+	}
+	// The table has to close, or the page was cut off part way through.
+	if !strings.Contains(html, "</table>") {
+		t.Error("the bets table was truncated")
+	}
+}

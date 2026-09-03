@@ -100,6 +100,7 @@
                             <th class="rank-col">#</th>
                             <th class="player-col">Player</th>
                             <th class="record-col">Record</th>
+                            <th class="record-col">Locks</th>
                             <th class="balance-col">Balance</th>
                         </tr>
                     </thead>
@@ -115,6 +116,11 @@
                                 <span class="record-separator">-</span>
                                 <span class="record-losses">{{.Losses}}L</span>
                                 {{if .Pushes}}<span class="record-separator">-</span><span class="record-pushes">{{.Pushes}}P</span>{{end}}
+                            </td>
+                            <td class="record-col lock-record">
+                                {{if or .LockWins .LockLosses .LockPushes}}
+                                <span class="record-wins">{{.LockWins}}W</span><span class="record-separator">-</span><span class="record-losses">{{.LockLosses}}L</span>{{if .LockPushes}}<span class="record-separator">-</span><span class="record-pushes">{{.LockPushes}}P</span>{{end}}
+                                {{else}}<span class="text-muted">—</span>{{end}}
                             </td>
                             <td class="balance-col">${{.Balance}}</td>
                         </tr>
@@ -159,6 +165,52 @@
                             <td class="num-col">${{.Winnings.StringFixed 2}}</td>
                             <td class="num-col {{if .Net.IsPositive}}net-positive{{else if .Net.IsNegative}}net-negative{{end}}">
                                 {{- if .Net.IsNegative}}−${{.Net.Abs.StringFixed 2}}{{else}}${{.Net.StringFixed 2}}{{end -}}
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </details>
+        {{end}}
+    </details>
+    {{end}}
+
+    {{if .HolyLocks}}
+    <details class="card holy-locks-card" open>
+        <summary>
+            <h3>Holy Locks</h3>
+        </summary>
+        {{range $i, $week := .HolyLocks}}
+        <details class="week-stats-group"{{if eq $i 0}} open{{end}}>
+            <summary>{{$week.Label}}</summary>
+            <div class="leaderboard-table-container">
+                <table class="leaderboard-table holy-locks-table">
+                    <thead>
+                        <tr>
+                            <th class="player-col">Player</th>
+                            <th>Kickoff</th>
+                            <th>Matchup</th>
+                            <th>Pick</th>
+                            <th class="num-col">Stake</th>
+                            <th>Result</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range $week.Rows}}
+                        <tr{{if .IsCurrentUser}} class="current-user-row"{{end}}>
+                            <td class="player-col">{{.Username}}</td>
+                            <td class="text-muted">{{localTime .ScheduledAt "shortdatetime"}}</td>
+                            <td>{{.Matchup}}</td>
+                            <td class="pick-cell"><strong>{{.Pick}}</strong></td>
+                            <td class="num-col">${{.Stake.StringFixed 2}}</td>
+                            <td>
+                                <span class="badge badge-status-{{.Status}}">
+                                    {{if eq .Status "pending"}}Pending{{end}}
+                                    {{if eq .Status "won"}}Won{{end}}
+                                    {{if eq .Status "lost"}}Lost{{end}}
+                                    {{if eq .Status "push"}}Push{{end}}
+                                </span>
                             </td>
                         </tr>
                         {{end}}

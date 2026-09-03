@@ -214,15 +214,15 @@ func (s *Service) attachOdds(games []models.Game) ([]GameWithOdds, error) {
 		gameIDs[i] = game.ID
 	}
 
-	moneyLine, err := s.moneyLineOddsRepo.FindByGames(gameIDs)
+	moneyLine, err := s.moneyLineOddsRepo.FindBookLinesByGames(gameIDs)
 	if err != nil {
 		return nil, err
 	}
-	spread, err := s.spreadOddsRepo.FindByGames(gameIDs)
+	spread, err := s.spreadOddsRepo.FindBookLinesByGames(gameIDs)
 	if err != nil {
 		return nil, err
 	}
-	overUnder, err := s.overUnderOddsRepo.FindByGames(gameIDs)
+	overUnder, err := s.overUnderOddsRepo.FindBookLinesByGames(gameIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -346,17 +346,17 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 	}
 
 	// Load all odds from all sources.
-	moneyLine, err := s.moneyLineOddsRepo.FindByGame(gameID)
+	moneyLine, err := s.moneyLineOddsRepo.FindBookLinesByGame(gameID)
 	if err == nil {
 		detail.MoneyLineOdds = moneyLine
 	}
 
-	spread, err := s.spreadOddsRepo.FindByGame(gameID)
+	spread, err := s.spreadOddsRepo.FindBookLinesByGame(gameID)
 	if err == nil {
 		detail.SpreadOdds = spread
 	}
 
-	overUnder, err := s.overUnderOddsRepo.FindByGame(gameID)
+	overUnder, err := s.overUnderOddsRepo.FindBookLinesByGame(gameID)
 	if err == nil {
 		detail.OverUnderOdds = overUnder
 	}
@@ -373,7 +373,8 @@ func mergeOddsBySources(
 	spread []models.SpreadOdds,
 	overUnder []models.OverUnderOdds,
 ) []UnifiedOdds {
-	// Create maps for quick lookup by source.
+	// Create maps for quick lookup by source. The rows arrive without custom
+	// lines, so a source here is always a book.
 	moneyLineMap := make(map[models.OddsSource]*models.MoneyLineOdds)
 	for i := range moneyLine {
 		moneyLineMap[moneyLine[i].Source] = &moneyLine[i]

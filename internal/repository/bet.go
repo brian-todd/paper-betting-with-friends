@@ -298,12 +298,17 @@ func (r *OverUnderBetRepository) FindByUserFiltered(userID uuid.UUID, filter Bet
 	return r.FindFiltered(filter)
 }
 
-// BetRecord holds win/loss/push counts for a user in a league.
+// BetRecord holds win/loss/push counts for a user in a league. The Lock*
+// counts are the same bets counted again over just the Holy Locks, since the
+// marked pick is the one people actually argue about.
 type BetRecord struct {
-	UserID uuid.UUID
-	Wins   int
-	Losses int
-	Pushes int
+	UserID     uuid.UUID
+	Wins       int
+	Losses     int
+	Pushes     int
+	LockWins   int
+	LockLosses int
+	LockPushes int
 }
 
 // BetRecordRepository provides methods for querying aggregated bet statistics.
@@ -316,89 +321,52 @@ func NewBetRecordRepository(db *gorm.DB) *BetRecordRepository {
 	return &BetRecordRepository{db: db}
 }
 
-// GetRecordsByLeague returns win/loss/push records for all users in a league.
+// GetRecordsByLeague returns win/loss/push records for all users in a league,
+// counted both overall and over the Holy Locks alone.
+//
+// The three bet tables are queried in a loop rather than one block each: the
+// grouping is identical, and a per-table copy is a place for the two records to
+// drift apart.
 func (r *BetRecordRepository) GetRecordsByLeague(leagueID uuid.UUID) (map[uuid.UUID]BetRecord, error) {
 	records := make(map[uuid.UUID]BetRecord)
 
-	// Query spread bets.
-	var spreadResults []struct {
-		UserID uuid.UUID
-		Status string
-		Count  int
-	}
-	if err := r.db.Model(&models.SpreadBet{}).
-		Select("user_id, status, COUNT(*) as count").
-		Where("league_id = ? AND status IN ?", leagueID, []string{"won", "lost", "push"}).
-		Group("user_id, status").
-		Scan(&spreadResults).Error; err != nil {
-		return nil, err
-	}
-	for _, res := range spreadResults {
-		rec := records[res.UserID]
-		rec.UserID = res.UserID
-		switch res.Status {
-		case "won":
-			rec.Wins += res.Count
-		case "lost":
-			rec.Losses += res.Count
-		case "push":
-			rec.Pushes += res.Count
+	for _, model := range []any{&models.SpreadBet{}, &models.MoneyLineBet{}, &models.OverUnderBet{}} {
+		var results []struct {
+			UserID     uuid.UUID
+			Status     string
+			IsHolyLock bool
+			Count      int
 		}
-		records[res.UserID] = rec
-	}
+		if err := r.db.Model(model).
+			Select("user_id, status, is_holy_lock, COUNT(*) as count").
+			Where("league_id = ? AND status IN ?", leagueID, []string{"won", "lost", "push"}).
+			Group("user_id, status, is_holy_lock").
+			Scan(&results).Error; err != nil {
+			return nil, err
+		}
 
-	// Query money line bets.
-	var mlResults []struct {
-		UserID uuid.UUID
-		Status string
-		Count  int
-	}
-	if err := r.db.Model(&models.MoneyLineBet{}).
-		Select("user_id, status, COUNT(*) as count").
-		Where("league_id = ? AND status IN ?", leagueID, []string{"won", "lost", "push"}).
-		Group("user_id, status").
-		Scan(&mlResults).Error; err != nil {
-		return nil, err
-	}
-	for _, res := range mlResults {
-		rec := records[res.UserID]
-		rec.UserID = res.UserID
-		switch res.Status {
-		case "won":
-			rec.Wins += res.Count
-		case "lost":
-			rec.Losses += res.Count
-		case "push":
-			rec.Pushes += res.Count
+		for _, res := range results {
+			rec := records[res.UserID]
+			rec.UserID = res.UserID
+			switch res.Status {
+			case "won":
+				rec.Wins += res.Count
+				if res.IsHolyLock {
+					rec.LockWins += res.Count
+				}
+			case "lost":
+				rec.Losses += res.Count
+				if res.IsHolyLock {
+					rec.LockLosses += res.Count
+				}
+			case "push":
+				rec.Pushes += res.Count
+				if res.IsHolyLock {
+					rec.LockPushes += res.Count
+				}
+			}
+			records[res.UserID] = rec
 		}
-		records[res.UserID] = rec
-	}
-
-	// Query over/under bets.
-	var ouResults []struct {
-		UserID uuid.UUID
-		Status string
-		Count  int
-	}
-	if err := r.db.Model(&models.OverUnderBet{}).
-		Select("user_id, status, COUNT(*) as count").
-		Where("league_id = ? AND status IN ?", leagueID, []string{"won", "lost", "push"}).
-		Group("user_id, status").
-		Scan(&ouResults).Error; err != nil {
-		return nil, err
-	}
-	for _, res := range ouResults {
-		rec := records[res.UserID]
-		rec.UserID = res.UserID
-		switch res.Status {
-		case "won":
-			rec.Wins += res.Count
-		case "lost":
-			rec.Losses += res.Count
-		case "push":
-			rec.Pushes += res.Count
-		}
-		records[res.UserID] = rec
 	}
 
 	return records, nil

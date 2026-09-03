@@ -108,17 +108,17 @@ func (s *Service) loadOdds(games []models.Game) []GameWithOdds {
 			gwo.Result = result
 		}
 
-		moneyLine, err := s.moneyLineOddsRepo.FindByGame(game.ID)
+		moneyLine, err := s.moneyLineOddsRepo.FindBookLinesByGame(game.ID)
 		if err == nil && len(moneyLine) > 0 {
 			gwo.MoneyLine = &moneyLine[0]
 		}
 
-		spread, err := s.spreadOddsRepo.FindByGame(game.ID)
+		spread, err := s.spreadOddsRepo.FindBookLinesByGame(game.ID)
 		if err == nil && len(spread) > 0 {
 			gwo.Spread = &spread[0]
 		}
 
-		overUnder, err := s.overUnderOddsRepo.FindByGame(game.ID)
+		overUnder, err := s.overUnderOddsRepo.FindBookLinesByGame(game.ID)
 		if err == nil && len(overUnder) > 0 {
 			gwo.OverUnder = &overUnder[0]
 		}

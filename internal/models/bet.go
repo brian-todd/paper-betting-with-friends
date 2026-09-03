@@ -72,8 +72,10 @@ type MoneyLineBet struct {
 	OddsSnapshot    decimal.Decimal `gorm:"type:decimal(10,2);not null"`
 	Stake           decimal.Decimal `gorm:"type:decimal(10,2);not null"`
 	Status          BetStatus       `gorm:"type:varchar(50);default:'pending';index"`
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// IsHolyLock marks the bet nominated for this league and week; display only.
+	IsHolyLock bool `gorm:"not null;default:false"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 
 	// Relationships.
 	User          User          `gorm:"foreignKey:UserID"`
@@ -102,8 +104,10 @@ type SpreadBet struct {
 	OddsSnapshot   decimal.Decimal `gorm:"type:decimal(10,2);not null"`
 	Stake          decimal.Decimal `gorm:"type:decimal(10,2);not null"`
 	Status         BetStatus       `gorm:"type:varchar(50);default:'pending';index"`
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// IsHolyLock marks the bet nominated for this league and week; display only.
+	IsHolyLock bool `gorm:"not null;default:false"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 
 	// Relationships.
 	User       User       `gorm:"foreignKey:UserID"`
@@ -132,8 +136,10 @@ type OverUnderBet struct {
 	OddsSnapshot    decimal.Decimal `gorm:"type:decimal(10,2);not null"`
 	Stake           decimal.Decimal `gorm:"type:decimal(10,2);not null"`
 	Status          BetStatus       `gorm:"type:varchar(50);default:'pending';index"`
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// IsHolyLock marks the bet nominated for this league and week; display only.
+	IsHolyLock bool `gorm:"not null;default:false"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 
 	// Relationships.
 	User          User          `gorm:"foreignKey:UserID"`

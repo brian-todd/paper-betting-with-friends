@@ -31,7 +31,10 @@ func (r *MoneyLineOddsRepository) FindByID(id uuid.UUID) (*models.MoneyLineOdds,
 	return &odds, nil
 }
 
-// FindByGame retrieves all money line odds for a game.
+// FindByGame retrieves every money line odds row for a game, custom lines included.
+//
+// Anything listing the lines on offer wants FindBookLinesByGame instead. This is
+// for the admin game page, which shows what is actually stored.
 func (r *MoneyLineOddsRepository) FindByGame(gameID uuid.UUID) ([]models.MoneyLineOdds, error) {
 	var odds []models.MoneyLineOdds
 	if err := r.db.Where("game_id = ?", gameID).Order("created_at DESC").Find(&odds).Error; err != nil {
@@ -40,23 +43,40 @@ func (r *MoneyLineOddsRepository) FindByGame(gameID uuid.UUID) ([]models.MoneyLi
 	return odds, nil
 }
 
-// FindByGames retrieves money line odds for many games in one query, keyed by game.
+// FindBookLinesByGame retrieves the sportsbook money line odds for a game, newest first.
+//
+// Custom rows are left out. One is written per custom bet, carrying a single
+// bettor's own numbers, so they are not prices anyone else can take -- and being
+// the newest rows they would otherwise sort ahead of every real book line and
+// become the one shown as the game's price.
+func (r *MoneyLineOddsRepository) FindBookLinesByGame(gameID uuid.UUID) ([]models.MoneyLineOdds, error) {
+	var odds []models.MoneyLineOdds
+	if err := r.db.Where("game_id = ? AND source <> ?", gameID, models.OddsSourceCustom).
+		Order("created_at DESC").Find(&odds).Error; err != nil {
+		return nil, err
+	}
+	return odds, nil
+}
+
+// FindBookLinesByGames retrieves the sportsbook money line odds for many games in one
+// query, keyed by game. Custom rows are excluded, as in FindBookLinesByGame.
 //
 // The games grid needs a line for every card it renders. Asking per game turned
 // one page into hundreds of round trips, so callers with a list of games should
-// reach for this instead of looping over FindByGame.
-func (r *MoneyLineOddsRepository) FindByGames(gameIDs []uuid.UUID) (map[uuid.UUID][]models.MoneyLineOdds, error) {
+// reach for this instead of looping over FindBookLinesByGame.
+func (r *MoneyLineOddsRepository) FindBookLinesByGames(gameIDs []uuid.UUID) (map[uuid.UUID][]models.MoneyLineOdds, error) {
 	byGame := make(map[uuid.UUID][]models.MoneyLineOdds, len(gameIDs))
 	if len(gameIDs) == 0 {
 		return byGame, nil
 	}
 
 	var odds []models.MoneyLineOdds
-	if err := r.db.Where("game_id IN ?", gameIDs).Order("created_at DESC").Find(&odds).Error; err != nil {
+	if err := r.db.Where("game_id IN ? AND source <> ?", gameIDs, models.OddsSourceCustom).
+		Order("created_at DESC").Find(&odds).Error; err != nil {
 		return nil, err
 	}
 	// Ordering is preserved per game so the first entry stays the same row
-	// FindByGame would have put first.
+	// FindBookLinesByGame would have put first.
 	for _, row := range odds {
 		byGame[row.GameID] = append(byGame[row.GameID], row)
 	}
@@ -85,7 +105,13 @@ func (r *MoneyLineOddsRepository) Delete(id uuid.UUID) error {
 // Upsert creates or updates money line odds based on game_id and source.
 func (r *MoneyLineOddsRepository) Upsert(odds *models.MoneyLineOdds) error {
 	return r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "game_id"}, {Name: "source"}},
+		Columns: []clause.Column{{Name: "game_id"}, {Name: "source"}},
+		// The unique index on (game_id, source) excludes custom lines, which are
+		// written per bet and may repeat. A partial index only serves as an
+		// arbiter for an ON CONFLICT that names the same predicate.
+		TargetWhere: clause.Where{Exprs: []clause.Expression{
+			clause.Neq{Column: "source", Value: string(models.OddsSourceCustom)},
+		}},
 		DoUpdates: clause.AssignmentColumns([]string{"home_odds", "away_odds", "updated_at"}),
 	}).Create(odds).Error
 }
@@ -114,7 +140,10 @@ func (r *SpreadOddsRepository) FindByID(id uuid.UUID) (*models.SpreadOdds, error
 	return &odds, nil
 }
 
-// FindByGame retrieves all spread odds for a game.
+// FindByGame retrieves every spread odds row for a game, custom lines included.
+//
+// Anything listing the lines on offer wants FindBookLinesByGame instead. This is
+// for the admin game page, which shows what is actually stored.
 func (r *SpreadOddsRepository) FindByGame(gameID uuid.UUID) ([]models.SpreadOdds, error) {
 	var odds []models.SpreadOdds
 	if err := r.db.Where("game_id = ?", gameID).Order("created_at DESC").Find(&odds).Error; err != nil {
@@ -123,23 +152,40 @@ func (r *SpreadOddsRepository) FindByGame(gameID uuid.UUID) ([]models.SpreadOdds
 	return odds, nil
 }
 
-// FindByGames retrieves spread odds for many games in one query, keyed by game.
+// FindBookLinesByGame retrieves the sportsbook spread odds for a game, newest first.
+//
+// Custom rows are left out. One is written per custom bet, carrying a single
+// bettor's own numbers, so they are not prices anyone else can take -- and being
+// the newest rows they would otherwise sort ahead of every real book line and
+// become the one shown as the game's price.
+func (r *SpreadOddsRepository) FindBookLinesByGame(gameID uuid.UUID) ([]models.SpreadOdds, error) {
+	var odds []models.SpreadOdds
+	if err := r.db.Where("game_id = ? AND source <> ?", gameID, models.OddsSourceCustom).
+		Order("created_at DESC").Find(&odds).Error; err != nil {
+		return nil, err
+	}
+	return odds, nil
+}
+
+// FindBookLinesByGames retrieves the sportsbook spread odds for many games in one
+// query, keyed by game. Custom rows are excluded, as in FindBookLinesByGame.
 //
 // The games grid needs a line for every card it renders. Asking per game turned
 // one page into hundreds of round trips, so callers with a list of games should
-// reach for this instead of looping over FindByGame.
-func (r *SpreadOddsRepository) FindByGames(gameIDs []uuid.UUID) (map[uuid.UUID][]models.SpreadOdds, error) {
+// reach for this instead of looping over FindBookLinesByGame.
+func (r *SpreadOddsRepository) FindBookLinesByGames(gameIDs []uuid.UUID) (map[uuid.UUID][]models.SpreadOdds, error) {
 	byGame := make(map[uuid.UUID][]models.SpreadOdds, len(gameIDs))
 	if len(gameIDs) == 0 {
 		return byGame, nil
 	}
 
 	var odds []models.SpreadOdds
-	if err := r.db.Where("game_id IN ?", gameIDs).Order("created_at DESC").Find(&odds).Error; err != nil {
+	if err := r.db.Where("game_id IN ? AND source <> ?", gameIDs, models.OddsSourceCustom).
+		Order("created_at DESC").Find(&odds).Error; err != nil {
 		return nil, err
 	}
 	// Ordering is preserved per game so the first entry stays the same row
-	// FindByGame would have put first.
+	// FindBookLinesByGame would have put first.
 	for _, row := range odds {
 		byGame[row.GameID] = append(byGame[row.GameID], row)
 	}
@@ -168,7 +214,13 @@ func (r *SpreadOddsRepository) Delete(id uuid.UUID) error {
 // Upsert creates or updates spread odds based on game_id and source.
 func (r *SpreadOddsRepository) Upsert(odds *models.SpreadOdds) error {
 	return r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "game_id"}, {Name: "source"}},
+		Columns: []clause.Column{{Name: "game_id"}, {Name: "source"}},
+		// The unique index on (game_id, source) excludes custom lines, which are
+		// written per bet and may repeat. A partial index only serves as an
+		// arbiter for an ON CONFLICT that names the same predicate.
+		TargetWhere: clause.Where{Exprs: []clause.Expression{
+			clause.Neq{Column: "source", Value: string(models.OddsSourceCustom)},
+		}},
 		DoUpdates: clause.AssignmentColumns([]string{"home_spread", "away_spread", "home_odds", "away_odds", "updated_at"}),
 	}).Create(odds).Error
 }
@@ -197,7 +249,10 @@ func (r *OverUnderOddsRepository) FindByID(id uuid.UUID) (*models.OverUnderOdds,
 	return &odds, nil
 }
 
-// FindByGame retrieves all over/under odds for a game.
+// FindByGame retrieves every over/under odds row for a game, custom lines included.
+//
+// Anything listing the lines on offer wants FindBookLinesByGame instead. This is
+// for the admin game page, which shows what is actually stored.
 func (r *OverUnderOddsRepository) FindByGame(gameID uuid.UUID) ([]models.OverUnderOdds, error) {
 	var odds []models.OverUnderOdds
 	if err := r.db.Where("game_id = ?", gameID).Order("created_at DESC").Find(&odds).Error; err != nil {
@@ -206,23 +261,40 @@ func (r *OverUnderOddsRepository) FindByGame(gameID uuid.UUID) ([]models.OverUnd
 	return odds, nil
 }
 
-// FindByGames retrieves over/under odds for many games in one query, keyed by game.
+// FindBookLinesByGame retrieves the sportsbook over/under odds for a game, newest first.
+//
+// Custom rows are left out. One is written per custom bet, carrying a single
+// bettor's own numbers, so they are not prices anyone else can take -- and being
+// the newest rows they would otherwise sort ahead of every real book line and
+// become the one shown as the game's price.
+func (r *OverUnderOddsRepository) FindBookLinesByGame(gameID uuid.UUID) ([]models.OverUnderOdds, error) {
+	var odds []models.OverUnderOdds
+	if err := r.db.Where("game_id = ? AND source <> ?", gameID, models.OddsSourceCustom).
+		Order("created_at DESC").Find(&odds).Error; err != nil {
+		return nil, err
+	}
+	return odds, nil
+}
+
+// FindBookLinesByGames retrieves the sportsbook over/under odds for many games in one
+// query, keyed by game. Custom rows are excluded, as in FindBookLinesByGame.
 //
 // The games grid needs a line for every card it renders. Asking per game turned
 // one page into hundreds of round trips, so callers with a list of games should
-// reach for this instead of looping over FindByGame.
-func (r *OverUnderOddsRepository) FindByGames(gameIDs []uuid.UUID) (map[uuid.UUID][]models.OverUnderOdds, error) {
+// reach for this instead of looping over FindBookLinesByGame.
+func (r *OverUnderOddsRepository) FindBookLinesByGames(gameIDs []uuid.UUID) (map[uuid.UUID][]models.OverUnderOdds, error) {
 	byGame := make(map[uuid.UUID][]models.OverUnderOdds, len(gameIDs))
 	if len(gameIDs) == 0 {
 		return byGame, nil
 	}
 
 	var odds []models.OverUnderOdds
-	if err := r.db.Where("game_id IN ?", gameIDs).Order("created_at DESC").Find(&odds).Error; err != nil {
+	if err := r.db.Where("game_id IN ? AND source <> ?", gameIDs, models.OddsSourceCustom).
+		Order("created_at DESC").Find(&odds).Error; err != nil {
 		return nil, err
 	}
 	// Ordering is preserved per game so the first entry stays the same row
-	// FindByGame would have put first.
+	// FindBookLinesByGame would have put first.
 	for _, row := range odds {
 		byGame[row.GameID] = append(byGame[row.GameID], row)
 	}
@@ -251,7 +323,13 @@ func (r *OverUnderOddsRepository) Delete(id uuid.UUID) error {
 // Upsert creates or updates over/under odds based on game_id and source.
 func (r *OverUnderOddsRepository) Upsert(odds *models.OverUnderOdds) error {
 	return r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "game_id"}, {Name: "source"}},
+		Columns: []clause.Column{{Name: "game_id"}, {Name: "source"}},
+		// The unique index on (game_id, source) excludes custom lines, which are
+		// written per bet and may repeat. A partial index only serves as an
+		// arbiter for an ON CONFLICT that names the same predicate.
+		TargetWhere: clause.Where{Exprs: []clause.Expression{
+			clause.Neq{Column: "source", Value: string(models.OddsSourceCustom)},
+		}},
 		DoUpdates: clause.AssignmentColumns([]string{"total", "over_odds", "under_odds", "updated_at"}),
 	}).Create(odds).Error
 }

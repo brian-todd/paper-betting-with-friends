@@ -143,6 +143,8 @@ func main() {
 	leaguesHandler := leagues.NewHandler(leaguesService, renderer)
 	gamesHandler := games.NewHandler(gamesService, renderer, db)
 	betsHandler := bets.NewHandler(betsService, renderer, db)
+	// The bet slip asks the bets service which weeks already have a Holy Lock.
+	gamesHandler.SetHolyLockReader(betsService)
 	basketballHandler := basketball.NewHandler(basketballService, renderer)
 	adminHandler := admin.NewHandler(adminService, renderer)
 

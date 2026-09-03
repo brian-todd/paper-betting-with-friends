@@ -61,7 +61,7 @@
                             <span class="expand-icon">▶</span>
                         </button>
                     </td>
-                    <td>{{$bet.Game.Week.Number}}</td>
+                    <td>{{if $bet.Game.Week}}{{$bet.Game.Week.Number}}{{else}}—{{end}}</td>
                     <td class="text-muted">{{localTime $bet.CreatedAt "date"}}</td>
                     <td class="text-muted">{{localTime $bet.Game.ScheduledAt "date"}}</td>
                     <td class="matchup-cell">
@@ -80,7 +80,10 @@
                             {{if eq $bet.Type "overunder"}}O/U{{end}}
                         </span>
                     </td>
-                    <td class="pick-cell"><strong>{{$bet.Pick}}</strong></td>
+                    <td class="pick-cell">
+                        {{if $bet.IsHolyLock}}<span class="badge badge-holy-lock" title="Holy Lock">🔒</span> {{end}}
+                        <strong>{{$bet.Pick}}</strong>
+                    </td>
                     <td class="line-cell">{{$bet.Line}}</td>
                     <td class="stake-cell">{{$bet.Stake}}</td>
                     <td>
@@ -151,6 +154,19 @@
                                 <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEdit('{{$index}}')">Edit Bet</button>
                                 <form action="/bets/{{$bet.Type}}/{{$bet.ID}}/cancel" method="POST" class="inline">
                                     <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Cancel this bet?')">Cancel Bet</button>
+                                </form>
+                                {{end}}
+                                {{/* HolyLockEligible mirrors the service's gates the same
+                                     way Editable does. A bet that holds the lock but whose
+                                     week has closed falls through both branches and keeps
+                                     its badge with no action, which is correct. */}}
+                                {{if and $bet.IsHolyLock $bet.HolyLockEligible}}
+                                <form action="/bets/{{$bet.Type}}/{{$bet.ID}}/holy-lock/clear" method="POST" class="inline">
+                                    <button type="submit" class="btn btn-secondary btn-sm">Remove Holy Lock</button>
+                                </form>
+                                {{else if $bet.HolyLockEligible}}
+                                <form action="/bets/{{$bet.Type}}/{{$bet.ID}}/holy-lock" method="POST" class="inline">
+                                    <button type="submit" class="btn btn-secondary btn-sm" onclick="return confirm('Make this your Holy Lock for the week? It replaces any other lock you have this week.')">Make Holy Lock</button>
                                 </form>
                                 {{end}}
                             </div>

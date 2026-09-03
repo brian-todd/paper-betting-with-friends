@@ -204,7 +204,7 @@
                         <label>League</label>
                         <select name="league_id" required class="form-select league-select" onchange="updateBalanceDisplay(this, 'spread')">
                             {{range .UserLeagues}}
-                            <option value="{{.ID}}" data-balance="{{index $.PurseBalances .ID.String}}">{{.Name}}</option>
+                            <option value="{{.ID}}" data-balance="{{index $.PurseBalances .ID.String}}"{{if $.HolyLockConflicts}} data-holy-lock="{{index $.HolyLockConflicts .ID.String}}"{{end}}>{{.Name}}</option>
                             {{end}}
                         </select>
                         <small class="balance-hint" id="spread-balance">Available: $<span class="balance-value">{{with $first := index .UserLeagues 0}}{{index $.PurseBalances $first.ID.String}}{{end}}</span></small>
@@ -214,6 +214,16 @@
                         <input type="number" name="stake" min="1" step="1" required placeholder="100" class="form-input stake-input" id="spread-stake">
                     </div>
                 </div>
+
+                {{if $.HolyLockEligible}}
+                <div class="form-group holy-lock-group">
+                    <label class="holy-lock-option">
+                        <input type="checkbox" name="holy_lock" id="spread-holy-lock">
+                        <span>🔒 Make this my Holy Lock for the week</span>
+                    </label>
+                    <small class="form-hint holy-lock-conflict" id="spread-holy-lock-conflict" hidden></small>
+                </div>
+                {{end}}
 
                 <button type="submit" class="btn btn-primary btn-block">
                     <span class="btn-text">Place Spread Bet</span>
@@ -271,7 +281,7 @@
                         <label>League</label>
                         <select name="league_id" required class="form-select league-select" onchange="updateBalanceDisplay(this, 'moneyline')">
                             {{range .UserLeagues}}
-                            <option value="{{.ID}}" data-balance="{{index $.PurseBalances .ID.String}}">{{.Name}}</option>
+                            <option value="{{.ID}}" data-balance="{{index $.PurseBalances .ID.String}}"{{if $.HolyLockConflicts}} data-holy-lock="{{index $.HolyLockConflicts .ID.String}}"{{end}}>{{.Name}}</option>
                             {{end}}
                         </select>
                         <small class="balance-hint" id="moneyline-balance">Available: $<span class="balance-value">{{with $first := index .UserLeagues 0}}{{index $.PurseBalances $first.ID.String}}{{end}}</span></small>
@@ -281,6 +291,16 @@
                         <input type="number" name="stake" min="1" step="1" required placeholder="100" class="form-input stake-input" id="moneyline-stake">
                     </div>
                 </div>
+
+                {{if $.HolyLockEligible}}
+                <div class="form-group holy-lock-group">
+                    <label class="holy-lock-option">
+                        <input type="checkbox" name="holy_lock" id="moneyline-holy-lock">
+                        <span>🔒 Make this my Holy Lock for the week</span>
+                    </label>
+                    <small class="form-hint holy-lock-conflict" id="moneyline-holy-lock-conflict" hidden></small>
+                </div>
+                {{end}}
 
                 <button type="submit" class="btn btn-primary btn-block">
                     <span class="btn-text">Place Moneyline Bet</span>
@@ -342,7 +362,7 @@
                         <label>League</label>
                         <select name="league_id" required class="form-select league-select" onchange="updateBalanceDisplay(this, 'overunder')">
                             {{range .UserLeagues}}
-                            <option value="{{.ID}}" data-balance="{{index $.PurseBalances .ID.String}}">{{.Name}}</option>
+                            <option value="{{.ID}}" data-balance="{{index $.PurseBalances .ID.String}}"{{if $.HolyLockConflicts}} data-holy-lock="{{index $.HolyLockConflicts .ID.String}}"{{end}}>{{.Name}}</option>
                             {{end}}
                         </select>
                         <small class="balance-hint" id="overunder-balance">Available: $<span class="balance-value">{{with $first := index .UserLeagues 0}}{{index $.PurseBalances $first.ID.String}}{{end}}</span></small>
@@ -352,6 +372,16 @@
                         <input type="number" name="stake" min="1" step="1" required placeholder="100" class="form-input stake-input" id="overunder-stake">
                     </div>
                 </div>
+
+                {{if $.HolyLockEligible}}
+                <div class="form-group holy-lock-group">
+                    <label class="holy-lock-option">
+                        <input type="checkbox" name="holy_lock" id="overunder-holy-lock">
+                        <span>🔒 Make this my Holy Lock for the week</span>
+                    </label>
+                    <small class="form-hint holy-lock-conflict" id="overunder-holy-lock-conflict" hidden></small>
+                </div>
+                {{end}}
 
                 <button type="submit" class="btn btn-primary btn-block">
                     <span class="btn-text">Place Over/Under Bet</span>
@@ -529,7 +559,38 @@
             if (balanceHint) {
                 balanceHint.querySelector('.balance-value').textContent = balance;
             }
+            updateHolyLockState(selectedOption, formType);
         }
+
+        // A league whose Holy Lock is already taken for this week cannot take
+        // another, so the checkbox goes away and the bet holding it is named.
+        // The server refuses the same case; this only means the reader finds
+        // out before filling the form in rather than after submitting it.
+        function updateHolyLockState(selectedOption, formType) {
+            const checkbox = document.getElementById(formType + '-holy-lock');
+            const note = document.getElementById(formType + '-holy-lock-conflict');
+            if (!checkbox || !note || !selectedOption) {
+                return;
+            }
+
+            const existing = selectedOption.getAttribute('data-holy-lock') || '';
+            checkbox.disabled = existing !== '';
+            if (existing !== '') {
+                checkbox.checked = false;
+                note.textContent = 'Already used this week on ' + existing + '. Remove it from My Bets to move it.';
+                note.hidden = false;
+            } else {
+                note.hidden = true;
+            }
+        }
+
+        // The forms open on their first league, so set that state up front.
+        document.querySelectorAll('.bet-form').forEach(function (form) {
+            const select = form.querySelector('.league-select');
+            if (select) {
+                updateHolyLockState(select.options[select.selectedIndex], form.id.replace('-form', ''));
+            }
+        });
     </script>
     {{else}}
     <div class="bet-slip-section">
