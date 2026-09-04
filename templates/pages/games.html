@@ -236,7 +236,7 @@
                     {{if eq .Game.Status "postponed"}}Postponed{{end}}
                     {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
                 </div>
-                {{if .BetSummary}}<span class="badge badge-user-bet">{{.BetSummary}}</span>{{end}}
+                {{if .BetSummary}}<span class="badge badge-user-bet" title="Your bet: {{.BetSummary}}">{{.BetSummary}}</span>{{end}}
                 <div class="game-matchup">
                     <div class="team away-team">
                         <div class="team-identity">

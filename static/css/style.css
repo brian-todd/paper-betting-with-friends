@@ -2350,6 +2350,18 @@ button.btn {
     vertical-align: middle;
 }
 
+/* On a card the badge shares its row with the status, and the summary is one
+   pick per league per market -- unbounded in principle. Cap it here rather than
+   on .badge-user-bet itself: the detail page renders the same class with room
+   to spare. The card carries a title attribute, so a clipped summary is still
+   readable on hover. */
+.game-card .badge-user-bet {
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .lock-record {
     white-space: nowrap;
 }
