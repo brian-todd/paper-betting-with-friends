@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -82,7 +83,9 @@ func (h *Handler) ListBets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.service.GetUserBets(user.ID, filter)
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+
+	result, err := h.service.GetUserBets(user.ID, filter, page)
 	if err != nil {
 		slog.Error("failed to fetching user bets", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -102,10 +105,40 @@ func (h *Handler) ListBets(w http.ResponseWriter, r *http.Request) {
 		"SelectedSeason": filter.Season,
 		"SelectedWeek":   filter.Week,
 		"SelectedLeague": filter.LeagueID,
+		"Page":           result.Page,
+		"PrevURL":        betsPageURL(filter, result.Page.Prev()),
+		"NextURL":        betsPageURL(filter, result.Page.Next()),
 	})
 	if err != nil {
 		slog.Error("failed to render bets page", "user", user.ID, "error", err)
 	}
+}
+
+// betsPageURL builds a link to another page of the same filtered list. The
+// filter has to ride along or paging would silently widen it.
+//
+// Page 1 is left implicit so the first page and an unpaged arrival share one
+// URL, and so the filter form -- which has no page field and therefore drops
+// the parameter on submit -- lands back on page 1 rather than deep inside a
+// result set that has just changed size.
+func betsPageURL(filter BetListFilter, page int) string {
+	query := url.Values{}
+	if filter.Season != nil {
+		query.Set("season", strconv.Itoa(*filter.Season))
+	}
+	if filter.Week != nil {
+		query.Set("week", strconv.Itoa(*filter.Week))
+	}
+	if filter.LeagueID != nil {
+		query.Set("league", filter.LeagueID.String())
+	}
+	if page > 1 {
+		query.Set("page", strconv.Itoa(page))
+	}
+	if len(query) == 0 {
+		return "/bets"
+	}
+	return "/bets?" + query.Encode()
 }
 
 // CreateSpreadBet handles creating a new spread bet.

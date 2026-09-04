@@ -30,6 +30,7 @@ func renderBetsPage(t *testing.T, bet BetView) string {
 		"Title": "My Bets",
 		"User":  &models.User{Username: "tester"},
 		"Bets":  []BetView{bet},
+		"Page":  paginate(1, 1),
 	})
 	if err != nil {
 		t.Fatalf("rendering bets page: %v", err)
@@ -155,6 +156,7 @@ func renderBetsFilters(t *testing.T, data map[string]any) string {
 		"Title": "My Bets",
 		"User":  &models.User{Username: "tester"},
 		"Bets":  []BetView{},
+		"Page":  paginate(1, 0),
 	}
 	maps.Copy(page, data)
 

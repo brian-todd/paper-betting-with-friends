@@ -266,6 +266,26 @@
             </tbody>
         </table>
     </div>
+
+    <div class="bets-pagination-status">
+        Showing {{.Page.First}}-{{.Page.Last}} of {{.Page.Total}} bets
+    </div>
+
+    {{if gt .Page.Pages 1}}
+    <nav class="pagination" aria-label="Bet pages">
+        {{if .Page.HasPrev}}
+        <a class="btn btn-secondary btn-sm" href="{{.PrevURL}}" rel="prev">← Previous</a>
+        {{else}}
+        <span class="btn btn-secondary btn-sm is-disabled" aria-disabled="true">← Previous</span>
+        {{end}}
+        <span class="pagination-status">Page {{.Page.Number}} of {{.Page.Pages}}</span>
+        {{if .Page.HasNext}}
+        <a class="btn btn-secondary btn-sm" href="{{.NextURL}}" rel="next">Next →</a>
+        {{else}}
+        <span class="btn btn-secondary btn-sm is-disabled" aria-disabled="true">Next →</span>
+        {{end}}
+    </nav>
+    {{end}}
     {{else}}
     <div class="empty-state">
         <div class="empty-icon">🎰</div>

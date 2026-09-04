@@ -499,3 +499,106 @@ func TestUserBetSummariesCollapsesDuplicatePicks(t *testing.T) {
 		})
 	}
 }
+
+func TestPaginate(t *testing.T) {
+	tests := []struct {
+		name                  string
+		page, total           int
+		wantNumber, wantPages int
+		wantFirst, wantLast   int
+	}{
+		{"empty result set still has one page", 1, 0, 1, 1, 0, 0},
+		{"partial first page", 1, 30, 1, 1, 1, 30},
+		{"exactly one full page", 1, 100, 1, 1, 1, 100},
+		{"one over a full page", 1, 101, 1, 2, 1, 100},
+		{"second page", 2, 101, 2, 2, 101, 101},
+		{"middle page", 2, 250, 2, 3, 101, 200},
+		// A page number past the end lands on the last page rather than on
+		// nothing, so a stale link reads as the end of the list.
+		{"page past the end clamps to the last", 9, 150, 2, 2, 101, 150},
+		{"page zero clamps to the first", 0, 150, 1, 2, 1, 100},
+		{"negative page clamps to the first", -3, 150, 1, 2, 1, 100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := paginate(tt.page, tt.total)
+			if got.Number != tt.wantNumber || got.Pages != tt.wantPages {
+				t.Errorf("paginate(%d, %d) number/pages = %d/%d, want %d/%d",
+					tt.page, tt.total, got.Number, got.Pages, tt.wantNumber, tt.wantPages)
+			}
+			if got.First != tt.wantFirst || got.Last != tt.wantLast {
+				t.Errorf("paginate(%d, %d) first/last = %d/%d, want %d/%d",
+					tt.page, tt.total, got.First, got.Last, tt.wantFirst, tt.wantLast)
+			}
+			if got.Total != tt.total {
+				t.Errorf("paginate(%d, %d) total = %d, want %d", tt.page, tt.total, got.Total, tt.total)
+			}
+		})
+	}
+}
+
+func TestPageNavigation(t *testing.T) {
+	first := paginate(1, 250)
+	middle := paginate(2, 250)
+	last := paginate(3, 250)
+
+	if first.HasPrev() || !first.HasNext() {
+		t.Errorf("first page prev/next = %v/%v, want false/true", first.HasPrev(), first.HasNext())
+	}
+	if !middle.HasPrev() || !middle.HasNext() {
+		t.Errorf("middle page prev/next = %v/%v, want true/true", middle.HasPrev(), middle.HasNext())
+	}
+	if !last.HasPrev() || last.HasNext() {
+		t.Errorf("last page prev/next = %v/%v, want true/false", last.HasPrev(), last.HasNext())
+	}
+
+	// Prev and Next are clamped, so the disabled controls at either end still
+	// have a URL that goes somewhere sensible rather than to page 0 or 4.
+	if got := first.Prev(); got != 1 {
+		t.Errorf("first.Prev() = %d, want 1", got)
+	}
+	if got := last.Next(); got != 3 {
+		t.Errorf("last.Next() = %d, want 3", got)
+	}
+}
+
+// betViews sorts by creation time alone, which is not the total order the page
+// query used, so the views have to be put back into the order the refs name.
+func TestOrderByRefs(t *testing.T) {
+	a, b, c := uuid.New(), uuid.New(), uuid.New()
+	views := []BetView{{ID: a}, {ID: b}, {ID: c}}
+
+	t.Run("follows the ref order", func(t *testing.T) {
+		refs := []repository.BetRef{{BetID: c}, {BetID: a}, {BetID: b}}
+		got := orderByRefs(views, refs)
+		want := []uuid.UUID{c, a, b}
+		if len(got) != len(want) {
+			t.Fatalf("got %d views, want %d", len(got), len(want))
+		}
+		for i, id := range want {
+			if got[i].ID != id {
+				t.Errorf("view %d = %s, want %s", i, got[i].ID, id)
+			}
+		}
+	})
+
+	// A bet deleted between the count and the load leaves a ref with nothing
+	// behind it. A short page beats a zero-valued row.
+	t.Run("drops a ref with no view", func(t *testing.T) {
+		refs := []repository.BetRef{{BetID: a}, {BetID: uuid.New()}, {BetID: b}}
+		got := orderByRefs(views, refs)
+		if len(got) != 2 {
+			t.Fatalf("got %d views, want 2", len(got))
+		}
+		if got[0].ID != a || got[1].ID != b {
+			t.Errorf("views = %s, %s, want %s, %s", got[0].ID, got[1].ID, a, b)
+		}
+	})
+
+	t.Run("no refs yields no views", func(t *testing.T) {
+		if got := orderByRefs(views, nil); len(got) != 0 {
+			t.Errorf("got %d views, want 0", len(got))
+		}
+	})
+}

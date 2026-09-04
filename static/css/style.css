@@ -1425,6 +1425,13 @@ button.btn {
     color: var(--color-text-muted);
 }
 
+.bets-pagination-status {
+    margin-top: 1rem;
+    text-align: right;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
 .btn.is-disabled {
     opacity: 0.4;
     cursor: default;

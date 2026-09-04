@@ -46,6 +46,7 @@ type Service struct {
 	betPeriodRepo     *repository.BetPeriodRepository
 	holyLockRepo      *repository.HolyLockRepository
 	userBetRepo       *repository.UserBetRepository
+	betPageRepo       *repository.BetPageRepository
 }
 
 // NewService creates a new bets service.
@@ -66,6 +67,7 @@ func NewService(db *gorm.DB) *Service {
 		betPeriodRepo:     repository.NewBetPeriodRepository(db),
 		holyLockRepo:      repository.NewHolyLockRepository(db),
 		userBetRepo:       repository.NewUserBetRepository(db),
+		betPageRepo:       repository.NewBetPageRepository(db),
 	}
 }
 
@@ -711,39 +713,130 @@ func userBetSummaries(rows []repository.UserBetRow) map[uuid.UUID]string {
 	return summaries
 }
 
+// BetPageSize is how many bets one page of the bets list holds.
+const BetPageSize = 100
+
+// Page describes one page of the bets list.
+//
+// It mirrors games.Page rather than sharing it. The two are view models for
+// different templates, and having this package depend on games to render a
+// pager would be the wrong direction for one struct of ints.
+type Page struct {
+	Number int
+	Size   int
+	Total  int
+	Pages  int
+	First  int
+	Last   int
+}
+
+// HasPrev reports whether a page exists before this one.
+func (p Page) HasPrev() bool { return p.Number > 1 }
+
+// HasNext reports whether a page exists after this one.
+func (p Page) HasNext() bool { return p.Number < p.Pages }
+
+// Prev is the page number before this one, floored at the first page.
+func (p Page) Prev() int {
+	if p.Number <= 1 {
+		return 1
+	}
+	return p.Number - 1
+}
+
+// Next is the page number after this one, capped at the last page.
+func (p Page) Next() int {
+	if p.Number >= p.Pages {
+		return p.Pages
+	}
+	return p.Number + 1
+}
+
+// paginate resolves a requested page number against a total, clamping it into
+// range. A page past the end lands on the last page rather than returning
+// nothing, which reads as an empty result set rather than as a bad link.
+func paginate(page, total int) Page {
+	pages := max((total+BetPageSize-1)/BetPageSize, 1)
+	if page < 1 {
+		page = 1
+	}
+	if page > pages {
+		page = pages
+	}
+
+	first := (page-1)*BetPageSize + 1
+	last := min(page*BetPageSize, total)
+	if total == 0 {
+		first = 0
+	}
+
+	return Page{Number: page, Size: BetPageSize, Total: total, Pages: pages, First: first, Last: last}
+}
+
 // BetListResult contains the bets and filter options.
 type BetListResult struct {
 	Bets    []BetView
+	Page    Page
 	Seasons []int
 	Weeks   []int
 	Leagues []models.League
 }
 
-// GetUserBets retrieves all bets for a user with optional filters.
-func (s *Service) GetUserBets(userID uuid.UUID, filter BetListFilter) (*BetListResult, error) {
+// GetUserBets retrieves one page of a user's bets, newest first, with optional
+// filters.
+//
+// The page is resolved before anything is loaded: BetPageRepository orders and
+// slices across all three bet tables in SQL, and only the bets it names are
+// then read. Fetching the three tables whole and slicing in Go would page
+// wrongly past page 1, and would run the per-bet work in betViews over the
+// user's entire betting history to render a hundred rows of it.
+func (s *Service) GetUserBets(userID uuid.UUID, filter BetListFilter, page int) (*BetListResult, error) {
 	repoFilter := repository.BetFilter{
 		Season:   filter.Season,
 		Week:     filter.Week,
 		LeagueID: filter.LeagueID,
+		UserID:   &userID,
 	}
 
-	// Fetch all bet types.
-	spreadBets, err := s.spreadBetRepo.FindByUserFiltered(userID, repoFilter)
+	total, err := s.betPageRepo.CountFiltered(repoFilter)
 	if err != nil {
 		return nil, err
 	}
 
-	moneyLineBets, err := s.moneyLineBetRepo.FindByUserFiltered(userID, repoFilter)
+	pageInfo := paginate(page, total)
+	refs, err := s.betPageRepo.FindRefs(repoFilter, BetPageSize, (pageInfo.Number-1)*BetPageSize)
 	if err != nil {
 		return nil, err
 	}
 
-	overUnderBets, err := s.overUnderBetRepo.FindByUserFiltered(userID, repoFilter)
+	var spreadIDs, moneyLineIDs, overUnderIDs []uuid.UUID
+	for _, ref := range refs {
+		switch ref.BetType {
+		case BetTypeSpread:
+			spreadIDs = append(spreadIDs, ref.BetID)
+		case BetTypeMoneyLine:
+			moneyLineIDs = append(moneyLineIDs, ref.BetID)
+		case BetTypeOverUnder:
+			overUnderIDs = append(overUnderIDs, ref.BetID)
+		}
+	}
+
+	spreadBets, err := s.spreadBetRepo.FindByIDs(spreadIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	bets := s.betViews(spreadBets, moneyLineBets, overUnderBets)
+	moneyLineBets, err := s.moneyLineBetRepo.FindByIDs(moneyLineIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	overUnderBets, err := s.overUnderBetRepo.FindByIDs(overUnderIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	bets := orderByRefs(s.betViews(spreadBets, moneyLineBets, overUnderBets), refs)
 	s.markHolyLockEligibility(userID, bets)
 
 	// Get filter options from the periods the user actually has bets in.
@@ -757,10 +850,34 @@ func (s *Service) GetUserBets(userID uuid.UUID, filter BetListFilter) (*BetListR
 
 	return &BetListResult{
 		Bets:    bets,
+		Page:    pageInfo,
 		Seasons: seasons,
 		Weeks:   weeks,
 		Leagues: leagues,
 	}, nil
+}
+
+// orderByRefs puts views back into the order the page query decided, which is
+// the only place the merged ordering across the three tables exists. betViews
+// sorts by creation time alone, so bets sharing an instant could otherwise
+// come out in a different order than the one the offsets were computed
+// against.
+//
+// A ref with no matching view is dropped: the bet was deleted between the two
+// queries, and a short page is a better answer than a zero-valued row.
+func orderByRefs(views []BetView, refs []repository.BetRef) []BetView {
+	byID := make(map[uuid.UUID]BetView, len(views))
+	for _, view := range views {
+		byID[view.ID] = view
+	}
+
+	ordered := make([]BetView, 0, len(refs))
+	for _, ref := range refs {
+		if view, ok := byID[ref.BetID]; ok {
+			ordered = append(ordered, view)
+		}
+	}
+	return ordered
 }
 
 // betViews converts the three bet tables into one list of view models sorted

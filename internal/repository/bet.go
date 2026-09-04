@@ -114,6 +114,27 @@ func (r *SpreadBetRepository) FindByUserFiltered(userID uuid.UUID, filter BetFil
 	return r.FindFiltered(filter)
 }
 
+// FindByIDs retrieves spread bets by ID, with the associations FindFiltered
+// preloads. For a caller that has already decided which bets it wants and only
+// needs them loaded -- see BetPageRepository. No ordering: the caller knows the
+// order it asked for, and this cannot reproduce it across three tables.
+func (r *SpreadBetRepository) FindByIDs(ids []uuid.UUID) ([]models.SpreadBet, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var bets []models.SpreadBet
+	err := r.db.
+		Preload("Game.HomeTeam").Preload("Game.AwayTeam").Preload("Game.Venue").
+		Preload("Game.Week").Preload("Game.Result").
+		Preload("League").Preload("User").
+		Where("id IN ?", ids).
+		Find(&bets).Error
+	if err != nil {
+		return nil, err
+	}
+	return bets, nil
+}
+
 // MoneyLineBetRepository provides methods for interacting with money line bets.
 type MoneyLineBetRepository struct {
 	db *gorm.DB
@@ -206,6 +227,25 @@ func (r *MoneyLineBetRepository) FindByUserFiltered(userID uuid.UUID, filter Bet
 	return r.FindFiltered(filter)
 }
 
+// FindByIDs retrieves money line bets by ID, with the associations
+// FindFiltered preloads. See SpreadBetRepository.FindByIDs.
+func (r *MoneyLineBetRepository) FindByIDs(ids []uuid.UUID) ([]models.MoneyLineBet, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var bets []models.MoneyLineBet
+	err := r.db.
+		Preload("Game.HomeTeam").Preload("Game.AwayTeam").Preload("Game.Venue").
+		Preload("Game.Week").Preload("Game.Result").
+		Preload("League").Preload("User").
+		Where("id IN ?", ids).
+		Find(&bets).Error
+	if err != nil {
+		return nil, err
+	}
+	return bets, nil
+}
+
 // OverUnderBetRepository provides methods for interacting with over/under bets.
 type OverUnderBetRepository struct {
 	db *gorm.DB
@@ -296,6 +336,25 @@ func (r *OverUnderBetRepository) FindFiltered(filter BetFilter) ([]models.OverUn
 func (r *OverUnderBetRepository) FindByUserFiltered(userID uuid.UUID, filter BetFilter) ([]models.OverUnderBet, error) {
 	filter.UserID = &userID
 	return r.FindFiltered(filter)
+}
+
+// FindByIDs retrieves over/under bets by ID, with the associations
+// FindFiltered preloads. See SpreadBetRepository.FindByIDs.
+func (r *OverUnderBetRepository) FindByIDs(ids []uuid.UUID) ([]models.OverUnderBet, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var bets []models.OverUnderBet
+	err := r.db.
+		Preload("Game.HomeTeam").Preload("Game.AwayTeam").Preload("Game.Venue").
+		Preload("Game.Week").Preload("Game.Result").
+		Preload("League").Preload("User").
+		Where("id IN ?", ids).
+		Find(&bets).Error
+	if err != nil {
+		return nil, err
+	}
+	return bets, nil
 }
 
 // BetRecord holds win/loss/push counts for a user in a league. The Lock*
