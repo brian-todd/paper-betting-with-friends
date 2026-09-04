@@ -59,6 +59,11 @@ func NewHolyLockRepository(db *gorm.DB) *HolyLockRepository {
 }
 
 // userLocks selects every live Holy Lock a user holds, across the three tables.
+//
+// The branch order is load-bearing: Postgres takes a UNION's output column
+// names from the first branch alone, and only that branch aliases bet_type.
+// Promote either of the others to the top and slotQuery's b.bet_type fails at
+// runtime. Add a branch at the end, or carry the alias with whichever leads.
 const userLocks = `
 	SELECT user_id, league_id, game_id, id, 'spread' AS bet_type FROM spread_bets WHERE user_id = ? AND is_holy_lock AND status <> 'void'
 	UNION ALL

@@ -656,9 +656,10 @@ type BetListFilter struct {
 }
 
 // UserBetSummaries returns, of the given games, a one-line description of
-// each live bet userID holds on them, keyed by game ID. The games grid and
-// detail page use this to show the reader what they already bet rather than
-// making them open the slip again to find out.
+// each uncancelled bet userID holds on them, keyed by game ID. The games grid
+// and detail page use this to show the reader what they already bet rather
+// than making them open the slip again to find out. Settled bets are included
+// -- see repository.UserBetRepository.FindByUserAndGames.
 //
 // A game with more than one bet -- the spread and the total both, say --
 // joins them with "; " so the marker still fits on one line.

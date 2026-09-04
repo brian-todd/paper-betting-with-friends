@@ -23,9 +23,10 @@ type HolyLockReader interface {
 	HolyLockConflicts(userID uuid.UUID, game models.Game) (map[string]string, error)
 }
 
-// UserBetReader describes the live bets the given user already holds on a set
-// of games, keyed by game ID, so the grid and detail page can show what was
-// bet without the reader having to open the bet slip to find out.
+// UserBetReader describes the bets the given user already holds on a set of
+// games, keyed by game ID, so the grid and detail page can show what was bet
+// without the reader having to open the bet slip to find out. Settled bets
+// count: a finished game still answers "did I bet this one".
 //
 // It returns the pick itself rather than a bare "yes" because the two cost the
 // same query: knowing you bet this game is only half of what you wanted to

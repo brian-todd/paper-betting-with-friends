@@ -6,8 +6,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// UserBetRow is one live bet a user holds on a game, with enough of the game
-// and teams joined on to describe the pick. Deliberately not joined to weeks,
+// UserBetRow is one uncancelled bet a user holds on a game, with enough of the
+// game and teams joined on to describe the pick. Settled bets are included, not
+// just pending ones -- see FindByUserAndGames. Deliberately not joined to weeks,
 // unlike LeagueHolyLockRow it otherwise mirrors: basketball games carry no
 // week, and this has to describe those bets too.
 type UserBetRow struct {
@@ -33,6 +34,14 @@ func NewUserBetRepository(db *gorm.DB) *UserBetRepository {
 	return &UserBetRepository{db: db}
 }
 
+// userGameBets flattens the three bet tables into one shape.
+//
+// The branch order is load-bearing: Postgres takes a UNION's output column
+// names from the first branch alone, and only that branch aliases bet_type and
+// line_value. Promote either of the others to the top and those columns come
+// back as "?column?", so the outer b.bet_type and b.line_value fail at runtime
+// with nothing to catch it at compile time. Add a branch at the end, or carry
+// the aliases with whichever branch leads.
 const userGameBets = `
 	SELECT user_id, game_id, 'spread' AS bet_type, pick, odds_snapshot, spread_snapshot::text AS line_value
 	FROM spread_bets WHERE user_id = ? AND status <> 'void'
@@ -43,10 +52,14 @@ const userGameBets = `
 	SELECT user_id, game_id, 'overunder', pick, odds_snapshot, total_snapshot::text
 	FROM over_under_bets WHERE user_id = ? AND status <> 'void'`
 
-// FindByUserAndGames returns every live bet the user holds on the given
-// games, with the teams joined on so the caller can describe the pick without
-// a query per game. Void is excluded: a cancelled bet should not read back on
-// the games grid as one still placed.
+// FindByUserAndGames returns every bet the user holds on the given games that
+// has not been cancelled, with the teams joined on so the caller can describe
+// the pick without a query per game.
+//
+// Only void is excluded. Won, lost and push all come back, because the marker
+// answers "did I bet this game" -- a question a finished game still has an
+// answer to. Do not read this as "live": nothing here is restricted to bets
+// still in play.
 func (r *UserBetRepository) FindByUserAndGames(userID uuid.UUID, gameIDs []uuid.UUID) ([]UserBetRow, error) {
 	if len(gameIDs) == 0 {
 		return nil, nil
