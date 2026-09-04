@@ -412,3 +412,90 @@ func TestWithCurrentLine(t *testing.T) {
 		}
 	})
 }
+
+// The union behind UserBetSummaries returns one row per bet, so the same pick
+// placed in two leagues arrives twice. It is one fact to the reader, and
+// "WGA +2000; WGA +2000" reads as a rendering bug rather than as two entries.
+func TestUserBetSummariesCollapsesDuplicatePicks(t *testing.T) {
+	gameA := uuid.New()
+	gameB := uuid.New()
+	line := func(value string) *string { return &value }
+
+	moneyLine := func(game uuid.UUID) repository.UserBetRow {
+		return repository.UserBetRow{
+			GameID:       game,
+			BetType:      BetTypeMoneyLine,
+			Pick:         string(models.MoneyLinePickAway),
+			OddsSnapshot: decimal.RequireFromString("2000"),
+			HomeAbbr:     "GT",
+			AwayAbbr:     "WGA",
+		}
+	}
+	spread := repository.UserBetRow{
+		GameID:       gameA,
+		BetType:      BetTypeSpread,
+		Pick:         string(models.SpreadPickHome),
+		LineValue:    line("-7.5"),
+		OddsSnapshot: decimal.RequireFromString("-110"),
+		HomeAbbr:     "GT",
+		AwayAbbr:     "WGA",
+	}
+	total := repository.UserBetRow{
+		GameID:       gameA,
+		BetType:      BetTypeOverUnder,
+		Pick:         string(models.OverUnderPickOver),
+		LineValue:    line("52.5"),
+		OddsSnapshot: decimal.RequireFromString("-110"),
+		HomeAbbr:     "GT",
+		AwayAbbr:     "WGA",
+	}
+
+	tests := []struct {
+		name string
+		rows []repository.UserBetRow
+		want map[uuid.UUID]string
+	}{
+		{"no bets", nil, map[uuid.UUID]string{}},
+		{
+			"one bet",
+			[]repository.UserBetRow{moneyLine(gameA)},
+			map[uuid.UUID]string{gameA: "WGA +2000"},
+		},
+		{
+			"same pick in two leagues collapses",
+			[]repository.UserBetRow{moneyLine(gameA), moneyLine(gameA)},
+			map[uuid.UUID]string{gameA: "WGA +2000"},
+		},
+		{
+			"different picks on one game are both kept",
+			[]repository.UserBetRow{spread, total},
+			map[uuid.UUID]string{gameA: "GT -7.5; Over 52.5"},
+		},
+		// Sorted, so the join is the same on every page load -- the union
+		// query has no ORDER BY to lean on.
+		{
+			"pick order does not change the summary",
+			[]repository.UserBetRow{total, spread},
+			map[uuid.UUID]string{gameA: "GT -7.5; Over 52.5"},
+		},
+		{
+			"games are summarised independently",
+			[]repository.UserBetRow{moneyLine(gameA), moneyLine(gameB), moneyLine(gameB)},
+			map[uuid.UUID]string{gameA: "WGA +2000", gameB: "WGA +2000"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := userBetSummaries(tt.rows)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d summaries, want %d: %v", len(got), len(tt.want), got)
+			}
+			for gameID, want := range tt.want {
+				if got[gameID] != want {
+					t.Errorf("summary[%s] = %q, want %q", gameID, got[gameID], want)
+				}
+			}
+		})
+	}
+}

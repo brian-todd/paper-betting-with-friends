@@ -662,13 +662,27 @@ type BetListFilter struct {
 //
 // A game with more than one bet -- the spread and the total both, say --
 // joins them with "; " so the marker still fits on one line.
+//
+// Picks that describe the same thing collapse to one entry. The same pick in
+// two leagues is two rows here but one fact to the reader, and repeating it
+// ("WGA +2000; WGA +2000") reads as a rendering bug rather than as two league
+// entries. Sorting is what makes that collapse stable: the union query has no
+// ORDER BY, so without it the same two bets could join in either order from
+// one page load to the next.
 func (s *Service) UserBetSummaries(userID uuid.UUID, gameIDs []uuid.UUID) (map[uuid.UUID]string, error) {
 	rows, err := s.userBetRepo.FindByUserAndGames(userID, gameIDs)
 	if err != nil {
 		return nil, err
 	}
+	return userBetSummaries(rows), nil
+}
 
-	picks := make(map[uuid.UUID][]string)
+// userBetSummaries collapses bet rows into one line per game. Kept
+// independent of Service, the way rankingsFromPoll is of SyncService, so the
+// collapsing can be tested without a database -- it is the whole of the
+// interesting behaviour and none of it needs one.
+func userBetSummaries(rows []repository.UserBetRow) map[uuid.UUID]string {
+	picks := make(map[uuid.UUID]map[string]bool)
 	for _, row := range rows {
 		pick := HolyLockPick(repository.LeagueHolyLockRow{
 			BetType:      row.BetType,
@@ -678,14 +692,22 @@ func (s *Service) UserBetSummaries(userID uuid.UUID, gameIDs []uuid.UUID) (map[u
 			HomeAbbr:     row.HomeAbbr,
 			AwayAbbr:     row.AwayAbbr,
 		})
-		picks[row.GameID] = append(picks[row.GameID], pick)
+		if picks[row.GameID] == nil {
+			picks[row.GameID] = make(map[string]bool)
+		}
+		picks[row.GameID][pick] = true
 	}
 
 	summaries := make(map[uuid.UUID]string, len(picks))
 	for gameID, gamePicks := range picks {
-		summaries[gameID] = strings.Join(gamePicks, "; ")
+		unique := make([]string, 0, len(gamePicks))
+		for pick := range gamePicks {
+			unique = append(unique, pick)
+		}
+		sort.Strings(unique)
+		summaries[gameID] = strings.Join(unique, "; ")
 	}
-	return summaries, nil
+	return summaries
 }
 
 // BetListResult contains the bets and filter options.
