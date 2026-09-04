@@ -798,45 +798,10 @@ func (s *Service) GetUserBets(userID uuid.UUID, filter BetListFilter, page int) 
 		UserID:   &userID,
 	}
 
-	total, err := s.betPageRepo.CountFiltered(repoFilter)
+	bets, pageInfo, err := s.loadBetPage(repoFilter, page)
 	if err != nil {
 		return nil, err
 	}
-
-	pageInfo := paginate(page, total)
-	refs, err := s.betPageRepo.FindRefs(repoFilter, BetPageSize, (pageInfo.Number-1)*BetPageSize)
-	if err != nil {
-		return nil, err
-	}
-
-	var spreadIDs, moneyLineIDs, overUnderIDs []uuid.UUID
-	for _, ref := range refs {
-		switch ref.BetType {
-		case BetTypeSpread:
-			spreadIDs = append(spreadIDs, ref.BetID)
-		case BetTypeMoneyLine:
-			moneyLineIDs = append(moneyLineIDs, ref.BetID)
-		case BetTypeOverUnder:
-			overUnderIDs = append(overUnderIDs, ref.BetID)
-		}
-	}
-
-	spreadBets, err := s.spreadBetRepo.FindByIDs(spreadIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	moneyLineBets, err := s.moneyLineBetRepo.FindByIDs(moneyLineIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	overUnderBets, err := s.overUnderBetRepo.FindByIDs(overUnderIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	bets := orderByRefs(s.betViews(spreadBets, moneyLineBets, overUnderBets), refs)
 	s.markHolyLockEligibility(userID, bets)
 
 	// Get filter options from the periods the user actually has bets in.
@@ -855,6 +820,58 @@ func (s *Service) GetUserBets(userID uuid.UUID, filter BetListFilter, page int) 
 		Weeks:   weeks,
 		Leagues: leagues,
 	}, nil
+}
+
+// loadBetPage resolves one page of a filtered bet listing and loads only the
+// bets on it.
+//
+// Both the user's own list and the admin browser over every user page the same
+// three tables against the same BetFilter, so the sequence lives here once:
+// count, clamp the requested page against that count, ask SQL which bets the
+// page holds, then read just those and restore the order SQL chose.
+//
+// The count and the refs come from the same query builder, so the pager can
+// never offer a page the listing cannot fill.
+func (s *Service) loadBetPage(filter repository.BetFilter, page int) ([]BetView, Page, error) {
+	total, err := s.betPageRepo.CountFiltered(filter)
+	if err != nil {
+		return nil, Page{}, err
+	}
+
+	pageInfo := paginate(page, total)
+	refs, err := s.betPageRepo.FindRefs(filter, BetPageSize, (pageInfo.Number-1)*BetPageSize)
+	if err != nil {
+		return nil, Page{}, err
+	}
+
+	var spreadIDs, moneyLineIDs, overUnderIDs []uuid.UUID
+	for _, ref := range refs {
+		switch ref.BetType {
+		case BetTypeSpread:
+			spreadIDs = append(spreadIDs, ref.BetID)
+		case BetTypeMoneyLine:
+			moneyLineIDs = append(moneyLineIDs, ref.BetID)
+		case BetTypeOverUnder:
+			overUnderIDs = append(overUnderIDs, ref.BetID)
+		}
+	}
+
+	spreadBets, err := s.spreadBetRepo.FindByIDs(spreadIDs)
+	if err != nil {
+		return nil, Page{}, err
+	}
+
+	moneyLineBets, err := s.moneyLineBetRepo.FindByIDs(moneyLineIDs)
+	if err != nil {
+		return nil, Page{}, err
+	}
+
+	overUnderBets, err := s.overUnderBetRepo.FindByIDs(overUnderIDs)
+	if err != nil {
+		return nil, Page{}, err
+	}
+
+	return orderByRefs(s.betViews(spreadBets, moneyLineBets, overUnderBets), refs), pageInfo, nil
 }
 
 // orderByRefs puts views back into the order the page query decided, which is

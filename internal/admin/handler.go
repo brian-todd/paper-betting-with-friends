@@ -4,6 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/brian/paper-betting-with-friends/internal/auth"
@@ -381,6 +383,16 @@ func (h *Handler) renderBets(w http.ResponseWriter, r *http.Request, status int,
 	filter := repository.BetFilter{}
 	query := r.URL.Query()
 
+	// A failed status change re-renders through here, and that POST carries
+	// only ?back= -- none of the filter fields. Recover the browse it was made
+	// from, so the error appears in place instead of at the unfiltered top of
+	// the list, which is where the successful path already returns.
+	if raw := query.Get("back"); raw != "" {
+		if parsed, err := url.Parse(backURL(raw)); err == nil {
+			query = parsed.Query()
+		}
+	}
+
 	if raw := query.Get("league_id"); raw != "" {
 		if id, err := uuid.Parse(raw); err == nil {
 			filter.LeagueID = &id
@@ -396,7 +408,8 @@ func (h *Handler) renderBets(w http.ResponseWriter, r *http.Request, status int,
 		filter.Status = &betStatus
 	}
 
-	list, err := h.service.ListBets(filter)
+	page, _ := strconv.Atoi(query.Get("page"))
+	list, pageInfo, err := h.service.ListBets(filter, page)
 	if err != nil {
 		slog.Error("failed to load bets", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -419,6 +432,10 @@ func (h *Handler) renderBets(w http.ResponseWriter, r *http.Request, status int,
 
 	data := map[string]any{
 		"Bets":             list,
+		"Page":             pageInfo,
+		"PrevURL":          adminBetsURL(query, pageInfo.Prev()),
+		"NextURL":          adminBetsURL(query, pageInfo.Next()),
+		"BackURL":          adminBetsURL(query, pageInfo.Number),
 		"Users":            users,
 		"Leagues":          leagues,
 		"SelectedLeague":   query.Get("league_id"),
@@ -450,7 +467,58 @@ func (h *Handler) SetBetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/admin/bets?success=bet", http.StatusSeeOther)
+	// Return to the filters and page the correction was made from, rather than
+	// dumping the admin at the unfiltered top of the list.
+	//
+	// The listing passes that destination in as ?back= on the form action. It
+	// cannot travel as ordinary filter fields in the form body, because the
+	// status filter and the new bet status would both be named "status".
+	back := backURL(r.URL.Query().Get("back"))
+	if strings.Contains(back, "?") {
+		back += "&success=bet"
+	} else {
+		back += "?success=bet"
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// backURL validates a caller-supplied return destination.
+//
+// It is reflected into a Location header, so anything that is not recognisably
+// this one listing is discarded rather than trusted: a value the user controls
+// reaching a redirect unchecked is an open redirect. Requiring the exact base
+// path is what rejects an absolute URL, a protocol-relative "//host" that would
+// leave the site entirely, and a "/admin/betsomething" lookalike alike.
+func backURL(raw string) string {
+	const base = "/admin/bets"
+	if raw != base && !strings.HasPrefix(raw, base+"?") {
+		return base
+	}
+	return raw
+}
+
+// adminBetsURL rebuilds the bet browser URL for a different page, carrying the
+// active filters.
+//
+// It copies only the filter keys rather than the whole query, so that a
+// success or error marker from a previous action is not carried forward into
+// the pager links and re-shown on every page turn. page=1 is omitted, which
+// keeps the filter form -- which has no page field and so drops the parameter
+// on submit -- landing on the first page of its new result set.
+func adminBetsURL(query url.Values, page int) string {
+	next := url.Values{}
+	for _, key := range []string{"league_id", "user_id", "status"} {
+		if value := query.Get(key); value != "" {
+			next.Set(key, value)
+		}
+	}
+	if page > 1 {
+		next.Set("page", strconv.Itoa(page))
+	}
+	if len(next) == 0 {
+		return "/admin/bets"
+	}
+	return "/admin/bets?" + next.Encode()
 }
 
 // ---- Sync and health ----

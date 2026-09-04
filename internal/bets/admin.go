@@ -149,25 +149,18 @@ func wrapBetLookup(err error) error {
 	return err
 }
 
-// ListAllBets returns every bet matching filter, across all users, as the same
-// view models the user-facing list renders.
-func (s *Service) ListAllBets(filter repository.BetFilter) ([]BetView, error) {
-	spreadBets, err := s.spreadBetRepo.FindFiltered(filter)
+// ListAllBets returns one page of the bets matching filter, across all users
+// and leagues, newest first, as the same view model the user-facing list uses.
+//
+// It pages for the same reason the user's own list does, but with more at
+// stake: nothing here is scoped to one user, so an unfiltered call would load
+// every bet in the system with seven preloads each and grow linearly forever.
+func (s *Service) ListAllBets(filter repository.BetFilter, page int) ([]BetView, Page, error) {
+	views, pageInfo, err := s.loadBetPage(filter, page)
 	if err != nil {
-		return nil, fmt.Errorf("loading spread bets: %w", err)
+		return nil, Page{}, fmt.Errorf("loading bets: %w", err)
 	}
-
-	moneyLineBets, err := s.moneyLineBetRepo.FindFiltered(filter)
-	if err != nil {
-		return nil, fmt.Errorf("loading money line bets: %w", err)
-	}
-
-	overUnderBets, err := s.overUnderBetRepo.FindFiltered(filter)
-	if err != nil {
-		return nil, fmt.Errorf("loading over/under bets: %w", err)
-	}
-
-	return s.betViews(spreadBets, moneyLineBets, overUnderBets), nil
+	return views, pageInfo, nil
 }
 
 // FindGameResult returns the recorded score for a game, or nil when the

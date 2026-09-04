@@ -4,11 +4,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/brian/paper-betting-with-friends/internal/scheduler"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -174,5 +176,89 @@ func redirectCodes(source string) []string {
 			return codes
 		}
 		codes = append(codes, rest[:end])
+	}
+}
+
+// TestAdminBetsURL covers the pager's filter round-trip. A pager that drops the
+// active filters silently widens the browse on the second page.
+func TestAdminBetsURL(t *testing.T) {
+	leagueID := uuid.New().String()
+
+	tests := []struct {
+		name  string
+		query url.Values
+		page  int
+		want  string
+	}{
+		{"no filters, first page", url.Values{}, 1, "/admin/bets"},
+		{
+			"no filters, later page",
+			url.Values{},
+			3,
+			"/admin/bets?page=3",
+		},
+		{
+			"filters carried forward",
+			url.Values{"status": {"pending"}, "league_id": {leagueID}},
+			2,
+			"/admin/bets?league_id=" + leagueID + "&page=2&status=pending",
+		},
+		{
+			// page=1 is omitted so the filter form, which has no page field,
+			// lands on the first page of its new result set.
+			"first page omits the parameter",
+			url.Values{"status": {"won"}},
+			1,
+			"/admin/bets?status=won",
+		},
+		{
+			// A stale banner must not ride along on every page turn.
+			"success marker is not carried",
+			url.Values{"success": {"bet"}, "status": {"lost"}},
+			2,
+			"/admin/bets?page=2&status=lost",
+		},
+		{
+			"empty filter values are dropped",
+			url.Values{"status": {""}, "user_id": {""}},
+			1,
+			"/admin/bets",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := adminBetsURL(tt.query, tt.page); got != tt.want {
+				t.Errorf("adminBetsURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBackURL covers the return destination reflected into a Location header
+// after a status change. It is user-supplied, so anything not recognisably the
+// bet listing has to be discarded rather than redirected to.
+func TestBackURL(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"empty falls back", "", "/admin/bets"},
+		{"bare listing", "/admin/bets", "/admin/bets"},
+		{"filtered page", "/admin/bets?page=3&status=won", "/admin/bets?page=3&status=won"},
+		{"absolute url rejected", "https://evil.example/x", "/admin/bets"},
+		{"protocol relative rejected", "//evil.example/admin/bets", "/admin/bets"},
+		{"other admin page rejected", "/admin/users", "/admin/bets"},
+		{"prefix lookalike rejected", "/admin/betsomething", "/admin/bets"},
+		{"path traversal rejected", "/admin/bets/../../etc", "/admin/bets"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := backURL(tt.raw); got != tt.want {
+				t.Errorf("backURL(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
