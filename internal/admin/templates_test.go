@@ -166,6 +166,7 @@ func TestAdminBetsPageRenders(t *testing.T) {
 
 	html := render(t, "admin_bets", map[string]any{
 		"Bets":             []bets.BetView{view},
+		"Page":             bets.Page{Number: 1, Size: 100, Total: 1, Pages: 1, First: 1, Last: 1},
 		"Users":            []models.User{{ID: uuid.New(), Username: "testalice"}},
 		"Leagues":          []models.League{{ID: leagueID, Name: "Sunday Money"}},
 		"SelectedLeague":   leagueID.String(),
@@ -311,5 +312,34 @@ func TestAdminAuditPageRenders(t *testing.T) {
 	}
 	if !strings.Contains(html, models.AuditActionPurseSet) {
 		t.Error("the action did not render")
+	}
+}
+
+// TestAdminBetsPagerRenders covers the branch the single-page fixture above
+// cannot reach: with one page there is no pager markup to get wrong.
+func TestAdminBetsPagerRenders(t *testing.T) {
+	html := render(t, "admin_bets", map[string]any{
+		"Bets":             []bets.BetView{},
+		"Page":             bets.Page{Number: 2, Size: 100, Total: 250, Pages: 3, First: 101, Last: 200},
+		"PrevURL":          "/admin/bets?status=pending",
+		"NextURL":          "/admin/bets?page=3&status=pending",
+		"Users":            []models.User{},
+		"Leagues":          []models.League{},
+		"SelectedLeague":   "",
+		"SelectedUser":     "",
+		"SelectedStatus":   "pending",
+		"Statuses":         []models.BetStatus{models.BetStatusPending},
+		"SettleableStatus": []models.BetStatus{models.BetStatusWon},
+	})
+
+	for _, want := range []string{
+		"Showing 101-200 of 250 bets",
+		"Page 2 of 3",
+		`href="/admin/bets?status=pending"`,
+		`href="/admin/bets?page=3&amp;status=pending"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("admin bets pager should contain %q", want)
+		}
 	}
 }

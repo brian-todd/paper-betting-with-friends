@@ -7,9 +7,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// ListBets returns every bet matching filter across all users and leagues.
-func (s *Service) ListBets(filter repository.BetFilter) ([]bets.BetView, error) {
-	return s.bets.ListAllBets(filter)
+// ListBets returns one page of the bets matching filter, across all users and
+// leagues.
+func (s *Service) ListBets(filter repository.BetFilter, page int) ([]bets.BetView, bets.Page, error) {
+	return s.bets.ListAllBets(filter, page)
 }
 
 // SetBetStatus forces a bet into a status and moves the purse to match.
