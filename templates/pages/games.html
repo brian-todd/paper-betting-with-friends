@@ -96,12 +96,15 @@
                 </div>
             </div>
             <div class="filter-group">
-                <label class="filter-label" for="game-type-filter">Matchup</label>
-                <select class="select-input" id="game-type-filter" name="game_type">
+                <label class="filter-label">Matchup</label>
+                <div class="checkbox-row">
                     {{range .GameTypeOptions}}
-                    <option value="{{.Value}}" {{if eq .Value $.Filter.GameType}}selected{{end}}>{{.Label}}</option>
+                    <label class="radio-chip">
+                        <input type="radio" name="game_type" value="{{.Value}}" {{if eq .Value $.Filter.GameType}}checked{{end}}>
+                        <span>{{.Label}}</span>
+                    </label>
                     {{end}}
-                </select>
+                </div>
             </div>
             <div class="filter-group">
                 <label class="filter-label">Site</label>

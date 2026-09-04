@@ -68,8 +68,13 @@ var statusOptions = []struct {
 
 // gameTypeOptions are the conference-vs-non-conference choices the filter
 // offers, in display order. Conference and non-conference are mutually
-// exclusive states of one field, so this is a select like status rather than
-// two independent checkboxes -- there is no sane meaning for checking both.
+// exclusive states of one field, so the template renders these as a radio
+// group rather than two independent checkboxes -- there is no sane meaning for
+// checking both.
+//
+// The empty value is a real option rather than an omission: a radio group has
+// no way to return to unset once a choice is made, so "any" has to be
+// selectable. It leads the list so the group reads in widening order.
 var gameTypeOptions = []struct {
 	Value string
 	Label string

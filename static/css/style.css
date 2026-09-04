@@ -1286,7 +1286,7 @@ button.btn {
     gap: 0.375rem;
 }
 
-.checkbox-chip {
+.checkbox-chip, .radio-chip {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -1300,23 +1300,23 @@ button.btn {
     transition: border-color 0.2s ease, color 0.2s ease;
 }
 
-.checkbox-chip:hover {
+.checkbox-chip:hover, .radio-chip:hover {
     border-color: var(--color-primary);
     color: var(--color-text);
 }
 
-.checkbox-chip input {
+.checkbox-chip input, .radio-chip input {
     accent-color: var(--color-primary);
     margin: 0;
     cursor: pointer;
 }
 
-.checkbox-chip:has(input:checked) {
+.checkbox-chip:has(input:checked), .radio-chip:has(input:checked) {
     border-color: var(--color-primary);
     color: var(--color-text);
 }
 
-.checkbox-chip:has(input:focus-visible) {
+.checkbox-chip:has(input:focus-visible), .radio-chip:has(input:focus-visible) {
     outline: 2px solid var(--color-primary);
     outline-offset: 1px;
 }
