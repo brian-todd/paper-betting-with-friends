@@ -23,6 +23,20 @@ type HolyLockReader interface {
 	HolyLockConflicts(userID uuid.UUID, game models.Game) (map[string]string, error)
 }
 
+// UserBetReader describes the live bets the given user already holds on a set
+// of games, keyed by game ID, so the grid and detail page can show what was
+// bet without the reader having to open the bet slip to find out.
+//
+// It returns the pick itself rather than a bare "yes" because the two cost the
+// same query: knowing you bet this game is only half of what you wanted to
+// know.
+//
+// Narrow for the same reason HolyLockReader is: this handler needs one method
+// off the bets service and nothing else of it.
+type UserBetReader interface {
+	UserBetSummaries(userID uuid.UUID, gameIDs []uuid.UUID) (map[uuid.UUID]string, error)
+}
+
 // Handler handles game HTTP requests.
 type Handler struct {
 	service    *Service
@@ -30,12 +44,19 @@ type Handler struct {
 	leagueRepo *repository.LeagueRepository
 	purseRepo  *repository.PurseRepository
 	holyLocks  HolyLockReader
+	userBets   UserBetReader
 }
 
 // SetHolyLockReader wires in the source of Holy Lock conflicts for the bet slip.
 // The slip degrades to offering the checkbox unconditionally without it.
 func (h *Handler) SetHolyLockReader(reader HolyLockReader) {
 	h.holyLocks = reader
+}
+
+// SetUserBetReader wires in the source of "you already bet this" state. The
+// grid and detail page simply show no such marker without it.
+func (h *Handler) SetUserBetReader(reader UserBetReader) {
+	h.userBets = reader
 }
 
 // NewHandler creates a new games handler.
@@ -130,6 +151,8 @@ func (h *Handler) ShowWeekGames(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+
+	h.annotateUserBets(user.ID, weekData.Games)
 
 	// Get all weeks for this season and type for navigation.
 	seasonWeeks, err := h.service.GetSeasonWeeks(season, seasonType)
@@ -246,6 +269,15 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.userBets != nil {
+		summaries, err := h.userBets.UserBetSummaries(user.ID, []uuid.UUID{gameDetail.Game.ID})
+		if err != nil {
+			slog.Error("failed to fetching user bet marker", "error", err)
+		} else {
+			gameDetail.BetSummary = summaries[gameDetail.Game.ID]
+		}
+	}
+
 	// Build title from matchup.
 	title := gameDetail.Game.AwayTeam.Abbreviation + " @ " + gameDetail.Game.HomeTeam.Abbreviation
 
@@ -257,6 +289,7 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		"UnifiedOdds":   gameDetail.UnifiedOdds,
 		"HomeRank":      gameDetail.HomeRank,
 		"AwayRank":      gameDetail.AwayRank,
+		"BetSummary":    gameDetail.BetSummary,
 		"UserLeagues":   userLeagues,
 		"PurseBalances": purseBalances,
 		// Basketball games carry no week, so their bets can never be a Holy Lock.
@@ -265,6 +298,30 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		"Success":           r.URL.Query().Get("success"),
 		"Error":             r.URL.Query().Get("error"),
 	})
+}
+
+// annotateUserBets describes, on each game, the bet the user already holds on
+// it. A reader error, or none wired in, only costs the marker -- the grid
+// still renders without it.
+func (h *Handler) annotateUserBets(userID uuid.UUID, games []GameWithOdds) {
+	if h.userBets == nil || len(games) == 0 {
+		return
+	}
+
+	gameIDs := make([]uuid.UUID, len(games))
+	for i, g := range games {
+		gameIDs[i] = g.Game.ID
+	}
+
+	summaries, err := h.userBets.UserBetSummaries(userID, gameIDs)
+	if err != nil {
+		slog.Error("failed to fetching user bet markers", "error", err)
+		return
+	}
+
+	for i, g := range games {
+		games[i].BetSummary = summaries[g.Game.ID]
+	}
 }
 
 // pageURL builds a link to another page of the same filtered result set. The

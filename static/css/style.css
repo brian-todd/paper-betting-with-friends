@@ -2335,6 +2335,14 @@ button.btn {
     padding: 0.1rem 0.3rem;
 }
 
+.badge-user-bet {
+    background: rgba(16, 185, 129, 0.2);
+    color: var(--color-success);
+    margin-left: 0.5rem;
+    margin-bottom: 1rem;
+    vertical-align: middle;
+}
+
 .lock-record {
     white-space: nowrap;
 }

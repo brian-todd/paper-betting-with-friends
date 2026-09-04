@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
@@ -44,6 +45,7 @@ type Service struct {
 	overUnderOddsRepo *repository.OverUnderOddsRepository
 	betPeriodRepo     *repository.BetPeriodRepository
 	holyLockRepo      *repository.HolyLockRepository
+	userBetRepo       *repository.UserBetRepository
 }
 
 // NewService creates a new bets service.
@@ -63,6 +65,7 @@ func NewService(db *gorm.DB) *Service {
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
 		betPeriodRepo:     repository.NewBetPeriodRepository(db),
 		holyLockRepo:      repository.NewHolyLockRepository(db),
+		userBetRepo:       repository.NewUserBetRepository(db),
 	}
 }
 
@@ -650,6 +653,39 @@ type BetListFilter struct {
 	Season   *int
 	Week     *int
 	LeagueID *uuid.UUID
+}
+
+// UserBetSummaries returns, of the given games, a one-line description of
+// each live bet userID holds on them, keyed by game ID. The games grid and
+// detail page use this to show the reader what they already bet rather than
+// making them open the slip again to find out.
+//
+// A game with more than one bet -- the spread and the total both, say --
+// joins them with "; " so the marker still fits on one line.
+func (s *Service) UserBetSummaries(userID uuid.UUID, gameIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	rows, err := s.userBetRepo.FindByUserAndGames(userID, gameIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	picks := make(map[uuid.UUID][]string)
+	for _, row := range rows {
+		pick := HolyLockPick(repository.LeagueHolyLockRow{
+			BetType:      row.BetType,
+			Pick:         row.Pick,
+			LineValue:    row.LineValue,
+			OddsSnapshot: row.OddsSnapshot,
+			HomeAbbr:     row.HomeAbbr,
+			AwayAbbr:     row.AwayAbbr,
+		})
+		picks[row.GameID] = append(picks[row.GameID], pick)
+	}
+
+	summaries := make(map[uuid.UUID]string, len(picks))
+	for gameID, gamePicks := range picks {
+		summaries[gameID] = strings.Join(gamePicks, "; ")
+	}
+	return summaries, nil
 }
 
 // BetListResult contains the bets and filter options.

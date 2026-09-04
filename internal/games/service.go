@@ -28,6 +28,10 @@ type GameWithOdds struct {
 	// poll (CFP when the week has it, else AP), nil when unranked.
 	HomeRank *int
 	AwayRank *int
+	// BetSummary describes the live bet the viewing user already holds on this
+	// game, empty when there is none. Set by the handler, not this service,
+	// since it is per-viewer.
+	BetSummary string
 }
 
 // UnifiedOdds combines all odds types for a single source.
@@ -51,6 +55,10 @@ type GameDetail struct {
 	// effective poll. Always nil for basketball, which has no WeekID.
 	HomeRank *int
 	AwayRank *int
+	// BetSummary describes the live bet the viewing user already holds on this
+	// game, empty when there is none. Set by the handler, not this service,
+	// since it is per-viewer.
+	BetSummary string
 }
 
 // PageSize is how many games one page of the games grid holds.

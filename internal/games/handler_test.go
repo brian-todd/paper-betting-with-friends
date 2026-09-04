@@ -115,6 +115,28 @@ func TestBetSlipRendersWithoutConflictData(t *testing.T) {
 	}
 }
 
+func TestGameDetailShowsUserBetBadge(t *testing.T) {
+	league := uuid.New()
+	html := renderGameDetail(t, league, map[string]any{"BetSummary": "GT -7.5"})
+
+	if !strings.Contains(html, "badge-user-bet") {
+		t.Error("game detail did not mark a game the user already bet on")
+	}
+	// The marker carries the pick, not just the fact of a bet.
+	if !strings.Contains(html, "GT -7.5") {
+		t.Error("game detail marked the bet but did not show what it was")
+	}
+}
+
+func TestGameDetailHidesUserBetBadgeByDefault(t *testing.T) {
+	league := uuid.New()
+	html := renderGameDetail(t, league, nil)
+
+	if strings.Contains(html, "badge-user-bet") {
+		t.Error("game detail marked a game the user has not bet on")
+	}
+}
+
 // renderGamesGrid renders the games grid page for real, the same reason
 // renderGameDetail does: a template that parses fine can still blow up at
 // execution on an untyped nil.
@@ -164,6 +186,20 @@ func renderGamesGrid(t *testing.T, games []GameWithOdds) string {
 	return buf.String()
 }
 
+func TestGamesGridMarksGameWithExistingBet(t *testing.T) {
+	html := renderGamesGrid(t, []GameWithOdds{
+		{Game: models.Game{ID: uuid.New(), HomeTeam: models.Team{Abbreviation: "GT"}, AwayTeam: models.Team{Abbreviation: "CLEM"}}, BetSummary: "GT -7.5"},
+	})
+
+	if !strings.Contains(html, "badge-user-bet") {
+		t.Error("games grid did not mark the game the user already bet on")
+	}
+	// The marker carries the pick, not just the fact of a bet.
+	if !strings.Contains(html, "GT -7.5") {
+		t.Error("games grid marked the bet but did not show what it was")
+	}
+}
+
 // The rank is a *int, which a template renders by dereferencing -- get that
 // wrong and the card shows a pointer address, which no other test would catch.
 func TestGamesGridShowsRanks(t *testing.T) {
@@ -184,5 +220,15 @@ func TestGamesGridOmitsRankWhenUnranked(t *testing.T) {
 
 	if strings.Contains(html, "team-rank") {
 		t.Error("games grid showed a rank for an unranked matchup")
+	}
+}
+
+func TestGamesGridHidesBetBadgeWithoutBet(t *testing.T) {
+	html := renderGamesGrid(t, []GameWithOdds{
+		{Game: models.Game{ID: uuid.New(), HomeTeam: models.Team{Abbreviation: "GT"}, AwayTeam: models.Team{Abbreviation: "CLEM"}}},
+	})
+
+	if strings.Contains(html, "badge-user-bet") {
+		t.Error("games grid marked a game the user has not bet on")
 	}
 }
