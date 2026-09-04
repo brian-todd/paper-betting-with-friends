@@ -233,7 +233,7 @@ func TestFilterRepository(t *testing.T) {
 		StartHour:       new(18),
 		RankedTeam:      true,
 		NeutralSiteOnly: true,
-		ConferenceGame:  boolPtr(true),
+		ConferenceGame:  new(true),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Repository()\n got %+v\nwant %+v", got, want)
