@@ -465,9 +465,13 @@ func (s *SyncService) syncRankings(ctx context.Context, year int, week *int, sea
 
 // rankingsFromPoll resolves poll's ranks against the team repository, in the
 // scope of one SyncService.
+//
+// Teams resolve on the provider's team id, not the school name. The name would
+// work today, but it is the one identifier the provider is free to restyle --
+// and every other lookup in this sync already goes through external_id.
 func (s *SyncService) rankingsFromPoll(weekID uuid.UUID, poll APIPoll) []models.TeamRanking {
-	return rankingsFromPoll(weekID, poll, func(school string) (uuid.UUID, bool) {
-		team, err := s.teamRepo.FindByNameAndSport(school, models.SportFootball)
+	return rankingsFromPoll(weekID, poll, func(externalID int64) (uuid.UUID, bool) {
+		team, err := s.teamRepo.FindByExternalID(externalID, models.SportFootball)
 		if err != nil {
 			return uuid.Nil, false
 		}
@@ -476,19 +480,20 @@ func (s *SyncService) rankingsFromPoll(weekID uuid.UUID, poll APIPoll) []models.
 }
 
 // rankingsFromPoll converts one poll's ranks into rows for weekID, resolving
-// each school through resolve. A school resolve cannot find is skipped and
-// logged rather than failing the whole poll -- one renamed or misspelled
-// school should not cost the other 24 rankings in it.
+// each team through resolve. A team resolve cannot find is skipped and logged
+// rather than failing the whole poll -- one team the feed knows and we do not
+// should not cost the other 24 rankings in it.
 //
 // Kept independent of SyncService so it can be tested without a database: the
-// interesting behavior (an unknown school drops out, a team missing from
+// interesting behavior (an unresolvable team drops out, a team missing from
 // poll.Ranks produces no row for it) lives entirely in this function.
-func rankingsFromPoll(weekID uuid.UUID, poll APIPoll, resolve func(school string) (uuid.UUID, bool), logger *slog.Logger) []models.TeamRanking {
+func rankingsFromPoll(weekID uuid.UUID, poll APIPoll, resolve func(externalID int64) (uuid.UUID, bool), logger *slog.Logger) []models.TeamRanking {
 	rankings := make([]models.TeamRanking, 0, len(poll.Ranks))
 	for _, rank := range poll.Ranks {
-		teamID, ok := resolve(rank.School)
+		teamID, ok := resolve(rank.TeamID)
 		if !ok {
-			logger.Warn("skipping ranking: team not found", "school", rank.School, "poll", poll.Poll)
+			logger.Warn("skipping ranking: team not found",
+				"team_id", rank.TeamID, "school", rank.School, "poll", poll.Poll)
 			continue
 		}
 		rankings = append(rankings, models.TeamRanking{

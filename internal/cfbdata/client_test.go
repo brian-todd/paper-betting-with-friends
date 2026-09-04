@@ -164,14 +164,14 @@ func TestGetRankingsBuildsQueryAndDecodesNestedPolls(t *testing.T) {
 					{
 						"poll": "Playoff Committee Rankings",
 						"ranks": [
-							{"rank": 1, "school": "Ohio State", "firstPlaceVotes": null, "points": null},
-							{"rank": 2, "school": "Indiana", "firstPlaceVotes": null, "points": null}
+							{"rank": 1, "teamId": 194, "school": "Ohio State", "firstPlaceVotes": null, "points": null},
+							{"rank": 2, "teamId": 84, "school": "Indiana", "firstPlaceVotes": null, "points": null}
 						]
 					},
 					{
 						"poll": "AP Top 25",
 						"ranks": [
-							{"rank": 1, "school": "Ohio State", "firstPlaceVotes": 60, "points": 1500}
+							{"rank": 1, "teamId": 194, "school": "Ohio State", "firstPlaceVotes": 60, "points": 1500}
 						]
 					}
 				]
@@ -206,6 +206,11 @@ func TestGetRankingsBuildsQueryAndDecodesNestedPolls(t *testing.T) {
 	}
 	if got := rw.Polls[0].Ranks[1].School; got != "Indiana" {
 		t.Errorf("polls[0].Ranks[1].School = %q, want Indiana", got)
+	}
+	// TeamID is what the sync resolves a ranking against, so a decode that
+	// silently left it zero would drop every team.
+	if got := rw.Polls[0].Ranks[1].TeamID; got != 84 {
+		t.Errorf("polls[0].Ranks[1].TeamID = %d, want 84", got)
 	}
 	ap := rw.Polls[1]
 	if ap.Poll != "AP Top 25" || len(ap.Ranks) != 1 {

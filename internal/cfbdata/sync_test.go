@@ -280,12 +280,14 @@ func TestGameResultFromCarriesExcitementIndex(t *testing.T) {
 // about the return value of a function that also happens to log.
 var discardLogger = slog.New(slog.DiscardHandler)
 
-func TestRankingsFromPollSkipsUnknownSchools(t *testing.T) {
+func TestRankingsFromPollSkipsUnknownTeams(t *testing.T) {
 	weekID := uuid.New()
 	bamaID := uuid.New()
 
-	resolve := func(school string) (uuid.UUID, bool) {
-		if school == "Alabama" {
+	// Teams resolve on the provider's team id. The school name is carried for
+	// logging only, so a row is kept or dropped purely on the id.
+	resolve := func(externalID int64) (uuid.UUID, bool) {
+		if externalID == 333 {
 			return bamaID, true
 		}
 		return uuid.Nil, false
@@ -294,20 +296,45 @@ func TestRankingsFromPollSkipsUnknownSchools(t *testing.T) {
 	poll := APIPoll{
 		Poll: models.PollAP,
 		Ranks: []APIRank{
-			{Rank: 1, School: "Alabama"},
-			// A misspelled or renamed school should not cost the rest of the
-			// poll -- it is skipped and logged, not fatal.
-			{Rank: 2, School: "Not A Real School"},
+			{Rank: 1, TeamID: 333, School: "Alabama"},
+			// A team the feed ranks and we do not have should not cost the
+			// rest of the poll -- it is skipped and logged, not fatal.
+			{Rank: 2, TeamID: 999999, School: "Not A Real School"},
 		},
 	}
 
 	got := rankingsFromPoll(weekID, poll, resolve, discardLogger)
 
 	if len(got) != 1 {
-		t.Fatalf("got %d rankings, want 1 (the unresolved school dropped)", len(got))
+		t.Fatalf("got %d rankings, want 1 (the unresolved team dropped)", len(got))
 	}
 	if got[0].TeamID != bamaID || got[0].Rank != 1 || got[0].WeekID != weekID || got[0].Poll != models.PollAP {
 		t.Errorf("rankings[0] = %+v, want Alabama at rank 1 for week %s poll %s", got[0], weekID, models.PollAP)
+	}
+}
+
+// The school name is deliberately not what a row resolves on, so a provider
+// restyling it must not drop the team.
+func TestRankingsFromPollIgnoresSchoolNameChanges(t *testing.T) {
+	weekID := uuid.New()
+	bamaID := uuid.New()
+
+	resolve := func(externalID int64) (uuid.UUID, bool) {
+		if externalID == 333 {
+			return bamaID, true
+		}
+		return uuid.Nil, false
+	}
+
+	poll := APIPoll{
+		Poll:  models.PollAP,
+		Ranks: []APIRank{{Rank: 1, TeamID: 333, School: "Alabama Crimson Tide (renamed)"}},
+	}
+
+	got := rankingsFromPoll(weekID, poll, resolve, discardLogger)
+
+	if len(got) != 1 || got[0].TeamID != bamaID {
+		t.Errorf("got %+v, want the team still resolved by id despite the new name", got)
 	}
 }
 
@@ -315,11 +342,11 @@ func TestRankingsFromPollTeamDroppingOutOfPoll(t *testing.T) {
 	weekID := uuid.New()
 	bamaID, georgiaID := uuid.New(), uuid.New()
 
-	resolve := func(school string) (uuid.UUID, bool) {
-		switch school {
-		case "Alabama":
+	resolve := func(externalID int64) (uuid.UUID, bool) {
+		switch externalID {
+		case 333:
 			return bamaID, true
-		case "Georgia":
+		case 61:
 			return georgiaID, true
 		default:
 			return uuid.Nil, false
@@ -330,8 +357,8 @@ func TestRankingsFromPollTeamDroppingOutOfPoll(t *testing.T) {
 	before := rankingsFromPoll(weekID, APIPoll{
 		Poll: models.PollAP,
 		Ranks: []APIRank{
-			{Rank: 1, School: "Georgia"},
-			{Rank: 2, School: "Alabama"},
+			{Rank: 1, TeamID: 61, School: "Georgia"},
+			{Rank: 2, TeamID: 333, School: "Alabama"},
 		},
 	}, resolve, discardLogger)
 	if len(before) != 2 {
@@ -344,7 +371,7 @@ func TestRankingsFromPollTeamDroppingOutOfPoll(t *testing.T) {
 	after := rankingsFromPoll(weekID, APIPoll{
 		Poll: models.PollAP,
 		Ranks: []APIRank{
-			{Rank: 1, School: "Georgia"},
+			{Rank: 1, TeamID: 61, School: "Georgia"},
 		},
 	}, resolve, discardLogger)
 

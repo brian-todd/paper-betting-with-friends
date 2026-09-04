@@ -128,8 +128,13 @@ type APIPoll struct {
 }
 
 // APIRank represents one team's position within a poll.
+//
+// TeamID is the same identifier /teams reports, so it resolves against
+// teams.external_id the way every other entity in this sync does. School is
+// carried for logging only -- it is the readable half of a skipped row.
 type APIRank struct {
 	Rank            int    `json:"rank"`
+	TeamID          int64  `json:"teamId"`
 	School          string `json:"school"`
 	FirstPlaceVotes *int   `json:"firstPlaceVotes"`
 	Points          *int   `json:"points"`
