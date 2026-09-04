@@ -20,10 +20,11 @@
             {{if eq .Game.Status "postponed"}}Postponed{{end}}
             {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
         </div>
-        
+
         <div class="matchup-display">
             <div class="team-display away">
                 {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 48px; height: 48px; margin-bottom: 8px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
+                {{if .AwayRank}}<span class="team-rank">#{{.AwayRank}}</span>{{end}}
                 <div class="team-abbr-large">{{.Game.AwayTeam.Abbreviation}}</div>
                 <div class="team-name-full">{{.Game.AwayTeam.Name}}</div>
                 {{if .Result}}
@@ -42,6 +43,7 @@
             
             <div class="team-display home">
                 {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 48px; height: 48px; margin-bottom: 8px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
+                {{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}}
                 <div class="team-abbr-large">{{.Game.HomeTeam.Abbreviation}}</div>
                 <div class="team-name-full">{{.Game.HomeTeam.Name}}</div>
                 {{if .Result}}

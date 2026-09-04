@@ -66,6 +66,15 @@ type GameFilter struct {
 	MoneyLineMin *decimal.Decimal
 	MoneyLineMax *decimal.Decimal
 
+	// RankedTeam and RankedMatchup narrow on poll position. Both read against
+	// RankingPoll, which the service fills in per week -- CFP committee
+	// rankings when the week has them, else AP Top 25. An empty RankingPoll
+	// (a week with no poll synced) matches nothing, which is correct: no game
+	// in that week is a ranked matchup.
+	RankedTeam    bool // at least one side ranked in RankingPoll
+	RankedMatchup bool // both sides ranked in RankingPoll
+	RankingPoll   string
+
 	// Location resolves Weekdays and StartHour/EndHour. Those are calendar
 	// questions, not instants, so they are meaningless without it -- see the
 	// timezone rules in AGENTS.md. Required only when one of them is set.
@@ -176,6 +185,15 @@ func applyGameFilter(q *gorm.DB, filter GameFilter) *gorm.DB {
 		away := oddsInRange(q, "money_line_odds", "money_line_odds.away_odds", filter.MoneyLineMin, filter.MoneyLineMax)
 		q = q.Where("(EXISTS (?) OR EXISTS (?))", home, away)
 	}
+	if filter.RankedMatchup || filter.RankedTeam {
+		home := rankedSide(q, "home_team.id", filter.RankingPoll)
+		away := rankedSide(q, "away_team.id", filter.RankingPoll)
+		if filter.RankedMatchup {
+			q = q.Where("(EXISTS (?) AND EXISTS (?))", home, away)
+		} else {
+			q = q.Where("(EXISTS (?) OR EXISTS (?))", home, away)
+		}
+	}
 
 	// scheduled_at is a TIMESTAMPTZ, so shifting it into the display zone is
 	// what makes "Saturday" mean the reader's Saturday and not UTC's.
@@ -212,6 +230,18 @@ func oddsInRange(q *gorm.DB, table, column string, low, high *decimal.Decimal) *
 		sub = sub.Where(column+" <= ?", *high)
 	}
 	return sub
+}
+
+// rankedSide builds the correlated subquery behind a ranked-team filter: does
+// the team named by teamColumn (a fixed "home_team.id"/"away_team.id"
+// literal, never caller input) have a row in the week's effective poll.
+func rankedSide(q *gorm.DB, teamColumn, poll string) *gorm.DB {
+	return q.Session(&gorm.Session{NewDB: true}).
+		Table("team_rankings").
+		Select("1").
+		Where("team_rankings.week_id = games.week_id").
+		Where("team_rankings.team_id = "+teamColumn).
+		Where("team_rankings.poll = ?", poll)
 }
 
 // FindWeekConferences lists every conference with a team playing in the week,

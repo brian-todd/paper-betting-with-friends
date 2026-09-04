@@ -102,6 +102,24 @@ func (c *Client) GetGames(ctx context.Context, year int, week *int, seasonType *
 	return games, nil
 }
 
+// GetRankings retrieves poll rankings for a given year, optionally filtered by
+// week and season type. Called with week nil, it returns the whole season's
+// rankings history in one request.
+func (c *Client) GetRankings(ctx context.Context, year int, week *int, seasonType *string) ([]APIRankingWeek, error) {
+	var weeks []APIRankingWeek
+	path := fmt.Sprintf("/rankings?year=%d", year)
+	if week != nil {
+		path += fmt.Sprintf("&week=%d", *week)
+	}
+	if seasonType != nil {
+		path += fmt.Sprintf("&seasonType=%s", *seasonType)
+	}
+	if err := c.doRequest(ctx, path, &weeks); err != nil {
+		return nil, fmt.Errorf("fetching rankings: %w", err)
+	}
+	return weeks, nil
+}
+
 // GetLines retrieves betting lines for a given year, optionally filtered by week and season type.
 func (c *Client) GetLines(ctx context.Context, year int, week *int, seasonType *string) ([]APILine, error) {
 	var lines []APILine

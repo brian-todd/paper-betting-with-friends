@@ -24,6 +24,10 @@ type GameWithOdds struct {
 	MoneyLine *models.MoneyLineOdds
 	Spread    *models.SpreadOdds
 	OverUnder *models.OverUnderOdds
+	// HomeRank and AwayRank are the team's position in the week's effective
+	// poll (CFP when the week has it, else AP), nil when unranked.
+	HomeRank *int
+	AwayRank *int
 }
 
 // UnifiedOdds combines all odds types for a single source.
@@ -43,6 +47,10 @@ type GameDetail struct {
 	MoneyLineOdds []models.MoneyLineOdds
 	SpreadOdds    []models.SpreadOdds
 	OverUnderOdds []models.OverUnderOdds
+	// HomeRank and AwayRank are the team's position in the game's week's
+	// effective poll. Always nil for basketball, which has no WeekID.
+	HomeRank *int
+	AwayRank *int
 }
 
 // PageSize is how many games one page of the games grid holds.
@@ -102,6 +110,7 @@ type Service struct {
 	moneyLineOddsRepo *repository.MoneyLineOddsRepository
 	spreadOddsRepo    *repository.SpreadOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
+	rankingRepo       *repository.RankingRepository
 
 	// location resolves the calendar-day and time-of-day filters. Those ask
 	// which local day a kickoff falls on, which no instant can answer alone.
@@ -120,6 +129,7 @@ func NewService(db *gorm.DB, location *time.Location) *Service {
 		moneyLineOddsRepo: repository.NewMoneyLineOddsRepository(db),
 		spreadOddsRepo:    repository.NewSpreadOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
+		rankingRepo:       repository.NewRankingRepository(db),
 		location:          location,
 	}
 }
@@ -142,6 +152,14 @@ func (s *Service) GetWeekWithGames(season, weekNumber int, seasonType models.Sea
 
 	filter.Location = s.location
 
+	// Resolved before the games query, since the effective poll name is an
+	// input to the filter itself.
+	poll, ranks, err := s.rankingRepo.EffectiveRanks(week.ID)
+	if err != nil {
+		return nil, err
+	}
+	filter.RankingPoll = poll
+
 	if page < 1 {
 		page = 1
 	}
@@ -160,7 +178,7 @@ func (s *Service) GetWeekWithGames(season, weekNumber int, seasonType models.Sea
 		}
 	}
 
-	gamesWithOdds, err := s.attachOdds(games)
+	gamesWithOdds, err := s.attachOdds(games, ranks)
 	if err != nil {
 		return nil, err
 	}
@@ -204,11 +222,12 @@ func paginate(page, total int) Page {
 	return Page{Number: page, Size: PageSize, Total: total, Pages: pages, First: first, Last: last}
 }
 
-// attachOdds decorates a page of games with the primary line for each market.
+// attachOdds decorates a page of games with the primary line for each market
+// and, from ranks, each side's poll position.
 //
 // The odds come back in three batched queries rather than three per game. The
 // result is already preloaded on the game, so it costs nothing here.
-func (s *Service) attachOdds(games []models.Game) ([]GameWithOdds, error) {
+func (s *Service) attachOdds(games []models.Game, ranks map[uuid.UUID]int) ([]GameWithOdds, error) {
 	gameIDs := make([]uuid.UUID, len(games))
 	for i, game := range games {
 		gameIDs[i] = game.ID
@@ -238,6 +257,12 @@ func (s *Service) attachOdds(games []models.Game) ([]GameWithOdds, error) {
 		}
 		if rows := overUnder[game.ID]; len(rows) > 0 {
 			gamesWithOdds[i].OverUnder = &rows[0]
+		}
+		if rank, ok := ranks[game.HomeTeamID]; ok {
+			gamesWithOdds[i].HomeRank = &rank
+		}
+		if rank, ok := ranks[game.AwayTeamID]; ok {
+			gamesWithOdds[i].AwayRank = &rank
 		}
 	}
 	return gamesWithOdds, nil
@@ -363,6 +388,26 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 
 	// Create unified odds by merging all sources.
 	detail.UnifiedOdds = mergeOddsBySources(moneyLine, spread, overUnder)
+
+	// Basketball games carry no WeekID, and there is nothing ranked to show.
+	//
+	// A failure here costs the rank badge and nothing else, so the page still
+	// renders -- but it is logged rather than swallowed, since silently
+	// unranking every team looks identical to a week no poll has been synced
+	// for.
+	if game.WeekID != nil {
+		_, ranks, err := s.rankingRepo.EffectiveRanks(*game.WeekID)
+		if err != nil {
+			slog.Error("failed to fetching rankings for game detail", "game", game.ID, "error", err)
+		} else {
+			if rank, ok := ranks[game.HomeTeamID]; ok {
+				detail.HomeRank = &rank
+			}
+			if rank, ok := ranks[game.AwayTeamID]; ok {
+				detail.AwayRank = &rank
+			}
+		}
+	}
 
 	return detail, nil
 }

@@ -1563,6 +1563,12 @@ button.btn {
     color: var(--color-text);
 }
 
+.team-rank {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+}
+
 .team-name {
     font-size: 0.8rem;
     color: var(--color-text-muted);

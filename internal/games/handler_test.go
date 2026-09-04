@@ -114,3 +114,74 @@ func TestBetSlipRendersWithoutConflictData(t *testing.T) {
 		t.Error("bet slip did not render without conflict data")
 	}
 }
+
+// renderGamesGrid renders the games grid page for real, the same reason
+// renderGameDetail does: a template that parses fine can still blow up at
+// execution on an untyped nil.
+func renderGamesGrid(t *testing.T, games []GameWithOdds) string {
+	t.Helper()
+
+	renderer, err := templates.NewRenderer(assets.FS, false, time.UTC)
+	if err != nil {
+		t.Fatalf("building renderer: %v", err)
+	}
+
+	filter := Filter{}
+	week := &models.Week{Number: 1}
+	page := map[string]any{
+		"Title":               "Week 1 Games",
+		"User":                &models.User{Username: "tester"},
+		"Season":              2026,
+		"SeasonType":          models.SeasonTypeRegular,
+		"WeekNumber":          1,
+		"Week":                week,
+		"Games":               games,
+		"WeekPath":            "/games/2026/regular/1",
+		"Filter":              filter,
+		"FilterQuery":         filter.Query().Encode(),
+		"FilterActive":        filter.Active(),
+		"SelectedTiers":       filter.SelectedTiers(),
+		"SelectedConferences": filter.SelectedConferences(),
+		"SelectedWeekdays":    filter.SelectedWeekdays(),
+		"ConferenceGroups":    GroupConferences(nil),
+		"TierOptions":         TierOptions(),
+		"StatusOptions":       StatusOptions(),
+		"WeekdayOptions":      WeekdayOptions(),
+		"HourOptions":         HourOptions(),
+		"Zone":                ZoneAbbreviation(time.UTC),
+		"Page":                Page{Number: 1, Size: PageSize, Total: len(games), Pages: 1, First: 1, Last: len(games)},
+		"TotalInWeek":         len(games),
+		"PrevURL":             "/games/2026/regular/1",
+		"NextURL":             "/games/2026/regular/1",
+		"ClearURL":            "/games/2026/regular/1?applied=1",
+	}
+
+	var buf bytes.Buffer
+	if err := renderer.Render(&buf, "games", page); err != nil {
+		t.Fatalf("rendering games grid: %v", err)
+	}
+	return buf.String()
+}
+
+// The rank is a *int, which a template renders by dereferencing -- get that
+// wrong and the card shows a pointer address, which no other test would catch.
+func TestGamesGridShowsRanks(t *testing.T) {
+	rank := 5
+	html := renderGamesGrid(t, []GameWithOdds{
+		{Game: models.Game{ID: uuid.New(), HomeTeam: models.Team{Abbreviation: "GT"}, AwayTeam: models.Team{Abbreviation: "CLEM"}}, AwayRank: &rank},
+	})
+
+	if !strings.Contains(html, "#5") {
+		t.Error("games grid did not show the ranked team's poll position")
+	}
+}
+
+func TestGamesGridOmitsRankWhenUnranked(t *testing.T) {
+	html := renderGamesGrid(t, []GameWithOdds{
+		{Game: models.Game{ID: uuid.New(), HomeTeam: models.Team{Abbreviation: "GT"}, AwayTeam: models.Team{Abbreviation: "CLEM"}}},
+	})
+
+	if strings.Contains(html, "team-rank") {
+		t.Error("games grid showed a rank for an unranked matchup")
+	}
+}

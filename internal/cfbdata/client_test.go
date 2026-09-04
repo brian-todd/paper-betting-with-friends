@@ -147,6 +147,93 @@ func TestGetCalendarBuildsQuery(t *testing.T) {
 	}
 }
 
+func TestGetRankingsBuildsQueryAndDecodesNestedPolls(t *testing.T) {
+	week := 10
+	seasonType := "regular"
+
+	var gotPath, gotQuery string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`[
+			{
+				"season": 2025,
+				"seasonType": "regular",
+				"week": 10,
+				"polls": [
+					{
+						"poll": "Playoff Committee Rankings",
+						"ranks": [
+							{"rank": 1, "school": "Ohio State", "firstPlaceVotes": null, "points": null},
+							{"rank": 2, "school": "Indiana", "firstPlaceVotes": null, "points": null}
+						]
+					},
+					{
+						"poll": "AP Top 25",
+						"ranks": [
+							{"rank": 1, "school": "Ohio State", "firstPlaceVotes": 60, "points": 1500}
+						]
+					}
+				]
+			}
+		]`))
+	})
+
+	weeks, err := c.GetRankings(context.Background(), 2025, &week, &seasonType)
+	if err != nil {
+		t.Fatalf("GetRankings() error = %v", err)
+	}
+
+	if gotPath != "/rankings" {
+		t.Errorf("path = %q, want /rankings", gotPath)
+	}
+	if want := "year=2025&week=10&seasonType=regular"; gotQuery != want {
+		t.Errorf("query = %q, want %q", gotQuery, want)
+	}
+
+	if len(weeks) != 1 {
+		t.Fatalf("got %d ranking weeks, want 1", len(weeks))
+	}
+	rw := weeks[0]
+	if rw.Season != 2025 || rw.Week != 10 || rw.SeasonType != "regular" {
+		t.Errorf("ranking week = %+v, want season 2025 week 10 regular", rw)
+	}
+	if len(rw.Polls) != 2 {
+		t.Fatalf("got %d polls, want 2", len(rw.Polls))
+	}
+	if rw.Polls[0].Poll != "Playoff Committee Rankings" || len(rw.Polls[0].Ranks) != 2 {
+		t.Errorf("polls[0] = %+v, want CFP poll with 2 ranks", rw.Polls[0])
+	}
+	if got := rw.Polls[0].Ranks[1].School; got != "Indiana" {
+		t.Errorf("polls[0].Ranks[1].School = %q, want Indiana", got)
+	}
+	ap := rw.Polls[1]
+	if ap.Poll != "AP Top 25" || len(ap.Ranks) != 1 {
+		t.Fatalf("polls[1] = %+v, want AP poll with 1 rank", ap)
+	}
+	if ap.Ranks[0].FirstPlaceVotes == nil || *ap.Ranks[0].FirstPlaceVotes != 60 {
+		t.Errorf("FirstPlaceVotes = %v, want 60", ap.Ranks[0].FirstPlaceVotes)
+	}
+	if ap.Ranks[0].Points == nil || *ap.Ranks[0].Points != 1500 {
+		t.Errorf("Points = %v, want 1500", ap.Ranks[0].Points)
+	}
+}
+
+func TestGetRankingsOmitsUnsetFilters(t *testing.T) {
+	var gotQuery string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`[]`))
+	})
+
+	if _, err := c.GetRankings(context.Background(), 2025, nil, nil); err != nil {
+		t.Fatalf("GetRankings() error = %v", err)
+	}
+	if gotQuery != "year=2025" {
+		t.Errorf("query = %q, want year=2025", gotQuery)
+	}
+}
+
 func TestClientErrorsOnNonOKStatus(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rate limited", http.StatusTooManyRequests)

@@ -113,6 +113,28 @@ type APILineProvider struct {
 	AwayMoneyline   *int     `json:"awayMoneyline"`
 }
 
+// APIRankingWeek represents one week's poll rankings from the CFB Data API.
+type APIRankingWeek struct {
+	Season     int       `json:"season"`
+	SeasonType string    `json:"seasonType"`
+	Week       int       `json:"week"`
+	Polls      []APIPoll `json:"polls"`
+}
+
+// APIPoll represents one poll's ranks within a ranking week.
+type APIPoll struct {
+	Poll  string    `json:"poll"`
+	Ranks []APIRank `json:"ranks"`
+}
+
+// APIRank represents one team's position within a poll.
+type APIRank struct {
+	Rank            int    `json:"rank"`
+	School          string `json:"school"`
+	FirstPlaceVotes *int   `json:"firstPlaceVotes"`
+	Points          *int   `json:"points"`
+}
+
 // APILine represents betting lines for a game from the CFB Data API.
 type APILine struct {
 	ID                 int64             `json:"id"`

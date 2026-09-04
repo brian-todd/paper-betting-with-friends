@@ -42,7 +42,7 @@ func TestParseFilter(t *testing.T) {
 		{
 			name: "full filter",
 			query: "applied=1&tier=fbs&conf=SEC&status=final&team=bama&bettable=1&day=6&day=4&from=12&to=20" +
-				"&spread_min=3.5&spread_max=14&total_min=45.5&total_max=60&ml_min=-250&ml_max=300",
+				"&spread_min=3.5&spread_max=14&total_min=45.5&total_max=60&ml_min=-250&ml_max=300&ranked=1",
 			want: Filter{
 				Tiers:        []string{"fbs"},
 				Conferences:  []string{"SEC"},
@@ -58,7 +58,20 @@ func TestParseFilter(t *testing.T) {
 				TotalMax:     decPtr("60"),
 				MoneyLineMin: decPtr("-250"),
 				MoneyLineMax: decPtr("300"),
+				RankedTeam:   true,
 			},
+		},
+		{
+			name:  "ranked matchup alone",
+			query: "applied=1&ranked_matchup=1",
+			want:  Filter{RankedMatchup: true},
+		},
+		{
+			// The stricter filter wins, so one meaning reaches the rest of the
+			// stack and Query() round-trips.
+			name:  "both ranked boxes checked collapses to matchup only",
+			query: "applied=1&ranked=1&ranked_matchup=1",
+			want:  Filter{RankedMatchup: true},
 		},
 		{
 			// Backwards, these would match nothing at all.
@@ -112,17 +125,18 @@ func TestParseFilter(t *testing.T) {
 
 func TestFilterQueryRoundTrips(t *testing.T) {
 	original := Filter{
-		Tiers:        []string{"fbs", "fcs"},
-		Conferences:  []string{"SEC", "Big Ten"},
-		Status:       "scheduled",
-		Team:         "Ohio State",
-		Bettable:     true,
-		Weekdays:     []int{4, 6},
-		FromHour:     new(9),
-		ToHour:       new(23),
-		SpreadMin:    decPtr("2.5"),
-		TotalMax:     decPtr("58.5"),
-		MoneyLineMin: decPtr("-150"),
+		Tiers:         []string{"fbs", "fcs"},
+		Conferences:   []string{"SEC", "Big Ten"},
+		Status:        "scheduled",
+		Team:          "Ohio State",
+		Bettable:      true,
+		Weekdays:      []int{4, 6},
+		FromHour:      new(9),
+		ToHour:        new(23),
+		SpreadMin:     decPtr("2.5"),
+		TotalMax:      decPtr("58.5"),
+		MoneyLineMin:  decPtr("-150"),
+		RankedMatchup: true,
 	}
 
 	// Pagination links are built from Query(), so anything it drops is a filter
@@ -160,6 +174,8 @@ func TestFilterActive(t *testing.T) {
 		{"team search only", "applied=1&team=duke", true},
 		{"bettable only", "applied=1&bettable=1", true},
 		{"odds range only", "applied=1&total_min=50", true},
+		{"ranked team only", "applied=1&ranked=1", true},
+		{"ranked matchup only", "applied=1&ranked_matchup=1", true},
 	}
 
 	for _, tt := range tests {
@@ -181,6 +197,7 @@ func TestFilterRepository(t *testing.T) {
 		"tier":     {"fbs"},
 		"bettable": {"1"},
 		"from":     {"18"},
+		"ranked":   {"1"},
 	})
 
 	got := filter.Repository()
@@ -188,6 +205,7 @@ func TestFilterRepository(t *testing.T) {
 		Tiers:        []string{"fbs"},
 		BettableOnly: true,
 		StartHour:    new(18),
+		RankedTeam:   true,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Repository()\n got %+v\nwant %+v", got, want)

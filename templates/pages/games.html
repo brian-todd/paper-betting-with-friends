@@ -82,6 +82,19 @@
                     </label>
                 </div>
             </div>
+            <div class="filter-group">
+                <label class="filter-label">Rankings</label>
+                <div class="checkbox-row">
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="ranked" value="1" {{if .Filter.RankedTeam}}checked{{end}}>
+                        <span>Ranked team</span>
+                    </label>
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="ranked_matchup" value="1" {{if .Filter.RankedMatchup}}checked{{end}}>
+                        <span>Ranked matchup</span>
+                    </label>
+                </div>
+            </div>
         </div>
 
         <div class="filters-row">
@@ -211,7 +224,7 @@
                         <div class="team-identity">
                             {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
                             <div class="team-text">
-                                <span class="team-abbr">{{.Game.AwayTeam.Abbreviation}}</span>
+                                <span class="team-abbr">{{if .AwayRank}}<span class="team-rank">#{{.AwayRank}}</span>{{end}} {{.Game.AwayTeam.Abbreviation}}</span>
                                 <span class="team-name">{{.Game.AwayTeam.Name}}</span>
                             </div>
                         </div>
@@ -222,7 +235,7 @@
                         <div class="team-identity">
                             {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
                             <div class="team-text">
-                                <span class="team-abbr">{{.Game.HomeTeam.Abbreviation}}</span>
+                                <span class="team-abbr">{{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}} {{.Game.HomeTeam.Abbreviation}}</span>
                                 <span class="team-name">{{.Game.HomeTeam.Name}}</span>
                             </div>
                         </div>

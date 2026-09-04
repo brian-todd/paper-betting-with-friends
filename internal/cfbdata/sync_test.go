@@ -1,6 +1,7 @@
 package cfbdata
 
 import (
+	"log/slog"
 	"reflect"
 	"testing"
 	"time"
@@ -272,5 +273,90 @@ func TestGameResultFromCarriesExcitementIndex(t *testing.T) {
 	got = gameResultFrom(uuid.New(), APIGame{HomePoints: &home, AwayPoints: &away}, time.Now())
 	if got.ExcitementIndex != nil {
 		t.Errorf("ExcitementIndex = %s, want nil", got.ExcitementIndex)
+	}
+}
+
+// discardLogger is a logger that writes nowhere, for tests that only care
+// about the return value of a function that also happens to log.
+var discardLogger = slog.New(slog.DiscardHandler)
+
+func TestRankingsFromPollSkipsUnknownSchools(t *testing.T) {
+	weekID := uuid.New()
+	bamaID := uuid.New()
+
+	resolve := func(school string) (uuid.UUID, bool) {
+		if school == "Alabama" {
+			return bamaID, true
+		}
+		return uuid.Nil, false
+	}
+
+	poll := APIPoll{
+		Poll: models.PollAP,
+		Ranks: []APIRank{
+			{Rank: 1, School: "Alabama"},
+			// A misspelled or renamed school should not cost the rest of the
+			// poll -- it is skipped and logged, not fatal.
+			{Rank: 2, School: "Not A Real School"},
+		},
+	}
+
+	got := rankingsFromPoll(weekID, poll, resolve, discardLogger)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d rankings, want 1 (the unresolved school dropped)", len(got))
+	}
+	if got[0].TeamID != bamaID || got[0].Rank != 1 || got[0].WeekID != weekID || got[0].Poll != models.PollAP {
+		t.Errorf("rankings[0] = %+v, want Alabama at rank 1 for week %s poll %s", got[0], weekID, models.PollAP)
+	}
+}
+
+func TestRankingsFromPollTeamDroppingOutOfPoll(t *testing.T) {
+	weekID := uuid.New()
+	bamaID, georgiaID := uuid.New(), uuid.New()
+
+	resolve := func(school string) (uuid.UUID, bool) {
+		switch school {
+		case "Alabama":
+			return bamaID, true
+		case "Georgia":
+			return georgiaID, true
+		default:
+			return uuid.Nil, false
+		}
+	}
+
+	// Week N: both teams ranked.
+	before := rankingsFromPoll(weekID, APIPoll{
+		Poll: models.PollAP,
+		Ranks: []APIRank{
+			{Rank: 1, School: "Georgia"},
+			{Rank: 2, School: "Alabama"},
+		},
+	}, resolve, discardLogger)
+	if len(before) != 2 {
+		t.Fatalf("got %d rankings before, want 2", len(before))
+	}
+
+	// Week N+1: Alabama drops out of the poll entirely. Since syncRankings
+	// re-syncs a (week, poll) group as delete-then-insert of exactly what this
+	// function returns, Alabama's absence here is what removes its row.
+	after := rankingsFromPoll(weekID, APIPoll{
+		Poll: models.PollAP,
+		Ranks: []APIRank{
+			{Rank: 1, School: "Georgia"},
+		},
+	}, resolve, discardLogger)
+
+	if len(after) != 1 {
+		t.Fatalf("got %d rankings after, want 1", len(after))
+	}
+	if after[0].TeamID != georgiaID {
+		t.Errorf("surviving ranking = %+v, want Georgia", after[0])
+	}
+	for _, r := range after {
+		if r.TeamID == bamaID {
+			t.Error("Alabama is still present after dropping out of the poll")
+		}
 	}
 }

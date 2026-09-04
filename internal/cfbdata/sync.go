@@ -33,6 +33,7 @@ type SyncService struct {
 	moneyLineOddsRepo *repository.MoneyLineOddsRepository
 	spreadOddsRepo    *repository.SpreadOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
+	rankingRepo       *repository.RankingRepository
 	betEvaluator      BetEvaluator
 	logger            *slog.Logger
 }
@@ -51,6 +52,7 @@ func NewSyncService(client *Client, db *gorm.DB) *SyncService {
 		moneyLineOddsRepo: repository.NewMoneyLineOddsRepository(db),
 		spreadOddsRepo:    repository.NewSpreadOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
+		rankingRepo:       repository.NewRankingRepository(db),
 	}
 }
 
@@ -91,6 +93,10 @@ func (s *SyncService) SeedAll(ctx context.Context, year int, week *int, seasonTy
 
 	if err := s.syncGames(ctx, year, week, seasonType); err != nil {
 		return fmt.Errorf("syncing games: %w", err)
+	}
+
+	if err := s.syncRankings(ctx, year, week, seasonType); err != nil {
+		return fmt.Errorf("syncing rankings: %w", err)
 	}
 
 	if err := s.syncLines(ctx, year, week, seasonType); err != nil {
@@ -403,6 +409,98 @@ func (s *SyncService) syncGames(ctx context.Context, year int, week *int, season
 
 	s.logger.Info("synced games", "synced", syncedCount)
 	return nil
+}
+
+// SyncRankings performs an incremental sync of poll rankings.
+func (s *SyncService) SyncRankings(ctx context.Context, year int, week *int, seasonType *string) error {
+	return s.syncRankings(ctx, year, week, seasonType)
+}
+
+func (s *SyncService) syncRankings(ctx context.Context, year int, week *int, seasonType *string) error {
+	s.logger.Info("syncing rankings", syncScope(year, week, seasonType)...)
+
+	weeks, err := s.client.GetRankings(ctx, year, week, seasonType)
+	if err != nil {
+		return err
+	}
+
+	syncedCount := 0
+	for _, w := range weeks {
+		rankingSeasonType := models.SeasonTypeRegular
+		if w.SeasonType == "postseason" {
+			rankingSeasonType = models.SeasonTypePostseason
+		}
+
+		dbWeek, err := s.weekRepo.FindBySeasonNumberAndType(w.Season, w.Week, rankingSeasonType)
+		if err != nil {
+			s.logger.Warn("skipping rankings: week not found", "season", w.Season, "week", w.Week, "season_type", w.SeasonType)
+			continue
+		}
+
+		for _, poll := range w.Polls {
+			rankings := s.rankingsFromPoll(dbWeek.ID, poll)
+
+			// Nothing to write means no data, never "nobody is ranked": a
+			// published poll always names 25 teams, so an empty one is a
+			// truncated response or a resolve that failed across the board.
+			// Replacing on it would delete a good week's rankings, and since
+			// the periodic job re-syncs the whole season every run, one bad
+			// response would clear every week while still logging success.
+			if len(rankings) == 0 {
+				s.logger.Warn("skipping empty poll", "week", dbWeek.ID, "poll", poll.Poll, "ranks_returned", len(poll.Ranks))
+				continue
+			}
+
+			if err := s.rankingRepo.ReplaceWeekPoll(dbWeek.ID, poll.Poll, rankings); err != nil {
+				s.logger.Error("failed to replace rankings", "week", dbWeek.ID, "poll", poll.Poll, "error", err)
+				continue
+			}
+			syncedCount += len(rankings)
+		}
+	}
+
+	s.logger.Info("synced rankings", "synced", syncedCount)
+	return nil
+}
+
+// rankingsFromPoll resolves poll's ranks against the team repository, in the
+// scope of one SyncService.
+func (s *SyncService) rankingsFromPoll(weekID uuid.UUID, poll APIPoll) []models.TeamRanking {
+	return rankingsFromPoll(weekID, poll, func(school string) (uuid.UUID, bool) {
+		team, err := s.teamRepo.FindByNameAndSport(school, models.SportFootball)
+		if err != nil {
+			return uuid.Nil, false
+		}
+		return team.ID, true
+	}, s.logger)
+}
+
+// rankingsFromPoll converts one poll's ranks into rows for weekID, resolving
+// each school through resolve. A school resolve cannot find is skipped and
+// logged rather than failing the whole poll -- one renamed or misspelled
+// school should not cost the other 24 rankings in it.
+//
+// Kept independent of SyncService so it can be tested without a database: the
+// interesting behavior (an unknown school drops out, a team missing from
+// poll.Ranks produces no row for it) lives entirely in this function.
+func rankingsFromPoll(weekID uuid.UUID, poll APIPoll, resolve func(school string) (uuid.UUID, bool), logger *slog.Logger) []models.TeamRanking {
+	rankings := make([]models.TeamRanking, 0, len(poll.Ranks))
+	for _, rank := range poll.Ranks {
+		teamID, ok := resolve(rank.School)
+		if !ok {
+			logger.Warn("skipping ranking: team not found", "school", rank.School, "poll", poll.Poll)
+			continue
+		}
+		rankings = append(rankings, models.TeamRanking{
+			WeekID:          weekID,
+			TeamID:          teamID,
+			Poll:            poll.Poll,
+			Rank:            rank.Rank,
+			FirstPlaceVotes: rank.FirstPlaceVotes,
+			Points:          rank.Points,
+		})
+	}
+	return rankings
 }
 
 // gameResultFrom builds the score row for a game the provider has reported

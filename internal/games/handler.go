@@ -254,6 +254,8 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		"Game":          gameDetail.Game,
 		"Result":        gameDetail.Result,
 		"UnifiedOdds":   gameDetail.UnifiedOdds,
+		"HomeRank":      gameDetail.HomeRank,
+		"AwayRank":      gameDetail.AwayRank,
 		"UserLeagues":   userLeagues,
 		"PurseBalances": purseBalances,
 		// Basketball games carry no week, so their bets can never be a Holy Lock.

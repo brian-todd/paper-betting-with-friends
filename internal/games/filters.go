@@ -104,6 +104,12 @@ type Filter struct {
 	MoneyLineMin *decimal.Decimal
 	MoneyLineMax *decimal.Decimal
 
+	// RankedTeam and RankedMatchup narrow on poll position within the week
+	// being viewed. Checking both normalises to RankedMatchup alone, the
+	// stricter of the two -- see ParseFilter.
+	RankedTeam    bool
+	RankedMatchup bool
+
 	// Defaulted reports that no filter was submitted, so the narrowing came
 	// from defaultFilter rather than from the user.
 	Defaulted bool
@@ -130,10 +136,18 @@ func ParseFilter(query url.Values) Filter {
 		TotalMax:     parseDecimal(query.Get("total_max")),
 		MoneyLineMin: parseDecimal(query.Get("ml_min")),
 		MoneyLineMax: parseDecimal(query.Get("ml_max")),
+
+		RankedTeam:    query.Get("ranked") == "1",
+		RankedMatchup: query.Get("ranked_matchup") == "1",
 	}
 
 	if !validStatus(filter.Status) {
 		filter.Status = ""
+	}
+	// Both checked normalises to the stricter one, so one meaning reaches the
+	// rest of the stack and Query() round-trips.
+	if filter.RankedMatchup {
+		filter.RankedTeam = false
 	}
 
 	// An hour range entered backwards would match nothing at all, which reads
@@ -160,7 +174,8 @@ func (f Filter) isEmpty() bool {
 		f.FromHour == nil && f.ToHour == nil &&
 		f.SpreadMin == nil && f.SpreadMax == nil &&
 		f.TotalMin == nil && f.TotalMax == nil &&
-		f.MoneyLineMin == nil && f.MoneyLineMax == nil
+		f.MoneyLineMin == nil && f.MoneyLineMax == nil &&
+		!f.RankedTeam && !f.RankedMatchup
 }
 
 // Active reports whether the filter narrows anything, which is what decides
@@ -171,20 +186,22 @@ func (f Filter) Active() bool { return !f.isEmpty() }
 // location is filled in by the service, which owns it.
 func (f Filter) Repository() repository.GameFilter {
 	return repository.GameFilter{
-		Conferences:  f.Conferences,
-		Tiers:        f.Tiers,
-		Status:       f.Status,
-		Team:         f.Team,
-		BettableOnly: f.Bettable,
-		Weekdays:     f.Weekdays,
-		StartHour:    f.FromHour,
-		EndHour:      f.ToHour,
-		SpreadMin:    f.SpreadMin,
-		SpreadMax:    f.SpreadMax,
-		TotalMin:     f.TotalMin,
-		TotalMax:     f.TotalMax,
-		MoneyLineMin: f.MoneyLineMin,
-		MoneyLineMax: f.MoneyLineMax,
+		Conferences:   f.Conferences,
+		Tiers:         f.Tiers,
+		Status:        f.Status,
+		Team:          f.Team,
+		BettableOnly:  f.Bettable,
+		Weekdays:      f.Weekdays,
+		StartHour:     f.FromHour,
+		EndHour:       f.ToHour,
+		SpreadMin:     f.SpreadMin,
+		SpreadMax:     f.SpreadMax,
+		TotalMin:      f.TotalMin,
+		TotalMax:      f.TotalMax,
+		MoneyLineMin:  f.MoneyLineMin,
+		MoneyLineMax:  f.MoneyLineMax,
+		RankedTeam:    f.RankedTeam,
+		RankedMatchup: f.RankedMatchup,
 	}
 }
 
@@ -229,6 +246,12 @@ func (f Filter) Query() url.Values {
 	setDecimal(query, "total_max", f.TotalMax)
 	setDecimal(query, "ml_min", f.MoneyLineMin)
 	setDecimal(query, "ml_max", f.MoneyLineMax)
+	if f.RankedTeam {
+		query.Set("ranked", "1")
+	}
+	if f.RankedMatchup {
+		query.Set("ranked_matchup", "1")
+	}
 	query.Set(appliedParam, "1")
 	return query
 }

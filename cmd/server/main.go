@@ -314,6 +314,18 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			Run:      syncService.SyncAllCalendars,
 		})
 
+		// Polls move once a week, not on the games-and-lines cadence, so this
+		// is a dedicated job rather than a step folded into that one.
+		sched.Add(scheduler.Job{
+			Name:     "cfb-rankings",
+			Label:    "Football rankings",
+			Interval: 6 * time.Hour,
+			Timeout:  syncRunTimeout,
+			Run: func(ctx context.Context) error {
+				return syncService.SyncRankings(ctx, syncService.GetCurrentSeasonYear(), nil, nil)
+			},
+		})
+
 		// Teams and venues are synced by nothing else. The periodic job covers
 		// games and lines only, and syncGames skips any game whose teams it
 		// cannot find -- so on an unseeded database every sync reports success
