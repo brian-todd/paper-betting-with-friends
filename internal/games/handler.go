@@ -177,6 +177,7 @@ func (h *Handler) ShowWeekGames(w http.ResponseWriter, r *http.Request) {
 		"ConferenceGroups":    GroupConferences(weekData.Conferences),
 		"TierOptions":         TierOptions(),
 		"StatusOptions":       StatusOptions(),
+		"GameTypeOptions":     GameTypeOptions(),
 		"WeekdayOptions":      WeekdayOptions(),
 		"HourOptions":         HourOptions(),
 		"Zone":                ZoneAbbreviation(h.service.Location()),

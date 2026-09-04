@@ -75,6 +75,9 @@ type GameFilter struct {
 	RankedMatchup bool // both sides ranked in RankingPoll
 	RankingPoll   string
 
+	NeutralSiteOnly bool  // only games played at a neutral site
+	ConferenceGame  *bool // nil = any, true = conference games only, false = non-conference only
+
 	// Location resolves Weekdays and StartHour/EndHour. Those are calendar
 	// questions, not instants, so they are meaningless without it -- see the
 	// timezone rules in AGENTS.md. Required only when one of them is set.
@@ -193,6 +196,12 @@ func applyGameFilter(q *gorm.DB, filter GameFilter) *gorm.DB {
 		} else {
 			q = q.Where("(EXISTS (?) OR EXISTS (?))", home, away)
 		}
+	}
+	if filter.NeutralSiteOnly {
+		q = q.Where("games.neutral_site = true")
+	}
+	if filter.ConferenceGame != nil {
+		q = q.Where("games.conference_game = ?", *filter.ConferenceGame)
 	}
 
 	// scheduled_at is a TIMESTAMPTZ, so shifting it into the display zone is

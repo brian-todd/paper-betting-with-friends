@@ -66,6 +66,19 @@ var statusOptions = []struct {
 	{"cancelled", "Cancelled"},
 }
 
+// gameTypeOptions are the conference-vs-non-conference choices the filter
+// offers, in display order. Conference and non-conference are mutually
+// exclusive states of one field, so this is a select like status rather than
+// two independent checkboxes -- there is no sane meaning for checking both.
+var gameTypeOptions = []struct {
+	Value string
+	Label string
+}{
+	{"", "Any matchup"},
+	{"conference", "Conference"},
+	{"nonconference", "Non-conference"},
+}
+
 // weekdayOptions are the kickoff days the filter offers. Values match
 // Postgres EXTRACT(DOW), which counts from Sunday. College football runs
 // Tuesday through Monday in practice, but the full week is offered so a
@@ -110,6 +123,11 @@ type Filter struct {
 	RankedTeam    bool
 	RankedMatchup bool
 
+	// NeutralSite narrows to games at a neutral site. GameType is "",
+	// "conference" or "nonconference" -- see gameTypeOptions.
+	NeutralSite bool
+	GameType    string
+
 	// Defaulted reports that no filter was submitted, so the narrowing came
 	// from defaultFilter rather than from the user.
 	Defaulted bool
@@ -139,11 +157,18 @@ func ParseFilter(query url.Values) Filter {
 
 		RankedTeam:    query.Get("ranked") == "1",
 		RankedMatchup: query.Get("ranked_matchup") == "1",
+
+		NeutralSite: query.Get("neutral") == "1",
+		GameType:    strings.TrimSpace(query.Get("game_type")),
 	}
 
 	if !validStatus(filter.Status) {
 		filter.Status = ""
 	}
+	if !validGameType(filter.GameType) {
+		filter.GameType = ""
+	}
+
 	// Both checked normalises to the stricter one, so one meaning reaches the
 	// rest of the stack and Query() round-trips.
 	if filter.RankedMatchup {
@@ -175,7 +200,8 @@ func (f Filter) isEmpty() bool {
 		f.SpreadMin == nil && f.SpreadMax == nil &&
 		f.TotalMin == nil && f.TotalMax == nil &&
 		f.MoneyLineMin == nil && f.MoneyLineMax == nil &&
-		!f.RankedTeam && !f.RankedMatchup
+		!f.RankedTeam && !f.RankedMatchup &&
+		!f.NeutralSite && f.GameType == ""
 }
 
 // Active reports whether the filter narrows anything, which is what decides
@@ -186,22 +212,39 @@ func (f Filter) Active() bool { return !f.isEmpty() }
 // location is filled in by the service, which owns it.
 func (f Filter) Repository() repository.GameFilter {
 	return repository.GameFilter{
-		Conferences:   f.Conferences,
-		Tiers:         f.Tiers,
-		Status:        f.Status,
-		Team:          f.Team,
-		BettableOnly:  f.Bettable,
-		Weekdays:      f.Weekdays,
-		StartHour:     f.FromHour,
-		EndHour:       f.ToHour,
-		SpreadMin:     f.SpreadMin,
-		SpreadMax:     f.SpreadMax,
-		TotalMin:      f.TotalMin,
-		TotalMax:      f.TotalMax,
-		MoneyLineMin:  f.MoneyLineMin,
-		MoneyLineMax:  f.MoneyLineMax,
-		RankedTeam:    f.RankedTeam,
-		RankedMatchup: f.RankedMatchup,
+		Conferences:     f.Conferences,
+		Tiers:           f.Tiers,
+		Status:          f.Status,
+		Team:            f.Team,
+		BettableOnly:    f.Bettable,
+		Weekdays:        f.Weekdays,
+		StartHour:       f.FromHour,
+		EndHour:         f.ToHour,
+		SpreadMin:       f.SpreadMin,
+		SpreadMax:       f.SpreadMax,
+		TotalMin:        f.TotalMin,
+		TotalMax:        f.TotalMax,
+		MoneyLineMin:    f.MoneyLineMin,
+		MoneyLineMax:    f.MoneyLineMax,
+		RankedTeam:      f.RankedTeam,
+		RankedMatchup:   f.RankedMatchup,
+		NeutralSiteOnly: f.NeutralSite,
+		ConferenceGame:  f.conferenceGameFilter(),
+	}
+}
+
+// conferenceGameFilter translates GameType into the repository's tri-state
+// bool -- nil for "any", so the zero-value Filter still matches every game.
+func (f Filter) conferenceGameFilter() *bool {
+	switch f.GameType {
+	case "conference":
+		v := true
+		return &v
+	case "nonconference":
+		v := false
+		return &v
+	default:
+		return nil
 	}
 }
 
@@ -251,6 +294,12 @@ func (f Filter) Query() url.Values {
 	}
 	if f.RankedMatchup {
 		query.Set("ranked_matchup", "1")
+	}
+	if f.NeutralSite {
+		query.Set("neutral", "1")
+	}
+	if f.GameType != "" {
+		query.Set("game_type", f.GameType)
 	}
 	query.Set(appliedParam, "1")
 	return query
@@ -365,6 +414,14 @@ func StatusOptions() []struct {
 	return statusOptions
 }
 
+// GameTypeOptions exposes the conference/non-conference choices to the template.
+func GameTypeOptions() []struct {
+	Value string
+	Label string
+} {
+	return gameTypeOptions
+}
+
 // WeekdayOptions exposes the kickoff-day list to the template.
 func WeekdayOptions() []struct {
 	Value int
@@ -417,6 +474,16 @@ func parseHour(value string) *int {
 func validStatus(status string) bool {
 	for _, option := range statusOptions {
 		if option.Value == status {
+			return true
+		}
+	}
+	return false
+}
+
+// validGameType reports whether a value is one the filter offers.
+func validGameType(gameType string) bool {
+	for _, option := range gameTypeOptions {
+		if option.Value == gameType {
 			return true
 		}
 	}

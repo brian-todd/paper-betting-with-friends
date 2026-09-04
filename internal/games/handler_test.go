@@ -146,6 +146,7 @@ func renderGamesGrid(t *testing.T, games []GameWithOdds) string {
 		"ConferenceGroups":    GroupConferences(nil),
 		"TierOptions":         TierOptions(),
 		"StatusOptions":       StatusOptions(),
+		"GameTypeOptions":     GameTypeOptions(),
 		"WeekdayOptions":      WeekdayOptions(),
 		"HourOptions":         HourOptions(),
 		"Zone":                ZoneAbbreviation(time.UTC),

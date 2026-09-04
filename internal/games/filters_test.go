@@ -42,7 +42,8 @@ func TestParseFilter(t *testing.T) {
 		{
 			name: "full filter",
 			query: "applied=1&tier=fbs&conf=SEC&status=final&team=bama&bettable=1&day=6&day=4&from=12&to=20" +
-				"&spread_min=3.5&spread_max=14&total_min=45.5&total_max=60&ml_min=-250&ml_max=300&ranked=1",
+				"&spread_min=3.5&spread_max=14&total_min=45.5&total_max=60&ml_min=-250&ml_max=300&ranked=1" +
+				"&neutral=1&game_type=conference",
 			want: Filter{
 				Tiers:        []string{"fbs"},
 				Conferences:  []string{"SEC"},
@@ -59,6 +60,8 @@ func TestParseFilter(t *testing.T) {
 				MoneyLineMin: decPtr("-250"),
 				MoneyLineMax: decPtr("300"),
 				RankedTeam:   true,
+				NeutralSite:  true,
+				GameType:     "conference",
 			},
 		},
 		{
@@ -72,6 +75,23 @@ func TestParseFilter(t *testing.T) {
 			name:  "both ranked boxes checked collapses to matchup only",
 			query: "applied=1&ranked=1&ranked_matchup=1",
 			want:  Filter{RankedMatchup: true},
+		},
+		{
+			name:  "neutral site only",
+			query: "applied=1&neutral=1",
+			want:  Filter{NeutralSite: true},
+		},
+		{
+			name:  "non-conference only",
+			query: "applied=1&game_type=nonconference",
+			want:  Filter{GameType: "nonconference"},
+		},
+		{
+			// An unrecognized game type is dropped, not rejected -- same
+			// tolerance as an unrecognized status.
+			name:  "junk game type is dropped",
+			query: "applied=1&game_type=exhibition",
+			want:  Filter{},
 		},
 		{
 			// Backwards, these would match nothing at all.
@@ -137,6 +157,8 @@ func TestFilterQueryRoundTrips(t *testing.T) {
 		TotalMax:      decPtr("58.5"),
 		MoneyLineMin:  decPtr("-150"),
 		RankedMatchup: true,
+		NeutralSite:   true,
+		GameType:      "nonconference",
 	}
 
 	// Pagination links are built from Query(), so anything it drops is a filter
@@ -176,6 +198,8 @@ func TestFilterActive(t *testing.T) {
 		{"odds range only", "applied=1&total_min=50", true},
 		{"ranked team only", "applied=1&ranked=1", true},
 		{"ranked matchup only", "applied=1&ranked_matchup=1", true},
+		{"neutral site only", "applied=1&neutral=1", true},
+		{"game type only", "applied=1&game_type=conference", true},
 	}
 
 	for _, tt := range tests {
@@ -193,22 +217,35 @@ func TestFilterActive(t *testing.T) {
 
 func TestFilterRepository(t *testing.T) {
 	filter := ParseFilter(url.Values{
-		"applied":  {"1"},
-		"tier":     {"fbs"},
-		"bettable": {"1"},
-		"from":     {"18"},
-		"ranked":   {"1"},
+		"applied":   {"1"},
+		"tier":      {"fbs"},
+		"bettable":  {"1"},
+		"from":      {"18"},
+		"ranked":    {"1"},
+		"neutral":   {"1"},
+		"game_type": {"conference"},
 	})
 
 	got := filter.Repository()
 	want := repository.GameFilter{
-		Tiers:        []string{"fbs"},
-		BettableOnly: true,
-		StartHour:    new(18),
-		RankedTeam:   true,
+		Tiers:           []string{"fbs"},
+		BettableOnly:    true,
+		StartHour:       new(18),
+		RankedTeam:      true,
+		NeutralSiteOnly: true,
+		ConferenceGame:  boolPtr(true),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Repository()\n got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestFilterRepositoryNonConference(t *testing.T) {
+	filter := ParseFilter(url.Values{"applied": {"1"}, "game_type": {"nonconference"}})
+
+	got := filter.Repository().ConferenceGame
+	if got == nil || *got != false {
+		t.Errorf("ConferenceGame = %v, want a pointer to false", got)
 	}
 }
 
@@ -364,6 +401,9 @@ func TestPageURL(t *testing.T) {
 
 //go:fix inline
 func intPtr(v int) *int { return new(v) }
+
+//go:fix inline
+func boolPtr(v bool) *bool { return new(v) }
 
 func decPtr(v string) *decimal.Decimal {
 	d := decimal.RequireFromString(v)

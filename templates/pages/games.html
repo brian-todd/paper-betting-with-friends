@@ -95,6 +95,23 @@
                     </label>
                 </div>
             </div>
+            <div class="filter-group">
+                <label class="filter-label" for="game-type-filter">Matchup</label>
+                <select class="select-input" id="game-type-filter" name="game_type">
+                    {{range .GameTypeOptions}}
+                    <option value="{{.Value}}" {{if eq .Value $.Filter.GameType}}selected{{end}}>{{.Label}}</option>
+                    {{end}}
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Site</label>
+                <div class="checkbox-row">
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="neutral" value="1" {{if .Filter.NeutralSite}}checked{{end}}>
+                        <span>Neutral site</span>
+                    </label>
+                </div>
+            </div>
         </div>
 
         <div class="filters-row">
