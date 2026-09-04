@@ -2,6 +2,7 @@ package cfbdata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -341,6 +342,13 @@ func (s *SyncService) syncGames(ctx context.Context, year int, week *int, season
 		// Look up week.
 		week, err := s.weekRepo.FindBySeasonNumberAndType(g.Season, g.Week, gameSeasonType)
 		if err != nil {
+			// Only a genuinely absent week is skippable. Any other error is the
+			// database being unreachable, and continuing past it would skip
+			// every remaining game and still return nil -- a run that wrote
+			// nothing while the scheduler recorded success.
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("looking up week %d/%d: %w", g.Season, g.Week, err)
+			}
 			s.logger.Warn("skipping game: week not found", "game", g.ID, "season", g.Season, "week", g.Week, "season_type", g.SeasonType)
 			continue
 		}
@@ -433,6 +441,11 @@ func (s *SyncService) syncRankings(ctx context.Context, year int, week *int, sea
 
 		dbWeek, err := s.weekRepo.FindBySeasonNumberAndType(w.Season, w.Week, rankingSeasonType)
 		if err != nil {
+			// See syncGames: a missing week is data, anything else is the
+			// database, and swallowing the latter empties the whole run.
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("looking up week %d/%d: %w", w.Season, w.Week, err)
+			}
 			s.logger.Warn("skipping rankings: week not found", "season", w.Season, "week", w.Week, "season_type", w.SeasonType)
 			continue
 		}
