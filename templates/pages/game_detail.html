@@ -47,13 +47,45 @@
             <div class="team-display home">
                 {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 48px; height: 48px; margin-bottom: 8px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
                 {{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}}
-                <div class="team-abbr-large">{{.Game.HomeTeam.Abbreviation}}{{if and (eq .Game.Status "in_progress") .Game.LiveState.HomeHasBall}} <span class="possession" title="Has possession">🏈</span>{{end}}</div>
+                <div class="team-abbr-large">{{if and (eq .Game.Status "in_progress") .Game.LiveState.HomeHasBall}}<span class="possession" title="Has possession">🏈</span> {{end}}{{.Game.HomeTeam.Abbreviation}}</div>
                 <div class="team-name-full">{{.Game.HomeTeam.Name}}</div>
                 {{if .Result}}
                 <div class="team-score-large">{{.Result.HomeScore}}</div>
                 {{end}}
             </div>
         </div>
+
+        <!-- Scoring by period. The feed fills these in as the quarters are played,
+             so this is drawn for a game in progress as readily as a finished one --
+             which is why an unplayed period shows a dash rather than a zero. -->
+        {{with .Result}}
+        {{$periods := .PeriodScores}}
+        {{if $periods}}
+        <div class="linescore">
+            <table class="linescore-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Team</th>
+                        {{range $periods}}<th scope="col">{{.Label}}</th>{{end}}
+                        <th scope="col" class="linescore-total">T</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th scope="row">{{$.Game.AwayTeam.Abbreviation}}</th>
+                        {{range $periods}}<td>{{if .Away}}{{.Away}}{{else}}<span class="no-data">—</span>{{end}}</td>{{end}}
+                        <td class="linescore-total">{{.AwayScore}}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">{{$.Game.HomeTeam.Abbreviation}}</th>
+                        {{range $periods}}<td>{{if .Home}}{{.Home}}{{else}}<span class="no-data">—</span>{{end}}</td>{{end}}
+                        <td class="linescore-total">{{.HomeScore}}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        {{end}}
+        {{end}}
 
         <!-- The live strip. Everything in it comes from the scoreboard feed and
              is left in place once a game ends, so it is drawn only while the
@@ -80,39 +112,6 @@
         {{end}}
         {{end}}
     </div>
-
-    <!-- Scoring by period. The feed fills these in as the quarters are played,
-         so this is drawn for a game in progress as readily as a finished one --
-         which is why an unplayed period shows a dash rather than a zero. -->
-    {{with .Result}}
-    {{$periods := .PeriodScores}}
-    {{if $periods}}
-    <div class="linescore-section">
-        <h2>Scoring by Quarter</h2>
-        <table class="linescore-table">
-            <thead>
-                <tr>
-                    <th scope="col">Team</th>
-                    {{range $periods}}<th scope="col">{{.Label}}</th>{{end}}
-                    <th scope="col" class="linescore-total">T</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <th scope="row">{{$.Game.AwayTeam.Abbreviation}}</th>
-                    {{range $periods}}<td>{{if .Away}}{{.Away}}{{else}}<span class="no-data">—</span>{{end}}</td>{{end}}
-                    <td class="linescore-total">{{.AwayScore}}</td>
-                </tr>
-                <tr>
-                    <th scope="row">{{$.Game.HomeTeam.Abbreviation}}</th>
-                    {{range $periods}}<td>{{if .Home}}{{.Home}}{{else}}<span class="no-data">—</span>{{end}}</td>{{end}}
-                    <td class="linescore-total">{{.HomeScore}}</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-    {{end}}
-    {{end}}
 
     <div class="game-info-section">
         <div class="info-card">

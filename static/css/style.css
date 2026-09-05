@@ -1928,29 +1928,30 @@ button.btn {
     line-height: 1.5;
 }
 
-/* Scoring by quarter. Fixed layout with equal period columns, so the quarters
-   line up between the two rows however wide a score gets, and the table does
-   not shuffle as points come in. */
-.linescore-section {
-    margin-bottom: 2rem;
+/* Scoring by quarter. It sits inside the hero, directly under the matchup, so
+   it needs no heading of its own -- it is plainly the breakdown of the two
+   scores immediately above it. */
+.linescore {
+    margin-top: 1.5rem;
+    display: flex;
+    justify-content: center;
 }
 
-.linescore-section h2 {
-    font-size: 1.25rem;
-    margin-bottom: 1rem;
-}
-
+/* Fixed layout with equal period columns, so the quarters line up between the
+   two rows however wide a score gets, and the table does not shuffle as points
+   come in. */
 .linescore-table {
-    /* Capped rather than full-bleed: at full page width the team column absorbs
-       all the slack and strands each side's name a long way from its own
-       numbers. Overflows to a scroll only on a narrow phone in overtime. */
+    /* Capped rather than full-bleed: at full width the team column absorbs all
+       the slack and strands each side's name a long way from its own numbers. */
     width: 100%;
     max-width: 32rem;
     border-collapse: collapse;
     table-layout: fixed;
     font-family: var(--font-mono);
-    background: var(--color-bg-card);
-    border-radius: var(--radius-lg);
+    /* Recessed against the hero, which is itself --color-bg-card: sharing that
+       background would leave the table's rounded corners drawing nothing. */
+    background: var(--color-bg-elevated);
+    border-radius: var(--radius-md);
     overflow: hidden;
 }
 
@@ -1994,6 +1995,14 @@ button.btn {
 .linescore-table tbody td {
     font-size: 1.05rem;
     color: var(--color-text);
+}
+
+/* An unplayed period. Muted so it reads as "nothing here yet" rather than
+   competing with a real zero, which is a score. .no-data carries no styling of
+   its own anywhere, so this is scoped rather than global -- the odds tables use
+   the same class and are not part of this change. */
+.linescore-table .no-data {
+    color: var(--color-text-muted);
 }
 
 .linescore-table .linescore-total {

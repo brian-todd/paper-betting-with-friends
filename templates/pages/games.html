@@ -263,7 +263,7 @@
                             <div class="team-identity">
                                 {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
                                 <div class="team-text">
-                                    <span class="team-abbr">{{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}} {{.Game.HomeTeam.Abbreviation}}{{if and (eq .Game.Status "in_progress") .Game.LiveState.HomeHasBall}} <span class="possession" title="Has possession">🏈</span>{{end}}</span>
+                                    <span class="team-abbr">{{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}} {{if and (eq .Game.Status "in_progress") .Game.LiveState.HomeHasBall}}<span class="possession" title="Has possession">🏈</span> {{end}}{{.Game.HomeTeam.Abbreviation}}</span>
                                     <span class="team-name">{{.Game.HomeTeam.Name}}</span>
                                 </div>
                             </div>
