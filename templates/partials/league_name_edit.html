@@ -1,0 +1,26 @@
+{{/*
+  The name cell of a league card while it is being renamed.
+
+  The form carries action and method as well as the hx- attributes so it still
+  posts without JavaScript, in which case the handler redirects back to
+  /leagues rather than swapping. Cancel re-fetches the resting state instead of
+  hiding the form client-side, so what comes back is the stored name and not
+  whatever was half-typed over it.
+*/}}
+<form class="league-name league-name-editing" id="league-name-{{.League.ID}}"
+      action="/leagues/{{.League.ID}}/name" method="POST"
+      hx-post="/leagues/{{.League.ID}}/name"
+      hx-target="#league-name-{{.League.ID}}"
+      hx-swap="outerHTML">
+    <input type="text" name="name" value="{{.League.Name}}"
+           class="league-name-input" aria-label="League name"
+           maxlength="255" required autocomplete="off">
+    <div class="league-name-actions">
+        <button type="submit" class="btn btn-sm btn-primary">Save</button>
+        <button type="button" class="btn btn-sm btn-secondary"
+                hx-get="/leagues/{{.League.ID}}/name"
+                hx-target="#league-name-{{.League.ID}}"
+                hx-swap="outerHTML">Cancel</button>
+    </div>
+    {{if .Error}}<p class="league-name-error">{{.Error}}</p>{{end}}
+</form>

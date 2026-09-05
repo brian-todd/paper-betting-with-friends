@@ -738,16 +738,15 @@ button.btn {
     gap: 1rem;
 }
 
-.league-card-link {
-    text-decoration: none;
-    color: inherit;
-}
-
-.league-card-link .league-card {
+/* A card whose title link covers the whole card. The card cannot simply be
+   wrapped in an <a> any more: the owner's rename form lives inside it, and a
+   form nested in an anchor is invalid markup. */
+.league-card-linked {
+    position: relative;
     transition: transform 0.2s ease, border-color 0.2s ease;
 }
 
-.league-card-link:hover .league-card {
+.league-card-linked:hover {
     transform: translateY(-4px);
     border-color: var(--color-primary);
 }
@@ -755,6 +754,73 @@ button.btn {
 .league-card h3 {
     margin-bottom: 0.5rem;
     color: var(--color-text);
+}
+
+.league-name {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.league-card-title a {
+    text-decoration: none;
+    color: inherit;
+}
+
+/* The overlay that makes the rest of the card clickable. It is on the link
+   rather than the card so that it disappears with the title while the name is
+   being edited, leaving the form's own controls reachable. */
+.league-card-title a::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+}
+
+/* Above the overlay, or the card link swallows the click. */
+.league-name-action {
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+}
+
+.league-name-editing {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.league-name-input {
+    flex: 1 1 10rem;
+    min-width: 0;
+    padding: 0.4rem 0.6rem;
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.league-name-input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.league-name-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.league-name-error {
+    flex-basis: 100%;
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--color-error);
 }
 
 .league-meta {

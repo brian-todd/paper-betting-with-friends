@@ -1,0 +1,16 @@
+{{/*
+  The name cell of a league card on /leagues, in its resting state, for a
+  league the viewer created. Rendered on its own when the rename form is saved
+  or cancelled; the leagues page inlines the same markup so a card starts here.
+
+  The id is what both halves of the toggle target, so it has to match the one
+  in league_name_edit.html and in the page.
+*/}}
+<div class="league-name" id="league-name-{{.League.ID}}">
+    <h3 class="league-card-title"><a href="/leagues/{{.League.ID}}">{{.League.Name}}</a></h3>
+    <button type="button" class="btn btn-sm btn-secondary league-name-action"
+            hx-get="/leagues/{{.League.ID}}/name/edit"
+            hx-target="#league-name-{{.League.ID}}"
+            hx-swap="outerHTML"
+            aria-label="Rename {{.League.Name}}">Rename</button>
+</div>

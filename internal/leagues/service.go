@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/brian/paper-betting-with-friends/internal/bets"
 	"github.com/brian/paper-betting-with-friends/internal/models"
@@ -23,7 +24,12 @@ var (
 	ErrLeagueNotPublic = errors.New("league is not public")
 	ErrInvalidCode     = errors.New("invalid invite code")
 	ErrNotAuthorized   = errors.New("not authorized to perform this action")
+	ErrInvalidName     = errors.New("league name is required")
 )
+
+// MaxLeagueNameLength bounds a league name to the width of the column that
+// stores it, counted in characters because that is what varchar(255) counts.
+const MaxLeagueNameLength = 255
 
 // Service handles league business logic.
 type Service struct {
@@ -43,9 +49,85 @@ func NewService(db *gorm.DB) *Service {
 	}
 }
 
+// UserLeague is a league as seen by one member, paired with whether that
+// member created it.
+//
+// The flag is resolved here rather than in the template because html/template
+// cannot compare two uuid.UUID values: eq rejects an array type outright.
+type UserLeague struct {
+	models.League
+	IsOwner bool
+}
+
 // GetUserLeagues retrieves all leagues a user is a member of.
-func (s *Service) GetUserLeagues(userID uuid.UUID) ([]models.League, error) {
-	return s.leagueRepo.FindUserLeagues(userID)
+func (s *Service) GetUserLeagues(userID uuid.UUID) ([]UserLeague, error) {
+	leagues, err := s.leagueRepo.FindUserLeagues(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]UserLeague, 0, len(leagues))
+	for _, league := range leagues {
+		result = append(result, UserLeague{League: league, IsOwner: league.CreatedBy == userID})
+	}
+	return result, nil
+}
+
+// GetOwnedLeague retrieves a league only if userID created it.
+//
+// Renaming is the creator's alone: an admin member can already be several
+// people, and the name is what every other member sees the league by.
+func (s *Service) GetOwnedLeague(leagueID, userID uuid.UUID) (*models.League, error) {
+	league, err := s.leagueRepo.FindByID(leagueID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrLeagueNotFound
+		}
+		return nil, err
+	}
+
+	if league.CreatedBy != userID {
+		return nil, ErrNotAuthorized
+	}
+	return league, nil
+}
+
+// RenameLeague changes a league's name. Only the league's creator may do so.
+//
+// The returned league carries the new name, so a caller re-rendering the row
+// does not have to read it back.
+func (s *Service) RenameLeague(leagueID, userID uuid.UUID, name string) (*models.League, error) {
+	league, err := s.GetOwnedLeague(leagueID, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	name, err = validateLeagueName(name)
+	if err != nil {
+		return nil, err
+	}
+
+	if name == league.Name {
+		return league, nil
+	}
+
+	if err := s.leagueRepo.UpdateName(league.ID, name); err != nil {
+		return nil, err
+	}
+
+	league.Name = name
+	return league, nil
+}
+
+// validateLeagueName trims a submitted name and rejects one the column cannot
+// hold. Postgres truncates nothing -- an over-long value fails the insert -- so
+// the check has to happen before the write.
+func validateLeagueName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || utf8.RuneCountInString(name) > MaxLeagueNameLength {
+		return "", ErrInvalidName
+	}
+	return name, nil
 }
 
 // GetAvailableLeagues retrieves public leagues the user hasn't joined.

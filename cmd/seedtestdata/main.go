@@ -160,7 +160,7 @@ func seedLeagues(leagueService *leagues.Service, users []models.User) ([]models.
 	}
 	byName := make(map[string]models.League, len(existing))
 	for _, l := range existing {
-		byName[l.Name] = l
+		byName[l.Name] = l.League
 	}
 
 	result := make([]models.League, 0, len(testLeagueSpecs))

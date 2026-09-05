@@ -1,6 +1,8 @@
 package leagues
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/brian/paper-betting-with-friends/internal/repository"
@@ -214,5 +216,35 @@ func TestHolyLockWeekLabel(t *testing.T) {
 		if got := holyLockWeekLabel(tt.season, tt.week, tt.seasonType); got != tt.want {
 			t.Errorf("holyLockWeekLabel(%d, %d, %q) = %q, want %q", tt.season, tt.week, tt.seasonType, got, tt.want)
 		}
+	}
+}
+
+func TestValidateLeagueName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr error
+	}{
+		{name: "trims surrounding space", input: "  Sunday Money  ", want: "Sunday Money"},
+		{name: "rejects empty", input: "", wantErr: ErrInvalidName},
+		{name: "rejects whitespace only", input: "   \t\n ", wantErr: ErrInvalidName},
+		{name: "accepts the longest name the column holds", input: strings.Repeat("a", MaxLeagueNameLength), want: strings.Repeat("a", MaxLeagueNameLength)},
+		{name: "rejects one character more", input: strings.Repeat("a", MaxLeagueNameLength+1), wantErr: ErrInvalidName},
+		// Postgres counts characters, not bytes, so a name of multi-byte
+		// characters that fits must not be rejected for its byte length.
+		{name: "counts characters not bytes", input: strings.Repeat("é", MaxLeagueNameLength), want: strings.Repeat("é", MaxLeagueNameLength)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := validateLeagueName(tt.input)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("name = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

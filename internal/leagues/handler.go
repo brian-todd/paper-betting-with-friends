@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/brian/paper-betting-with-friends/internal/auth"
+	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/templates"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -38,6 +39,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authMiddleware func(http.Ha
 	mux.Handle("GET /leagues/create", wrap(h.ShowCreateForm))
 	mux.Handle("POST /leagues", wrap(h.CreateLeague))
 	mux.Handle("GET /leagues/{id}", wrap(h.ShowLeague))
+	mux.Handle("GET /leagues/{id}/name", wrap(h.ShowLeagueName))
+	mux.Handle("GET /leagues/{id}/name/edit", wrap(h.EditLeagueName))
+	mux.Handle("POST /leagues/{id}/name", wrap(h.RenameLeague))
 	mux.Handle("POST /leagues/{id}/join", wrap(h.JoinLeague))
 	mux.Handle("POST /leagues/join", wrap(h.JoinByCode))
 	mux.Handle("POST /leagues/{id}/leave", wrap(h.LeaveLeague))
@@ -193,6 +197,115 @@ func (h *Handler) ShowLeague(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ShowLeagueName renders the read-only name cell for a league card. It is what
+// the edit form's Cancel button swaps back in, so it is only ever reached by
+// someone who was already offered the edit control.
+func (h *Handler) ShowLeagueName(w http.ResponseWriter, r *http.Request) {
+	h.renderNamePartial(w, r, "league_name")
+}
+
+// EditLeagueName renders the inline rename form for a league card.
+func (h *Handler) EditLeagueName(w http.ResponseWriter, r *http.Request) {
+	h.renderNamePartial(w, r, "league_name_edit")
+}
+
+// renderNamePartial answers both halves of the inline edit toggle, which differ
+// only in which fragment they render.
+func (h *Handler) renderNamePartial(w http.ResponseWriter, r *http.Request, partial string) {
+	user := auth.UserFromContext(r.Context())
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	leagueID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "Invalid league ID", http.StatusBadRequest)
+		return
+	}
+
+	league, err := h.service.GetOwnedLeague(leagueID, user.ID)
+	if err != nil {
+		h.nameError(w, err)
+		return
+	}
+
+	h.renderPartial(w, partial, map[string]any{"League": league})
+}
+
+// RenameLeague handles the inline rename submission from the leagues page.
+func (h *Handler) RenameLeague(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	leagueID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "Invalid league ID", http.StatusBadRequest)
+		return
+	}
+
+	name := r.FormValue("name")
+	isHTMX := r.Header.Get("HX-Request") == "true"
+
+	league, err := h.service.RenameLeague(leagueID, user.ID, name)
+	if err != nil {
+		if !errors.Is(err, ErrInvalidName) {
+			if !errors.Is(err, ErrLeagueNotFound) && !errors.Is(err, ErrNotAuthorized) {
+				slog.Error("failed to rename league", "error", err, "league_id", leagueID)
+			}
+			h.nameError(w, err)
+			return
+		}
+
+		if !isHTMX {
+			http.Redirect(w, r, "/leagues?error="+errorMessage(err), http.StatusSeeOther)
+			return
+		}
+
+		// Re-render the form the submission came from, carrying what was typed
+		// back so the correction starts from it. The league is not read back:
+		// nothing was written, and the ID from the path is all the form needs.
+		w.WriteHeader(http.StatusBadRequest)
+		h.renderPartial(w, "league_name_edit", map[string]any{
+			"League": &models.League{ID: leagueID, Name: name},
+			"Error":  "Enter a league name of 1 to 255 characters.",
+		})
+		return
+	}
+
+	if !isHTMX {
+		http.Redirect(w, r, "/leagues?success=renamed", http.StatusSeeOther)
+		return
+	}
+
+	h.renderPartial(w, "league_name", map[string]any{"League": league})
+}
+
+// nameError reports a failure to reach a league's name cell. The codes are the
+// real ones: htmx is configured to swap 400 and 422 only, so a 403 or 404 here
+// leaves the card as it was rather than replacing it with an error.
+func (h *Handler) nameError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrLeagueNotFound):
+		http.Error(w, "League not found", http.StatusNotFound)
+	case errors.Is(err, ErrNotAuthorized):
+		http.Error(w, "Only the league owner can rename this league", http.StatusForbidden)
+	default:
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+// renderPartial writes an HTML fragment, logging a template failure rather than
+// letting a half-written response pass for a successful swap.
+func (h *Handler) renderPartial(w http.ResponseWriter, name string, data any) {
+	if err := h.templates.RenderPartial(w, name, data); err != nil {
+		slog.Error("failed to render partial", "error", err, "partial", name)
+	}
+}
+
 // JoinLeague handles joining a public league.
 func (h *Handler) JoinLeague(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
@@ -313,6 +426,8 @@ func errorMessage(err error) string {
 		return "invalid_code"
 	case errors.Is(err, ErrNotAuthorized):
 		return "not_authorized"
+	case errors.Is(err, ErrInvalidName):
+		return "invalid_name"
 	default:
 		return "error"
 	}

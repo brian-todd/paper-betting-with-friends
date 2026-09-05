@@ -128,6 +128,15 @@ func (r *LeagueRepository) RemoveMember(leagueID, userID uuid.UUID) error {
 	return r.db.Where("league_id = ? AND user_id = ?", leagueID, userID).Delete(&models.LeagueMember{}).Error
 }
 
+// UpdateName sets a league's name.
+//
+// It writes the one column rather than saving the struct: FindByID preloads
+// Creator and Members, and a plain Save would write those associations back
+// out along with the name.
+func (r *LeagueRepository) UpdateName(id uuid.UUID, name string) error {
+	return r.db.Model(&models.League{}).Where("id = ?", id).Update("name", name).Error
+}
+
 // Delete removes a league from the database.
 func (r *LeagueRepository) Delete(id uuid.UUID) error {
 	return r.db.Delete(&models.League{}, id).Error

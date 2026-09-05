@@ -121,3 +121,135 @@ func TestLeaguePageOmitsHolyLockSectionWhenEmpty(t *testing.T) {
 		t.Error("the Holy Locks section rendered with no locks to show")
 	}
 }
+
+// renderLeaguesIndex renders the /leagues page for real, the same way
+// renderLeagueDetail does for the league page.
+func renderLeaguesIndex(t *testing.T, data map[string]any) string {
+	t.Helper()
+
+	renderer, err := templates.NewRenderer(assets.FS, false, time.UTC)
+	if err != nil {
+		t.Fatalf("building renderer: %v", err)
+	}
+
+	page := map[string]any{
+		"Title": "My Leagues",
+		"User":  &models.User{Username: "tester"},
+	}
+	maps.Copy(page, data)
+
+	var buf bytes.Buffer
+	if err := renderer.Render(&buf, "leagues", page); err != nil {
+		t.Fatalf("rendering leagues index: %v", err)
+	}
+	return buf.String()
+}
+
+// renderNamePartial renders one of the inline-rename fragments.
+func renderNamePartial(t *testing.T, name string, data map[string]any) string {
+	t.Helper()
+
+	renderer, err := templates.NewRenderer(assets.FS, false, time.UTC)
+	if err != nil {
+		t.Fatalf("building renderer: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := renderer.RenderPartial(&buf, name, data); err != nil {
+		t.Fatalf("rendering partial %s: %v", name, err)
+	}
+	return buf.String()
+}
+
+// collapseSpace normalises indentation so markup written at two nesting depths
+// can be compared.
+func collapseSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func ownedLeagues(t *testing.T) (owned, joined UserLeague) {
+	t.Helper()
+
+	public := true
+	return UserLeague{
+		ID:       uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		Name:     "My League",
+		IsPublic: &public,
+		Creator:  models.User{Username: "tester"},
+		IsOwner:  true,
+	}, UserLeague{
+		ID:       uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		Name:     "Someone Elses League",
+		IsPublic: &public,
+		Creator:  models.User{Username: "alice"},
+		IsOwner:  false,
+	}
+}
+
+func TestLeaguesIndexOffersRenameToOwnerOnly(t *testing.T) {
+	owned, joined := ownedLeagues(t)
+	html := renderLeaguesIndex(t, map[string]any{"MyLeagues": []UserLeague{owned, joined}})
+
+	if !strings.Contains(html, `hx-get="/leagues/`+owned.ID.String()+`/name/edit"`) {
+		t.Error("the owner's card has no rename control")
+	}
+	if strings.Contains(html, `/leagues/`+joined.ID.String()+`/name`) {
+		t.Error("a league the viewer only joined offers a rename control")
+	}
+	// Both cards still link through to the league itself.
+	for _, league := range []UserLeague{owned, joined} {
+		if !strings.Contains(html, `<a href="/leagues/`+league.ID.String()+`">`) {
+			t.Errorf("league %s has no link to its page", league.Name)
+		}
+	}
+}
+
+// The page inlines the resting-state markup so a card starts in it, and the
+// partial replaces that element once the name is edited. Nothing makes the two
+// agree, so this is what notices when one of them changes alone.
+func TestLeaguesIndexInlinesTheNamePartial(t *testing.T) {
+	owned, _ := ownedLeagues(t)
+
+	partial := renderNamePartial(t, "league_name", map[string]any{"League": &owned.League})
+	html := renderLeaguesIndex(t, map[string]any{"MyLeagues": []UserLeague{owned}})
+
+	if !strings.Contains(collapseSpace(html), collapseSpace(partial)) {
+		t.Errorf("the leagues page no longer inlines templates/partials/league_name.html\nwant to find: %s", collapseSpace(partial))
+	}
+}
+
+func TestLeagueNameEditPartial(t *testing.T) {
+	owned, _ := ownedLeagues(t)
+	id := owned.ID.String()
+
+	t.Run("posts to the rename route with and without htmx", func(t *testing.T) {
+		html := renderNamePartial(t, "league_name_edit", map[string]any{"League": &owned.League})
+
+		for _, want := range []string{
+			`action="/leagues/` + id + `/name" method="POST"`,
+			`hx-post="/leagues/` + id + `/name"`,
+			`hx-target="#league-name-` + id + `"`,
+			`value="My League"`,
+			// Cancel re-reads the stored name rather than hiding the form.
+			`hx-get="/leagues/` + id + `/name"`,
+		} {
+			if !strings.Contains(html, want) {
+				t.Errorf("the rename form is missing %q", want)
+			}
+		}
+		if strings.Contains(html, "league-name-error") {
+			t.Error("a form with no error should not render the error slot")
+		}
+	})
+
+	t.Run("shows a validation message", func(t *testing.T) {
+		html := renderNamePartial(t, "league_name_edit", map[string]any{
+			"League": &models.League{ID: owned.ID, Name: ""},
+			"Error":  "Enter a league name of 1 to 255 characters.",
+		})
+
+		if !strings.Contains(html, "Enter a league name of 1 to 255 characters.") {
+			t.Error("the rename form dropped its error message")
+		}
+	})
+}

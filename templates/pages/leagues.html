@@ -8,6 +8,8 @@
     {{if .Error}}
     <div class="alert alert-error">
         {{if eq .Error "not_found"}}League not found.{{end}}
+        {{if eq .Error "invalid_name"}}Enter a league name of 1 to 255 characters.{{end}}
+        {{if eq .Error "not_authorized"}}Only the league owner can rename this league.{{end}}
         {{if eq .Error "already_member"}}You're already a member of this league.{{end}}
         {{if eq .Error "not_public"}}This league is invite-only.{{end}}
         {{if eq .Error "invalid_code"}}Invalid invite code.{{end}}
@@ -21,6 +23,7 @@
         {{if eq .Success "left"}}You have left the league.{{end}}
         {{if eq .Success "joined"}}Successfully joined the league!{{end}}
         {{if eq .Success "deleted"}}League deleted successfully.{{end}}
+        {{if eq .Success "renamed"}}League renamed.{{end}}
     </div>
     {{end}}
 
@@ -29,18 +32,35 @@
         {{if .MyLeagues}}
         <div class="leagues-grid">
             {{range .MyLeagues}}
-            <a href="/leagues/{{.ID}}" class="league-card-link">
-                <div class="league-card">
-                    <h3>{{.Name}}</h3>
-                    <div class="league-meta">
-                        <span class="badge {{if .IsPublic}}badge-public{{else}}badge-private{{end}}">
-                            {{if .IsPublic}}Public{{else}}Private{{end}}
-                        </span>
-                        <span class="member-count">{{len .Members}} members</span>
-                    </div>
-                    <p class="text-muted">Created by {{.Creator.Username}}</p>
+            <div class="league-card league-card-linked">
+                {{if .IsOwner}}
+                {{/*
+                  Kept in step with templates/partials/league_name.html by hand:
+                  that fragment replaces this element the first time the name is
+                  edited, and a partial cannot be shared with a page template
+                  because the two are parsed separately.
+                */}}
+                <div class="league-name" id="league-name-{{.ID}}">
+                    <h3 class="league-card-title"><a href="/leagues/{{.ID}}">{{.Name}}</a></h3>
+                    <button type="button" class="btn btn-sm btn-secondary league-name-action"
+                            hx-get="/leagues/{{.ID}}/name/edit"
+                            hx-target="#league-name-{{.ID}}"
+                            hx-swap="outerHTML"
+                            aria-label="Rename {{.Name}}">Rename</button>
                 </div>
-            </a>
+                {{else}}
+                <div class="league-name">
+                    <h3 class="league-card-title"><a href="/leagues/{{.ID}}">{{.Name}}</a></h3>
+                </div>
+                {{end}}
+                <div class="league-meta">
+                    <span class="badge {{if .IsPublic}}badge-public{{else}}badge-private{{end}}">
+                        {{if .IsPublic}}Public{{else}}Private{{end}}
+                    </span>
+                    <span class="member-count">{{len .Members}} members</span>
+                </div>
+                <p class="text-muted">Created by {{.Creator.Username}}</p>
+            </div>
             {{end}}
         </div>
         {{else}}
@@ -88,4 +108,18 @@
         {{end}}
     </section>
 </div>
+
+<script>
+    // Put the cursor in the rename field as soon as it is swapped in. autofocus
+    // only applies to markup present at page load, and hx-on would need the
+    // 'unsafe-eval' the CSP does not grant, so an ordinary listener does it.
+    document.body.addEventListener('htmx:afterSwap', function(event) {
+        const card = event.target.closest?.('.league-card');
+        if (!card) return;
+        const input = card.querySelector('.league-name-input');
+        if (!input) return;
+        input.focus();
+        input.select();
+    });
+</script>
 {{end}}
