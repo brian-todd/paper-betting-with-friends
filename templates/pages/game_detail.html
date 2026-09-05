@@ -70,7 +70,7 @@
              so this is drawn for a game in progress as readily as a finished one --
              which is why an unplayed period shows a dash rather than a zero. -->
         {{with .Result}}
-        {{$periods := .PeriodScores}}
+        {{$periods := .PeriodScores $.Game.Sport}}
         <div class="linescore">
             <table class="linescore-table">
                 <thead>

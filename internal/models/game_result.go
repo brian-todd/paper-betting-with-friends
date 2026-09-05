@@ -76,10 +76,15 @@ type PeriodScore struct {
 
 // PeriodScores is the line score as columns, ready to render.
 //
-// The four quarters are always present, filled with nils where the feed has
-// reported nothing yet, so the table keeps its shape as a game is played rather
-// than growing a column every quarter. Overtime extends it one column at a
-// time, since there is no fixed number of those.
+// sport decides both how many periods regulation has and what they are called,
+// so a basketball game reports two halves rather than the four quarters it
+// would otherwise be given -- with its own half scores filed under "Q1" and
+// "Q2" and two empty quarters after them.
+//
+// Regulation is always present, filled with nils where the feed has reported
+// nothing yet, so the table keeps its shape as a game is played rather than
+// growing a column every period. Overtime extends it one column at a time,
+// since there is no fixed number of those.
 //
 // It returns nil only for a nil receiver -- a game with no result row at all,
 // which has not kicked off.
@@ -88,16 +93,16 @@ type PeriodScore struct {
 // always have been, but they arrive as two independent arrays from an upstream
 // nobody here controls, and indexing one by the other's length is how that
 // assumption turns into a panic on a page.
-func (r *GameResult) PeriodScores() []PeriodScore {
+func (r *GameResult) PeriodScores(sport string) []PeriodScore {
 	if r == nil {
 		return nil
 	}
 
-	periods := max(regulationPeriods, len(r.HomeLineScores), len(r.AwayLineScores))
+	periods := max(regulationPeriods(sport), len(r.HomeLineScores), len(r.AwayLineScores))
 
 	scores := make([]PeriodScore, periods)
 	for i := range scores {
-		scores[i] = PeriodScore{Label: periodLabel(i + 1)}
+		scores[i] = PeriodScore{Label: periodLabel(sport, i+1)}
 		if i < len(r.HomeLineScores) {
 			scores[i].Home = &r.HomeLineScores[i]
 		}

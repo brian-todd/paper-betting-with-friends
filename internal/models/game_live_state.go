@@ -10,8 +10,22 @@ import (
 	"gorm.io/gorm"
 )
 
-// regulationPeriods is how many quarters a football game runs before overtime.
-const regulationPeriods = 4
+// Periods a game runs before overtime: four quarters of football, two halves of
+// basketball.
+const (
+	footballRegulationPeriods   = 4
+	basketballRegulationPeriods = 2
+)
+
+// regulationPeriods is how many periods sport plays before overtime. An
+// unrecognised sport is read as football, which is what every caller that does
+// not resolve one is.
+func regulationPeriods(sport string) int {
+	if sport == SportBasketball {
+		return basketballRegulationPeriods
+	}
+	return footballRegulationPeriods
+}
 
 // GameLiveState is what the scoreboard feed reports about a game beyond its
 // score: the clock, the situation, the broadcast and the weather.
@@ -76,22 +90,29 @@ func (s *GameLiveState) PeriodLabel() string {
 	if s == nil || s.Period == nil || *s.Period < 1 {
 		return ""
 	}
-	return periodLabel(*s.Period)
+	// The scoreboard feed is football only, so there is no sport to resolve.
+	return periodLabel(SportFootball, *s.Period)
 }
 
-// periodLabel names the nth period of a football game. It is shared with the
-// line score, so the column headed "OT" there and the badge reading "OT" on the
-// same page cannot drift apart.
-func periodLabel(period int) string {
+// periodLabel names the nth period of a game. It is shared with the line score,
+// so the column headed "OT" there and the badge reading "OT" on the same page
+// cannot drift apart.
+//
+// Football runs four quarters, basketball two halves, and everything past
+// regulation is overtime in both.
+func periodLabel(sport string, period int) string {
+	regulation := regulationPeriods(sport)
 	switch {
 	case period < 1:
 		return ""
-	case period <= regulationPeriods:
+	case period <= regulation && sport == SportBasketball:
+		return strconv.Itoa(period) + "H"
+	case period <= regulation:
 		return "Q" + strconv.Itoa(period)
-	case period == regulationPeriods+1:
+	case period == regulation+1:
 		return "OT"
 	default:
-		return strconv.Itoa(period-regulationPeriods) + "OT"
+		return strconv.Itoa(period-regulation) + "OT"
 	}
 }
 

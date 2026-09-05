@@ -258,7 +258,10 @@ outside `CFB_SCOREBOARD_CLASSIFICATIONS` and every game outside the current
 week. Basketball takes its status from the API.
 
 The line score is the exception: it stays on `GameResult`, where the score
-lives, and `PeriodScores` zips the two sides into columns for the game page.
+lives, and `PeriodScores(sport)` zips the two sides into columns for the game
+page. It takes the sport because that page serves basketball too, and basketball
+plays two halves — given football's regulation it files real half scores under
+`Q1` and `Q2` and pads two empty quarters after them.
 The column labels come from the same `periodLabel` the live badge uses, so an
 "OT" column and an "OT" badge on the same page cannot drift apart. The four
 quarters are always present, carrying nil — not zero — for a period the feed

@@ -125,6 +125,7 @@ func TestGameResultIsFinal(t *testing.T) {
 func TestGameResultPeriodScores(t *testing.T) {
 	tests := []struct {
 		name       string
+		sport      string
 		result     *GameResult
 		wantLabels []string
 		wantHome   []string
@@ -208,6 +209,34 @@ func TestGameResultPeriodScores(t *testing.T) {
 			wantHome:   []string{"-", "-", "-", "-"},
 			wantAway:   []string{"0", "7", "-", "-"},
 		},
+		{
+			// Basketball plays two halves. It shares this page and this table,
+			// and before the sport was threaded through it borrowed football's
+			// regulation -- filing real half scores under "Q1" and "Q2" and
+			// adding two empty quarters after them.
+			name:       "basketball halves",
+			sport:      SportBasketball,
+			result:     &GameResult{HomeLineScores: IntSlice{38, 41}, AwayLineScores: IntSlice{30, 44}},
+			wantLabels: []string{"1H", "2H"},
+			wantHome:   []string{"38", "41"},
+			wantAway:   []string{"30", "44"},
+		},
+		{
+			name:       "basketball with no breakdown still shows both halves",
+			sport:      SportBasketball,
+			result:     &GameResult{HomeScore: 70, AwayScore: 68},
+			wantLabels: []string{"1H", "2H"},
+			wantHome:   []string{"-", "-"},
+			wantAway:   []string{"-", "-"},
+		},
+		{
+			name:       "basketball overtime extends past the halves",
+			sport:      SportBasketball,
+			result:     &GameResult{HomeLineScores: IntSlice{38, 41, 9}, AwayLineScores: IntSlice{30, 49, 7}},
+			wantLabels: []string{"1H", "2H", "OT"},
+			wantHome:   []string{"38", "41", "9"},
+			wantAway:   []string{"30", "49", "7"},
+		},
 	}
 
 	show := func(v *int) string {
@@ -219,7 +248,12 @@ func TestGameResultPeriodScores(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scores := tt.result.PeriodScores()
+			sport := tt.sport
+			if sport == "" {
+				sport = SportFootball
+			}
+
+			scores := tt.result.PeriodScores(sport)
 			if len(scores) != len(tt.wantLabels) {
 				t.Fatalf("got %d periods, want %d", len(scores), len(tt.wantLabels))
 			}
