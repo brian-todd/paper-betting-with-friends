@@ -6,7 +6,9 @@
 - `make test` — run all tests (`go test -v -race -cover ./...`)
 - `go test -v -race ./internal/bets/...` — run tests for one package
 - `make fmt` — format code
-- `make fmt-check` / `make vet` / `make vulncheck` — the checks CI runs
+- `make fmt-check` / `make fix-check` / `make vet` / `make vulncheck` — the
+  checks CI runs. `fix-check` is the one that is easy to forget: it fails on any
+  pending `go fix` modernization, and CI runs `go mod tidy` and diffs go.mod too
 - `make tools` — download tools pinned by the go.mod `tool` directive
 - `make migrate-up` / `make migrate-down` — run/rollback migrations
 - `make migrate-create name=<name>` — create new migration pair

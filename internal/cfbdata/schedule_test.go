@@ -264,7 +264,7 @@ func TestScoreboardDelayIsAlwaysPositiveAcrossDST(t *testing.T) {
 		time.Date(2026, time.March, 7, 0, 0, 0, 0, eastern),
 		time.Date(2026, time.November, 1, 0, 0, 0, 0, eastern),
 	} {
-		for offset := 0; offset < 48*60; offset++ {
+		for offset := range 48 * 60 {
 			now := start.Add(time.Duration(offset) * time.Minute)
 			for _, inSeason := range []bool{true, false} {
 				delay := ScoreboardDelay(now, eastern, inSeason)

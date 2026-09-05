@@ -6,9 +6,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-func intPtr(v int) *int          { return &v }
-func stringPtr(v string) *string { return &v }
-
 func TestGameLiveStatePeriodLabel(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -16,14 +13,14 @@ func TestGameLiveStatePeriodLabel(t *testing.T) {
 		want   string
 	}{
 		{"no period reported", nil, ""},
-		{"first quarter", intPtr(1), "Q1"},
-		{"fourth quarter", intPtr(4), "Q4"},
-		{"overtime", intPtr(5), "OT"},
-		{"double overtime", intPtr(6), "2OT"},
-		{"quadruple overtime", intPtr(8), "4OT"},
+		{"first quarter", new(1), "Q1"},
+		{"fourth quarter", new(4), "Q4"},
+		{"overtime", new(5), "OT"},
+		{"double overtime", new(6), "2OT"},
+		{"quadruple overtime", new(8), "4OT"},
 		// The feed is not ours; a zero or negative period is not a period.
-		{"zero", intPtr(0), ""},
-		{"negative", intPtr(-1), ""},
+		{"zero", new(0), ""},
+		{"negative", new(-1), ""},
 	}
 
 	for _, tt := range tests {
@@ -45,11 +42,11 @@ func TestGameLiveStateLiveLabel(t *testing.T) {
 		// A nil state is a game the scoreboard has never covered. Every method
 		// has to answer for one, since the templates call them unguarded.
 		{"nil state", nil, ""},
-		{"period and clock", &GameLiveState{Period: intPtr(3), Clock: stringPtr("07:42")}, "Q3 · 07:42"},
-		{"period only", &GameLiveState{Period: intPtr(2)}, "Q2"},
-		{"clock only", &GameLiveState{Clock: stringPtr("00:00")}, "00:00"},
+		{"period and clock", &GameLiveState{Period: new(3), Clock: new("07:42")}, "Q3 · 07:42"},
+		{"period only", &GameLiveState{Period: new(2)}, "Q2"},
+		{"clock only", &GameLiveState{Clock: new("00:00")}, "00:00"},
 		{"neither", &GameLiveState{}, ""},
-		{"blank clock", &GameLiveState{Period: intPtr(1), Clock: stringPtr("  ")}, "Q1"},
+		{"blank clock", &GameLiveState{Period: new(1), Clock: new("  ")}, "Q1"},
 	}
 
 	for _, tt := range tests {
@@ -69,12 +66,12 @@ func TestGameLiveStatePossession(t *testing.T) {
 	}{
 		{"nil state", nil, false, false},
 		{"none reported", &GameLiveState{}, false, false},
-		{"home", &GameLiveState{Possession: stringPtr("home")}, true, false},
-		{"away", &GameLiveState{Possession: stringPtr("away")}, false, true},
-		{"mixed case and spaces", &GameLiveState{Possession: stringPtr(" Home ")}, true, false},
+		{"home", &GameLiveState{Possession: new("home")}, true, false},
+		{"away", &GameLiveState{Possession: new("away")}, false, true},
+		{"mixed case and spaces", &GameLiveState{Possession: new(" Home ")}, true, false},
 		// Anything the feed words differently resolves to neither side rather
 		// than to a guess -- a ball marker on the wrong team is worse than none.
-		{"unrecognised", &GameLiveState{Possession: stringPtr("Alabama")}, false, false},
+		{"unrecognised", &GameLiveState{Possession: new("Alabama")}, false, false},
 	}
 
 	for _, tt := range tests {
@@ -99,12 +96,12 @@ func TestGameLiveStateWeatherText(t *testing.T) {
 	}{
 		{"nil state", nil, ""},
 		{"nothing reported", &GameLiveState{}, ""},
-		{"both", &GameLiveState{WeatherDescription: stringPtr("Light Rain"), Temperature: &temp}, "Light Rain, 79°F"},
-		{"description only", &GameLiveState{WeatherDescription: stringPtr("Clear")}, "Clear"},
+		{"both", &GameLiveState{WeatherDescription: new("Light Rain"), Temperature: &temp}, "Light Rain, 79°F"},
+		{"description only", &GameLiveState{WeatherDescription: new("Clear")}, "Clear"},
 		{"temperature only", &GameLiveState{Temperature: &temp}, "79°F"},
 		// The feed nulls all four weather fields together for a venue it has no
 		// station for, but an empty string is what an indoor game has produced.
-		{"blank description", &GameLiveState{WeatherDescription: stringPtr("")}, ""},
+		{"blank description", &GameLiveState{WeatherDescription: new("")}, ""},
 	}
 
 	for _, tt := range tests {
@@ -125,10 +122,10 @@ func TestGameLiveStateWindText(t *testing.T) {
 		want  string
 	}{
 		{"nil state", nil, ""},
-		{"no speed", &GameLiveState{WindDirection: intPtr(340)}, ""},
+		{"no speed", &GameLiveState{WindDirection: new(340)}, ""},
 		{"speed only", &GameLiveState{WindSpeed: &speed}, "7 mph"},
-		{"speed and bearing", &GameLiveState{WindSpeed: &speed, WindDirection: intPtr(340)}, "7 mph NNW"},
-		{"due north", &GameLiveState{WindSpeed: &speed, WindDirection: intPtr(0)}, "7 mph N"},
+		{"speed and bearing", &GameLiveState{WindSpeed: &speed, WindDirection: new(340)}, "7 mph NNW"},
+		{"due north", &GameLiveState{WindSpeed: &speed, WindDirection: new(0)}, "7 mph N"},
 	}
 
 	for _, tt := range tests {
@@ -200,13 +197,13 @@ func TestGameLiveStateHasLiveDetail(t *testing.T) {
 	}{
 		{"nil state", nil, false},
 		{"empty", &GameLiveState{}, false},
-		{"period", &GameLiveState{Period: intPtr(1)}, true},
-		{"clock", &GameLiveState{Clock: stringPtr("12:00")}, true},
-		{"situation", &GameLiveState{Situation: stringPtr("3rd & 7")}, true},
-		{"last play", &GameLiveState{LastPlay: stringPtr("End of 4th quarter.")}, true},
+		{"period", &GameLiveState{Period: new(1)}, true},
+		{"clock", &GameLiveState{Clock: new("12:00")}, true},
+		{"situation", &GameLiveState{Situation: new("3rd & 7")}, true},
+		{"last play", &GameLiveState{LastPlay: new("End of 4th quarter.")}, true},
 		// Broadcast and weather are known before kickoff for every game, so
 		// neither counts as something happening.
-		{"broadcast only", &GameLiveState{TV: stringPtr("ESPN")}, false},
+		{"broadcast only", &GameLiveState{TV: new("ESPN")}, false},
 	}
 
 	for _, tt := range tests {

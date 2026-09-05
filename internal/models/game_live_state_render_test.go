@@ -43,7 +43,7 @@ func TestLiveStateHelpersRenderWithNilState(t *testing.T) {
 		{
 			name: "live game with a clock and possession",
 			game: Game{Status: GameStatusInProgress, LiveState: &GameLiveState{
-				Period: &period, Clock: &clock, Possession: stringPtr("home"), TV: stringPtr("ESPN"),
+				Period: &period, Clock: &clock, Possession: new("home"), TV: new("ESPN"),
 			}},
 			want: "[Q3 · 07:42][TV ESPN][][][][BALL]",
 		},

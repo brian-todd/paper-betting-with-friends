@@ -183,11 +183,11 @@ func TestScoreboardLiveState(t *testing.T) {
 	game := APIScoreboardGame{
 		ID:         401856766,
 		TV:         "ESPN | Disney+",
-		Period:     intPtr(3),
-		Clock:      stringPtr("07:42"),
-		Situation:  stringPtr("3rd & 7"),
-		Possession: stringPtr("home"),
-		LastPlay:   stringPtr("Pass complete for 4 yards."),
+		Period:     new(3),
+		Clock:      new("07:42"),
+		Situation:  new("3rd & 7"),
+		Possession: new("home"),
+		LastPlay:   new("Pass complete for 4 yards."),
 		HomeTeam:   APIScoreboardTeam{WinProbability: &winProbability},
 		Weather: &APIScoreboardWeather{
 			Temperature:   &temperature,
@@ -246,15 +246,15 @@ func TestNormalizePossession(t *testing.T) {
 		want  *string
 	}{
 		{"absent", nil, nil},
-		{"home", stringPtr("home"), stringPtr("home")},
-		{"away", stringPtr("away"), stringPtr("away")},
-		{"mixed case and spaces", stringPtr(" Home "), stringPtr("home")},
+		{"home", new("home"), new("home")},
+		{"away", new("away"), new("away")},
+		{"mixed case and spaces", new(" Home "), new("home")},
 		// The column is bounded and the feed is not. A team name here -- or
 		// anything else the provider might switch to -- is dropped rather than
 		// stored, because one longer than the column fails the whole row's
 		// upsert and takes the clock and the situation down with it.
-		{"a team name", stringPtr("North Carolina A&T Aggies"), nil},
-		{"empty", stringPtr(""), nil},
+		{"a team name", new("North Carolina A&T Aggies"), nil},
+		{"empty", new(""), nil},
 	}
 
 	for _, tt := range tests {
@@ -284,7 +284,7 @@ func TestScoreboardLiveStateResolvesPossession(t *testing.T) {
 		{"Alabama", false, false},
 	} {
 		t.Run(tt.possession, func(t *testing.T) {
-			state := scoreboardLiveState(uuid.New(), APIScoreboardGame{Possession: stringPtr(tt.possession)})
+			state := scoreboardLiveState(uuid.New(), APIScoreboardGame{Possession: new(tt.possession)})
 			if state.HomeHasBall() != tt.wantHome || state.AwayHasBall() != tt.wantAway {
 				t.Errorf("possession %q resolved to home %v / away %v, want %v / %v",
 					tt.possession, state.HomeHasBall(), state.AwayHasBall(), tt.wantHome, tt.wantAway)
@@ -292,6 +292,3 @@ func TestScoreboardLiveStateResolvesPossession(t *testing.T) {
 		})
 	}
 }
-
-func intPtr(v int) *int          { return &v }
-func stringPtr(v string) *string { return &v }

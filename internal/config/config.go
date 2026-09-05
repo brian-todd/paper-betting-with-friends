@@ -206,7 +206,7 @@ func getEnvBool(key string, defaultValue bool) bool {
 // produce an element that matches nothing.
 func getEnvList(key string) []string {
 	var values []string
-	for _, part := range strings.Split(os.Getenv(key), ",") {
+	for part := range strings.SplitSeq(os.Getenv(key), ",") {
 		if trimmed := strings.TrimSpace(part); trimmed != "" {
 			values = append(values, trimmed)
 		}
