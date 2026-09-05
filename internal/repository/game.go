@@ -365,20 +365,42 @@ func (r *GameRepository) Upsert(game *models.Game) error {
 	}).Create(game).Error
 }
 
+// advancesFrom lists the statuses each reported status is allowed to replace.
+//
+// A game only ever moves forward, and the rule is stricter than Upsert's
+// "does not un-finish" because more than finality rides on it: cancelling a bet
+// is gated on the game not being in progress, so letting a status fall back to
+// scheduled would reopen the refund window on a game already being played. Two
+// football feeds write this row and they disagree for minutes at a time, so
+// that is a reachable state rather than a theoretical one.
+//
+// The cost is a game whose kickoff is delayed past the time /games infers it
+// from: the scoreboard correctly reports it as scheduled and this refuses the
+// correction, so the card reads live until it actually is. That is a display
+// wart, and the alternative is refunding bets on a game in progress.
+//
+// A status with no entry -- scheduled, which nothing advances to, and the
+// postponed and cancelled that this feed never reports -- is not written at all.
+var advancesFrom = map[models.GameStatus][]models.GameStatus{
+	models.GameStatusInProgress: {models.GameStatusScheduled},
+	models.GameStatusFinal:      {models.GameStatusScheduled, models.GameStatusInProgress},
+}
+
 // UpdateReportedStatus advances a game's status from a feed that reports one
 // directly, rather than inferring it from the clock.
 //
 // It is a targeted update rather than an Upsert because the scoreboard knows a
 // game's status and nothing else about it -- no week, no venue, no team rows --
 // so writing a whole game row from it would blank the fields it never saw.
-//
-// The same "does not un-finish" rule as Upsert applies, for the same reason:
-// /games reports a completed game before the scoreboard drops it from the
-// current week, and this must not walk that back.
 func (r *GameRepository) UpdateReportedStatus(gameID uuid.UUID, status models.GameStatus, completed bool) error {
+	from, ok := advancesFrom[status]
+	if !ok {
+		return nil
+	}
+
 	return r.db.Model(&models.Game{}).
 		Where("id = ?", gameID).
-		Where("status <> ?", models.GameStatusFinal).
+		Where("status IN ?", from).
 		Updates(map[string]any{
 			"status":     status,
 			"completed":  gorm.Expr("games.completed OR ?", completed),

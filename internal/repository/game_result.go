@@ -50,8 +50,19 @@ func (r *GameResultRepository) Upsert(result *models.GameResult) error {
 	return r.db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "game_id"}},
 		DoUpdates: clause.Assignments(map[string]any{
-			"home_score": gorm.Expr("excluded.home_score"),
-			"away_score": gorm.Expr("excluded.away_score"),
+			// A settled score is not reopened by a provisional one. The
+			// scoreboard reads a side the feed reports as null as zero, which
+			// is right for a game in progress and wrong for one already
+			// finalized -- and EvaluateBetsForGame re-reads this row from the
+			// database, so a score overwritten here is a score bets settle on.
+			// Guarding finalized_at without guarding what it certifies would
+			// only be half the rule.
+			"home_score": gorm.Expr(
+				"CASE WHEN game_results.finalized_at IS NOT NULL AND excluded.finalized_at IS NULL " +
+					"THEN game_results.home_score ELSE excluded.home_score END"),
+			"away_score": gorm.Expr(
+				"CASE WHEN game_results.finalized_at IS NOT NULL AND excluded.finalized_at IS NULL " +
+					"THEN game_results.away_score ELSE excluded.away_score END"),
 			// The quarter breakdown and the excitement index come from /games
 			// and not from the scoreboard, so a scoreboard write reports them
 			// as null. COALESCE keeps the two feeds additive: whichever one has
