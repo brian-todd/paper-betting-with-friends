@@ -1955,6 +1955,10 @@ button.btn {
 .team-display {
     flex: 1;
     max-width: 200px;
+    /* A flex item's automatic minimum is its content, so without this a long
+       team name widens its column past the track and pushes the matchup off
+       the side of the hero rather than wrapping. */
+    min-width: 0;
 }
 
 .team-display.away {
@@ -1963,6 +1967,14 @@ button.btn {
 
 .team-display.home {
     text-align: left;
+}
+
+/* Sized here rather than in a style attribute on the img: an inline style wins
+   over a stylesheet, so the mobile breakpoint below could not shrink it. */
+.team-display .team-logo {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 0.5rem;
 }
 
 .team-abbr-large {
@@ -2864,18 +2876,11 @@ button.btn {
         width: 100%;
     }
 
+    /* Tablet width still has room for the desktop three-column matchup; it
+       just cannot afford the full 3rem gutters. The phone treatment is a
+       separate query below. */
     .matchup-display {
-        flex-direction: column;
         gap: 1.5rem;
-    }
-
-    .team-display {
-        max-width: none;
-        text-align: center !important;
-    }
-
-    .matchup-vs {
-        order: -1;
     }
 
     .odds-display {
@@ -2932,6 +2937,108 @@ button.btn {
     .details-grid {
         grid-template-columns: 1fr;
         gap: 1rem;
+    }
+}
+
+/* The matchup on a phone. It stays two columns -- it is a scoreboard, and the
+   two sides have to be readable against each other. Stacking it was worse than
+   tall: .matchup-display's base `align-items: flex-end` is a *horizontal*
+   alignment once the direction is column, so both teams sat jammed against the
+   right edge under the stretched .matchup-vs, with its absolutely-positioned
+   possession arrow drawn across the middle of them.
+
+   What does move is the kickoff block: it wraps onto its own full-width line
+   below the two teams, which buys each side the width the centre column and
+   the gutters were spending. */
+@media (max-width: 560px) {
+    .game-hero {
+        padding: 1.5rem 1rem;
+    }
+
+    .matchup-display {
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+
+    .team-display {
+        max-width: none;
+    }
+
+    /* Flipped: on the desktop layout the two sides face inward across the "@"
+       that separates them, and with that gone they read as one run of text. */
+    .team-display.away {
+        text-align: left;
+    }
+
+    .team-display.home {
+        text-align: right;
+    }
+
+    .team-display .team-logo {
+        width: 40px;
+        height: 40px;
+    }
+
+    .team-abbr-large,
+    .team-score-large {
+        font-size: 2rem;
+    }
+
+    .team-name-full {
+        font-size: 0.8rem;
+        overflow-wrap: break-word;
+        /* Room for two lines whether or not this name needs them. The columns
+           are bottom-aligned so the scores share a baseline, so a name that
+           wraps on one side only drops that side's logo and abbreviation out
+           of line with the other's -- which at this width is most of them. */
+        min-height: 3.2em;
+    }
+
+    .matchup-vs {
+        /* Full basis to force the wrap, and ordered last so the two teams share
+           the first line -- the source order is away, vs, home. */
+        flex: 0 0 100%;
+        order: 1;
+        align-self: auto;
+    }
+
+    /* The "@" only reads as a separator between two side-by-side columns; on a
+       line of its own it is a stray glyph. Away-listed-first carries the same
+       information here, as it does on every other scoreboard. */
+    .vs-text {
+        display: none;
+    }
+
+    .matchup-vs .possession-arrow {
+        /* In the flow now, and ordered above the kickoff line so it sits
+           directly under the scores it points at. Absolute positioning against
+           a full-width block would drop it on top of the date. */
+        position: static;
+        order: -1;
+        line-height: 1;
+    }
+
+    /* Six 3rem columns and a 1rem indent leave the team column narrower than
+       the word "Team" at this width, and a fixed layout does not grow to fit --
+       the header just runs into Q1. Overtime can still outgrow the narrower
+       columns, so the wrapper scrolls rather than spilling out of the hero. */
+    .linescore {
+        overflow-x: auto;
+    }
+
+    .linescore-table th,
+    .linescore-table td {
+        padding: 0.625rem 0.25rem;
+    }
+
+    .linescore-table th:first-child,
+    .linescore-table td:first-child {
+        padding-left: 0.625rem;
+    }
+
+    .linescore-table th:not(:first-child),
+    .linescore-table td:not(:first-child) {
+        width: 2.25rem;
     }
 }
 
