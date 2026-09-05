@@ -172,21 +172,17 @@ func ownedLeagues(t *testing.T) (owned, joined UserLeague) {
 
 	public := true
 	return UserLeague{
-		League: models.League{
-			ID:       uuid.MustParse("11111111-1111-1111-1111-111111111111"),
-			Name:     "My League",
-			IsPublic: &public,
-			Creator:  models.User{Username: "tester"},
-		},
-		IsOwner: true,
+		ID:       uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		Name:     "My League",
+		IsPublic: &public,
+		Creator:  models.User{Username: "tester"},
+		IsOwner:  true,
 	}, UserLeague{
-		League: models.League{
-			ID:       uuid.MustParse("22222222-2222-2222-2222-222222222222"),
-			Name:     "Someone Elses League",
-			IsPublic: &public,
-			Creator:  models.User{Username: "alice"},
-		},
-		IsOwner: false,
+		ID:       uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		Name:     "Someone Elses League",
+		IsPublic: &public,
+		Creator:  models.User{Username: "alice"},
+		IsOwner:  false,
 	}
 }
 
