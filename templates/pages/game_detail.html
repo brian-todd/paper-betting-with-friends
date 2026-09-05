@@ -28,7 +28,7 @@
             <div class="team-display away">
                 {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 48px; height: 48px; margin-bottom: 8px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
                 {{if .AwayRank}}<span class="team-rank">#{{.AwayRank}}</span>{{end}}
-                <div class="team-abbr-large">{{.Game.AwayTeam.Abbreviation}}{{if and (eq .Game.Status "in_progress") .Game.LiveState.AwayHasBall}} <span class="possession" title="Has possession">🏈</span>{{end}}</div>
+                <div class="team-abbr-large">{{.Game.AwayTeam.Abbreviation}}</div>
                 <div class="team-name-full">{{.Game.AwayTeam.Name}}</div>
                 {{if .Result}}
                 <div class="team-score-large">{{.Result.AwayScore}}</div>
@@ -42,12 +42,23 @@
                     <br>
                     {{localTime .Game.ScheduledAt "time"}}
                 </div>
+                <!-- Drawn only for a game in progress whose feed is reporting
+                     possession, which it does only while a drive is live. There
+                     is no neutral state to render: an arrow that pointed
+                     nowhere would be worse than none. -->
+                {{if eq .Game.Status "in_progress"}}
+                {{if .Game.LiveState.AwayHasBall}}
+                <div class="possession-arrow" aria-label="{{.Game.AwayTeam.Name}} has possession" title="{{.Game.AwayTeam.Name}} has possession">←</div>
+                {{else if .Game.LiveState.HomeHasBall}}
+                <div class="possession-arrow" aria-label="{{.Game.HomeTeam.Name}} has possession" title="{{.Game.HomeTeam.Name}} has possession">→</div>
+                {{end}}
+                {{end}}
             </div>
             
             <div class="team-display home">
                 {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 48px; height: 48px; margin-bottom: 8px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
                 {{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}}
-                <div class="team-abbr-large">{{if and (eq .Game.Status "in_progress") .Game.LiveState.HomeHasBall}}<span class="possession" title="Has possession">🏈</span> {{end}}{{.Game.HomeTeam.Abbreviation}}</div>
+                <div class="team-abbr-large">{{.Game.HomeTeam.Abbreviation}}</div>
                 <div class="team-name-full">{{.Game.HomeTeam.Name}}</div>
                 {{if .Result}}
                 <div class="team-score-large">{{.Result.HomeScore}}</div>
@@ -95,16 +106,6 @@
         {{with .Game.LiveState}}
         {{if .HasLiveDetail}}
         <div class="live-strip" aria-live="polite">
-            <!-- The marker beside a team's abbreviation says which side has the
-                 ball; this says it in words, since a football glyph tucked
-                 against an abbreviation is easy to miss and means nothing to a
-                 screen reader. The feed reports possession only while a drive
-                 is live, so both are absent between them. -->
-            {{if or .HomeHasBall .AwayHasBall}}
-            <div class="live-possession">
-                🏈 {{if .HomeHasBall}}{{$.Game.HomeTeam.Abbreviation}}{{else}}{{$.Game.AwayTeam.Abbreviation}}{{end}} ball
-            </div>
-            {{end}}
             {{with .SituationText}}<div class="live-situation">{{.}}</div>{{end}}
             {{with .LastPlayText}}<div class="live-last-play">{{.}}</div>{{end}}
         </div>

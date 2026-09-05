@@ -1522,13 +1522,6 @@ button.btn {
     font-variant-numeric: tabular-nums;
 }
 
-/* The ball marker sits inline with a team's abbreviation. It is decorative on
-   top of a title, so it stays small enough not to shift the row. */
-.possession {
-    font-size: 0.75em;
-    vertical-align: middle;
-}
-
 /* Down and distance on a card. One line, clipped rather than wrapped, so a
    long situation cannot change the height of one card in the grid. */
 .game-situation {
@@ -1647,6 +1640,31 @@ button.btn {
     font-size: 0.9rem;
     color: var(--color-text-muted);
     font-weight: 500;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.game-at .possession-arrow {
+    position: absolute;
+    bottom: 0;
+    font-size: 1.25rem;
+    /* .team-score's line box: its 1.75rem font at the body's 1.6 line-height.
+       Both boxes are bottom-aligned, so matching the box is what puts the arrow
+       on the digits' centre rather than on their baseline. */
+    line-height: 2.8rem;
+}
+
+/* Points at the side with the ball, and is drawn only when the feed is
+   reporting one. There is deliberately no neutral state: an arrow pointing
+   nowhere reads as a bug, and the feed reports possession only during a live
+   drive, so it comes and goes several times a quarter. */
+.possession-arrow {
+    color: var(--color-primary);
+    font-weight: 700;
+    line-height: 1;
 }
 
 .game-details {
@@ -1858,7 +1876,11 @@ button.btn {
 
 .matchup-display {
     display: flex;
-    align-items: center;
+    /* Bottom-aligned so the two scores share a baseline. Centred, a rank badge
+       on one side and not the other offsets that column and leaves the scores
+       at different heights -- which is both wrong for a scoreboard and leaves
+       the possession arrow, which sits between them, level with neither. */
+    align-items: flex-end;
     justify-content: center;
     gap: 3rem;
 }
@@ -1905,15 +1927,6 @@ button.btn {
     display: flex;
     flex-direction: column;
     gap: 0.375rem;
-}
-
-/* Who has the ball, in words. Sits above the down and distance because it is
-   the thing the marker on the team abbreviation is also saying, and a reader
-   who missed that glyph should find it here first. */
-.live-possession {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--color-text);
 }
 
 .live-situation {
@@ -2018,7 +2031,20 @@ button.btn {
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 0.75rem;
+    /* Stretched so the arrow can reach the scores at the bottom of the two team
+       columns; the "@" and kickoff time stay centred within it. */
+    align-self: stretch;
+    position: relative;
+}
+
+.matchup-vs .possession-arrow {
+    position: absolute;
+    bottom: 0;
+    font-size: 2rem;
+    /* As above: .team-score-large's line box is its 3rem font at 1.6. */
+    line-height: 4.8rem;
 }
 
 .vs-text {
