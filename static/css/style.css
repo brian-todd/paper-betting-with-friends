@@ -1559,18 +1559,30 @@ button.btn {
 .team {
     flex: 1;
     display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
 }
 
 .team.away-team {
     text-align: left;
-    align-items: flex-start; /* Align flex children to the left */
+    justify-content: flex-start;
 }
 
 .team.home-team {
     text-align: right;
-    align-items: flex-end; /* Align flex children to the right */
+    justify-content: flex-end;
+}
+
+/* The team and its score, as one block that shrink-wraps to the team. It exists
+   so the score has something its own width to centre against: as a direct child
+   of .team it could only sit at an edge of the half-card or in the middle of
+   it, and neither lines up with the logo and name it belongs to. */
+.team-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    /* Sized by the team name and never compressed. Letting it shrink to fit the
+       half-card would start ellipsising names that render in full today, which
+       is a worse trade than the occasional long name reaching the card edge. */
+    flex-shrink: 0;
 }
 
 .team-identity {
@@ -1624,16 +1636,11 @@ button.btn {
     font-weight: 700;
     color: var(--color-primary);
     font-family: var(--font-mono);
-    /* The score inherits its team's edge rather than centring itself. .team is a
-       column flex, so align-self works on the horizontal axis and centring put
-       the number in the middle of the half-card while the logo and name stayed
-       pinned to the outside -- a score that visibly belonged to neither team. */
-}
-
-/* A score that is still moving. Distinguished from a final one so a live card
-   does not read as a settled result. */
-.team-score.live {
-    color: var(--color-error);
+    /* Centred under .team-block, which is the team's own width -- not the
+       half-card's. The status badge is what distinguishes a score still moving
+       from a settled one; the colour stays constant so a lead does not change
+       hue when the whistle goes. */
+    text-align: center;
 }
 
 .game-at {
@@ -1887,10 +1894,6 @@ button.btn {
     font-weight: 700;
     color: var(--color-primary);
     font-family: var(--font-mono);
-}
-
-.team-score-large.live {
-    color: var(--color-error);
 }
 
 /* The live strip under the matchup on a game page: what is happening right now,

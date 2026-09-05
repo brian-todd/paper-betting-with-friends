@@ -46,29 +46,33 @@
                 </div>
                 <div class="game-matchup">
                     <div class="team away-team">
-                        <div class="team-identity">
-                            {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
-                            <div class="team-text">
-                                <span class="team-abbr">
-                                    {{if .Game.AwaySeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.AwaySeed}})</span> {{end}}{{.Game.AwayTeam.Abbreviation}}
-                                </span>
-                                <span class="team-name">{{.Game.AwayTeam.Name}}</span>
+                        <div class="team-block">
+                            <div class="team-identity">
+                                {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
+                                <div class="team-text">
+                                    <span class="team-abbr">
+                                        {{if .Game.AwaySeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.AwaySeed}})</span> {{end}}{{.Game.AwayTeam.Abbreviation}}
+                                    </span>
+                                    <span class="team-name">{{.Game.AwayTeam.Name}}</span>
+                                </div>
                             </div>
+                            {{if .Result}}<span class="team-score">{{.Result.AwayScore}}</span>{{end}}
                         </div>
-                        {{if .Result}}<span class="team-score{{if not .Result.IsFinal}} live{{end}}">{{.Result.AwayScore}}</span>{{end}}
                     </div>
                     <div class="game-at">@</div>
                     <div class="team home-team">
-                        <div class="team-identity">
-                            {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
-                            <div class="team-text">
-                                <span class="team-abbr">
-                                    {{if .Game.HomeSeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.HomeSeed}})</span> {{end}}{{.Game.HomeTeam.Abbreviation}}
-                                </span>
-                                <span class="team-name">{{.Game.HomeTeam.Name}}</span>
+                        <div class="team-block">
+                            <div class="team-identity">
+                                {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
+                                <div class="team-text">
+                                    <span class="team-abbr">
+                                        {{if .Game.HomeSeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.HomeSeed}})</span> {{end}}{{.Game.HomeTeam.Abbreviation}}
+                                    </span>
+                                    <span class="team-name">{{.Game.HomeTeam.Name}}</span>
+                                </div>
                             </div>
+                            {{if .Result}}<span class="team-score">{{.Result.HomeScore}}</span>{{end}}
                         </div>
-                        {{if .Result}}<span class="team-score{{if not .Result.IsFinal}} live{{end}}">{{.Result.HomeScore}}</span>{{end}}
                     </div>
                 </div>
 

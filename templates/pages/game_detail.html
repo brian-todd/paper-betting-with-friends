@@ -31,7 +31,7 @@
                 <div class="team-abbr-large">{{.Game.AwayTeam.Abbreviation}}{{if and (eq .Game.Status "in_progress") .Game.LiveState.AwayHasBall}} <span class="possession" title="Has possession">🏈</span>{{end}}</div>
                 <div class="team-name-full">{{.Game.AwayTeam.Name}}</div>
                 {{if .Result}}
-                <div class="team-score-large{{if not .Result.IsFinal}} live{{end}}">{{.Result.AwayScore}}</div>
+                <div class="team-score-large">{{.Result.AwayScore}}</div>
                 {{end}}
             </div>
             
@@ -50,7 +50,7 @@
                 <div class="team-abbr-large">{{.Game.HomeTeam.Abbreviation}}{{if and (eq .Game.Status "in_progress") .Game.LiveState.HomeHasBall}} <span class="possession" title="Has possession">🏈</span>{{end}}</div>
                 <div class="team-name-full">{{.Game.HomeTeam.Name}}</div>
                 {{if .Result}}
-                <div class="team-score-large{{if not .Result.IsFinal}} live{{end}}">{{.Result.HomeScore}}</div>
+                <div class="team-score-large">{{.Result.HomeScore}}</div>
                 {{end}}
             </div>
         </div>
