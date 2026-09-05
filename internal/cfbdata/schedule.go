@@ -38,6 +38,26 @@ const (
 	minDelay = time.Minute
 )
 
+// Scoreboard cadence.
+//
+// The scoreboard is the live feed — the clock, the period, the score as it
+// moves — so it is polled far harder than games and lines, which exist to pick
+// up a schedule change and a line move. One call per division per run is what
+// makes even the fast rate affordable: five minutes around the clock is ~8,600
+// requests a month against an allowance of 30,000, with every other sync
+// spending well under 6,000 between them.
+//
+// Out of season it drops to a pulse. Nothing is played between the last bowl
+// and next August, and the endpoint costs the same to ask.
+const (
+	// scoreboardInterval is the in-season rate.
+	scoreboardInterval = 5 * time.Minute
+
+	// scoreboardOffseasonInterval applies when no week of the calendar contains
+	// today, so nothing is being played and nothing can be.
+	scoreboardOffseasonInterval = time.Hour
+)
+
 // NextSync returns the next instant the football sync should run after now.
 //
 // Runs sit on a wall-clock grid measured from midnight rather than from
@@ -56,12 +76,45 @@ func NextSync(now time.Time, loc *time.Location) time.Time {
 	}
 
 	t := now.In(loc)
-	step := int(intervalAt(t) / time.Minute)
+	return nextOnGrid(t, loc, intervalAt(t))
+}
 
-	// Advance to the next multiple of step since midnight. Every point where the
-	// cadence changes — midnight, 2am, 6am — is a whole hour, and so is already
-	// on the grid of every interval below, which is what keeps this single step
-	// from jumping over a transition.
+// NextScoreboardSync returns the next instant the live scoreboard sync should
+// run after now.
+//
+// inSeason is whether the week calendar places now inside a season. The caller
+// resolves it, because answering it means reading the database and the schedule
+// arithmetic here stays testable without one.
+func NextScoreboardSync(now time.Time, loc *time.Location, inSeason bool) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	interval := scoreboardOffseasonInterval
+	if inSeason {
+		interval = scoreboardInterval
+	}
+	return nextOnGrid(now.In(loc), loc, interval)
+}
+
+// ScoreboardDelay returns how long to wait after now before the next scoreboard
+// sync.
+func ScoreboardDelay(now time.Time, loc *time.Location, inSeason bool) time.Duration {
+	if delay := NextScoreboardSync(now, loc, inSeason).Sub(now); delay > minDelay {
+		return delay
+	}
+	return minDelay
+}
+
+// nextOnGrid advances t, which is already expressed in loc, to the next
+// multiple of interval since midnight.
+//
+// Every point where a cadence changes — midnight, 2am, 6am — is a whole hour,
+// and so is already on the grid of every interval used here, which is what
+// keeps this single step from jumping over a transition.
+func nextOnGrid(t time.Time, loc *time.Location, interval time.Duration) time.Time {
+	step := int(interval / time.Minute)
+
 	minutes := t.Hour()*60 + t.Minute()
 	next := (minutes/step + 1) * step
 

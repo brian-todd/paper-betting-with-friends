@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -134,4 +135,19 @@ func (c *Client) GetLines(ctx context.Context, year int, week *int, seasonType *
 		return nil, fmt.Errorf("fetching lines: %w", err)
 	}
 	return lines, nil
+}
+
+// GetScoreboard retrieves the current week's games with their live state.
+//
+// classification selects the division, and is required rather than optional
+// because the endpoint defaults to FBS and silently returns nothing else --
+// a caller that wants FCS scores and does not ask for them gets a successful,
+// empty-looking sync.
+func (c *Client) GetScoreboard(ctx context.Context, classification string) ([]APIScoreboardGame, error) {
+	var games []APIScoreboardGame
+	path := "/scoreboard?classification=" + url.QueryEscape(classification)
+	if err := c.doRequest(ctx, path, &games); err != nil {
+		return nil, fmt.Errorf("fetching scoreboard for %s: %w", classification, err)
+	}
+	return games, nil
 }

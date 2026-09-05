@@ -234,7 +234,11 @@
             <div class="game-card">
                 <div class="game-status {{.Game.Status}}">
                     {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
-                    {{if eq .Game.Status "in_progress"}}Live{{end}}
+                    <!-- A live game shows the clock rather than the word, since
+                         the clock says "live" and more. The scoreboard is the
+                         only feed that reports it, so games outside its
+                         divisions fall back to the plain label. -->
+                    {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel}}{{.}}{{else}}Live{{end}}{{end}}
                     {{if eq .Game.Status "final"}}Final{{end}}
                     {{if eq .Game.Status "postponed"}}Postponed{{end}}
                     {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
@@ -242,28 +246,45 @@
                 {{if .BetSummary}}<span class="badge badge-user-bet" title="Your bet: {{.BetSummary}}">{{.BetSummary}}</span>{{end}}
                 <div class="game-matchup">
                     <div class="team away-team">
-                        <div class="team-identity">
-                            {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
-                            <div class="team-text">
-                                <span class="team-abbr">{{if .AwayRank}}<span class="team-rank">#{{.AwayRank}}</span>{{end}} {{.Game.AwayTeam.Abbreviation}}</span>
-                                <span class="team-name">{{.Game.AwayTeam.Name}}</span>
+                        <div class="team-block">
+                            <div class="team-identity">
+                                {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
+                                <div class="team-text">
+                                    <span class="team-abbr">{{if .AwayRank}}<span class="team-rank">#{{.AwayRank}}</span>{{end}} {{.Game.AwayTeam.Abbreviation}}</span>
+                                    <span class="team-name">{{.Game.AwayTeam.Name}}</span>
+                                </div>
                             </div>
+                            {{if .Result}}<span class="team-score">{{.Result.AwayScore}}</span>{{end}}
                         </div>
-                        {{if .Result}}<span class="team-score{{if not .Result.IsFinal}} live{{end}}">{{.Result.AwayScore}}</span>{{end}}
                     </div>
-                    <div class="game-at">@</div>
+                    <div class="game-at">
+                        @
+                        {{if eq .Game.Status "in_progress"}}
+                        {{if .Game.LiveState.AwayHasBall}}
+                        <span class="possession-arrow" aria-label="{{.Game.AwayTeam.Name}} has possession" title="{{.Game.AwayTeam.Name}} has possession">◄</span>
+                        {{else if .Game.LiveState.HomeHasBall}}
+                        <span class="possession-arrow" aria-label="{{.Game.HomeTeam.Name}} has possession" title="{{.Game.HomeTeam.Name}} has possession">►</span>
+                        {{end}}
+                        {{end}}
+                    </div>
                     <div class="team home-team">
-                        <div class="team-identity">
-                            {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
-                            <div class="team-text">
-                                <span class="team-abbr">{{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}} {{.Game.HomeTeam.Abbreviation}}</span>
-                                <span class="team-name">{{.Game.HomeTeam.Name}}</span>
+                        <div class="team-block">
+                            <div class="team-identity">
+                                {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
+                                <div class="team-text">
+                                    <span class="team-abbr">{{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}} {{.Game.HomeTeam.Abbreviation}}</span>
+                                    <span class="team-name">{{.Game.HomeTeam.Name}}</span>
+                                </div>
                             </div>
+                            {{if .Result}}<span class="team-score">{{.Result.HomeScore}}</span>{{end}}
                         </div>
-                        {{if .Result}}<span class="team-score{{if not .Result.IsFinal}} live{{end}}">{{.Result.HomeScore}}</span>{{end}}
                     </div>
                 </div>
-                
+
+                {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.SituationText}}
+                <div class="game-situation">{{.}}</div>
+                {{end}}{{end}}
+
                 {{if or .Spread .OverUnder .MoneyLine}}
                 <!-- Books stop moving a line once the game kicks off, so what is
                      stored for a started game is where it closed. Say so rather
@@ -338,6 +359,7 @@
                     <div class="game-venue">
                         {{.Game.Venue.Name}}
                     </div>
+                    {{with .Game.LiveState.Broadcast}}<div class="game-broadcast">📺 {{.}}</div>{{end}}
                 </div>
             </div>
         </a>

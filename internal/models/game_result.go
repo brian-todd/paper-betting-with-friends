@@ -64,6 +64,55 @@ func (r *GameResult) IsFinal() bool {
 	return r != nil && r.FinalizedAt != nil
 }
 
+// PeriodScore is one column of the line score: what each side scored in one
+// period. A side with no entry for the period is nil rather than zero -- the
+// feed reports quarters as they are played, so the fourth column of a game in
+// the third quarter is unplayed, not scoreless.
+type PeriodScore struct {
+	Label string
+	Home  *int
+	Away  *int
+}
+
+// PeriodScores is the line score as columns, ready to render.
+//
+// sport decides both how many periods regulation has and what they are called,
+// so a basketball game reports two halves rather than the four quarters it
+// would otherwise be given -- with its own half scores filed under "Q1" and
+// "Q2" and two empty quarters after them.
+//
+// Regulation is always present, filled with nils where the feed has reported
+// nothing yet, so the table keeps its shape as a game is played rather than
+// growing a column every period. Overtime extends it one column at a time,
+// since there is no fixed number of those.
+//
+// It returns nil only for a nil receiver -- a game with no result row at all,
+// which has not kicked off.
+//
+// The two sides are zipped rather than assumed to be the same length. They
+// always have been, but they arrive as two independent arrays from an upstream
+// nobody here controls, and indexing one by the other's length is how that
+// assumption turns into a panic on a page.
+func (r *GameResult) PeriodScores(sport string) []PeriodScore {
+	if r == nil {
+		return nil
+	}
+
+	periods := max(regulationPeriods(sport), len(r.HomeLineScores), len(r.AwayLineScores))
+
+	scores := make([]PeriodScore, periods)
+	for i := range scores {
+		scores[i] = PeriodScore{Label: periodLabel(sport, i+1)}
+		if i < len(r.HomeLineScores) {
+			scores[i].Home = &r.HomeLineScores[i]
+		}
+		if i < len(r.AwayLineScores) {
+			scores[i].Away = &r.AwayLineScores[i]
+		}
+	}
+	return scores
+}
+
 // BeforeCreate sets the UUID before creating a new game result.
 func (r *GameResult) BeforeCreate(tx *gorm.DB) error {
 	if r.ID == uuid.Nil {

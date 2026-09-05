@@ -15,7 +15,9 @@
     <div class="game-hero">
         <div class="game-status-badge {{.Game.Status}}">
             {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
-            {{if eq .Game.Status "in_progress"}}Live{{end}}
+            <!-- The clock stands in for the word "Live" when the scoreboard has
+                 one, which it does for every division that sync covers. -->
+            {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel}}{{.}}{{else}}Live{{end}}{{end}}
             {{if eq .Game.Status "final"}}Final{{end}}
             {{if eq .Game.Status "postponed"}}Postponed{{end}}
             {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
@@ -29,7 +31,7 @@
                 <div class="team-abbr-large">{{.Game.AwayTeam.Abbreviation}}</div>
                 <div class="team-name-full">{{.Game.AwayTeam.Name}}</div>
                 {{if .Result}}
-                <div class="team-score-large{{if not .Result.IsFinal}} live{{end}}">{{.Result.AwayScore}}</div>
+                <div class="team-score-large">{{.Result.AwayScore}}</div>
                 {{end}}
             </div>
             
@@ -40,6 +42,17 @@
                     <br>
                     {{localTime .Game.ScheduledAt "time"}}
                 </div>
+                <!-- Drawn only for a game in progress whose feed is reporting
+                     possession, which it does only while a drive is live. There
+                     is no neutral state to render: an arrow that pointed
+                     nowhere would be worse than none. -->
+                {{if eq .Game.Status "in_progress"}}
+                {{if .Game.LiveState.AwayHasBall}}
+                <div class="possession-arrow" aria-label="{{.Game.AwayTeam.Name}} has possession" title="{{.Game.AwayTeam.Name}} has possession">◄</div>
+                {{else if .Game.LiveState.HomeHasBall}}
+                <div class="possession-arrow" aria-label="{{.Game.HomeTeam.Name}} has possession" title="{{.Game.HomeTeam.Name}} has possession">►</div>
+                {{end}}
+                {{end}}
             </div>
             
             <div class="team-display home">
@@ -48,10 +61,55 @@
                 <div class="team-abbr-large">{{.Game.HomeTeam.Abbreviation}}</div>
                 <div class="team-name-full">{{.Game.HomeTeam.Name}}</div>
                 {{if .Result}}
-                <div class="team-score-large{{if not .Result.IsFinal}} live{{end}}">{{.Result.HomeScore}}</div>
+                <div class="team-score-large">{{.Result.HomeScore}}</div>
                 {{end}}
             </div>
         </div>
+
+        <!-- Scoring by period. The feed fills these in as the quarters are played,
+             so this is drawn for a game in progress as readily as a finished one --
+             which is why an unplayed period shows a dash rather than a zero. -->
+        {{with .Result}}
+        {{$periods := .PeriodScores $.Game.Sport}}
+        <div class="linescore">
+            <table class="linescore-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Team</th>
+                        {{range $periods}}<th scope="col">{{.Label}}</th>{{end}}
+                        <th scope="col" class="linescore-total">T</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th scope="row">{{$.Game.AwayTeam.Abbreviation}}</th>
+                        {{range $periods}}<td>{{if .Away}}{{.Away}}{{else}}<span class="no-data">—</span>{{end}}</td>{{end}}
+                        <td class="linescore-total">{{.AwayScore}}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">{{$.Game.HomeTeam.Abbreviation}}</th>
+                        {{range $periods}}<td>{{if .Home}}{{.Home}}{{else}}<span class="no-data">—</span>{{end}}</td>{{end}}
+                        <td class="linescore-total">{{.HomeScore}}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        {{end}}
+
+        <!-- The live strip. Everything in it comes from the scoreboard feed and
+             is left in place once a game ends, so it is drawn only while the
+             game is running -- a finished game showing "3rd & 7" would read as
+             a page that had stopped updating. -->
+        {{if eq .Game.Status "in_progress"}}
+        {{with .Game.LiveState}}
+        {{if .HasLiveDetail}}
+        <div class="live-strip" aria-live="polite">
+            {{with .SituationText}}<div class="live-situation">{{.}}</div>{{end}}
+            {{with .LastPlayText}}<div class="live-last-play">{{.}}</div>{{end}}
+        </div>
+        {{end}}
+        {{end}}
+        {{end}}
     </div>
 
     <div class="game-info-section">
@@ -69,6 +127,18 @@
                 {{if .Game.NeutralSite}}
                 <dt>Site</dt>
                 <dd>Neutral Site</dd>
+                {{end}}
+                {{with .Game.LiveState.Broadcast}}
+                <dt>TV</dt>
+                <dd>{{.}}</dd>
+                {{end}}
+                {{with .Game.LiveState.WeatherText}}
+                <dt>Weather</dt>
+                <dd>{{.}}</dd>
+                {{end}}
+                {{with .Game.LiveState.WindText}}
+                <dt>Wind</dt>
+                <dd>{{.}}</dd>
                 {{end}}
             </dl>
         </div>

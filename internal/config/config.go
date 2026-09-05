@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -42,6 +43,17 @@ type Config struct {
 	CFBDataAPIKey       string // API key for collegefootballdata.com.
 	CBBDataAPIKey       string // API key for collegebasketballdata.com.
 	CBBSyncIntervalMins int    // How often to sync basketball games/lines in minutes.
+
+	// CFBScoreboardClassifications is the divisions the live scoreboard sync
+	// polls. The endpoint takes one division per call, so each entry is another
+	// request every five minutes -- roughly 8,600 a month against an allowance
+	// of 30,000 -- which is why adding one is a deliberate act rather than a
+	// default.
+	//
+	// Empty means the sync's own default, which is FBS alone. The default lives
+	// there rather than here so this package stays free of any knowledge of
+	// what the feed divides the sport into.
+	CFBScoreboardClassifications []string
 
 	// DBMaxOpenConns caps the connection pool. It belongs in configuration
 	// rather than a constant because the safe value is a property of the
@@ -87,11 +99,14 @@ func Load() *Config {
 		CFBDataAPIKey:       getEnv("CFB_DATA_API_KEY", ""),
 		CBBDataAPIKey:       getEnv("CBB_DATA_API_KEY", ""),
 		CBBSyncIntervalMins: getEnvInt("CBB_SYNC_INTERVAL_MINS", 15),
-		DBMaxOpenConns:      getEnvInt("DB_MAX_OPEN_CONNS", 20),
-		AdminUsername:       getEnv("ADMIN_USERNAME", "cfb-pbwf-admin"),
-		AdminPassword:       getEnv("ADMIN_PASSWORD", ""),
-		MigrateOnStart:      getEnvBool("MIGRATE_ON_START", true),
-		TimeZone:            getEnv("APP_TIMEZONE", "America/New_York"),
+
+		CFBScoreboardClassifications: getEnvList("CFB_SCOREBOARD_CLASSIFICATIONS"),
+
+		DBMaxOpenConns: getEnvInt("DB_MAX_OPEN_CONNS", 20),
+		AdminUsername:  getEnv("ADMIN_USERNAME", "cfb-pbwf-admin"),
+		AdminPassword:  getEnv("ADMIN_PASSWORD", ""),
+		MigrateOnStart: getEnvBool("MIGRATE_ON_START", true),
+		TimeZone:       getEnv("APP_TIMEZONE", "America/New_York"),
 	}
 }
 
@@ -184,6 +199,19 @@ func getEnvBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+// getEnvList retrieves an environment variable as a comma-separated list.
+// Blank entries are dropped, so a trailing comma or a stray space cannot
+// produce an element that matches nothing.
+func getEnvList(key string) []string {
+	var values []string
+	for part := range strings.SplitSeq(os.Getenv(key), ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }
 
 // getEnvInt retrieves an environment variable as an integer or returns a default value.

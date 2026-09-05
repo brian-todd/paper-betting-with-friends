@@ -212,3 +212,127 @@ func TestSyncCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		}
 	}
 }
+
+func TestNextScoreboardSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	at := func(day, hour, minute int) time.Time {
+		return time.Date(2026, time.September, day, hour, minute, 0, 0, eastern)
+	}
+
+	tests := []struct {
+		name     string
+		now      time.Time
+		inSeason bool
+		want     time.Time
+	}{
+		// In season the rate is flat: five minutes, day and night, because that
+		// is what makes a live score on the page a live score.
+		{"saturday afternoon", at(5, 15, 31), true, at(5, 15, 35)},
+		{"saturday 3am", at(5, 3, 2), true, at(5, 3, 5)},
+		{"tuesday morning", at(8, 9, 0), true, at(8, 9, 5)},
+		{"lands on the grid, not on the offset", at(5, 15, 33), true, at(5, 15, 35)},
+
+		// Out of season it is an hourly pulse. Nothing is played between the
+		// last bowl and next August.
+		{"july afternoon", at(5, 15, 31), false, at(5, 16, 0)},
+		{"july on the hour", at(5, 16, 0), false, at(5, 17, 0)},
+
+		// Midnight rolls into the next day rather than overflowing the minute.
+		{"rolls past midnight", at(5, 23, 58), true, at(6, 0, 0)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextScoreboardSync(tt.now, eastern, tt.inSeason); !got.Equal(tt.want) {
+				t.Errorf("NextScoreboardSync(%v, inSeason=%v) = %v, want %v", tt.now, tt.inSeason, got, tt.want)
+			}
+		})
+	}
+}
+
+// The scoreboard grid has to stay on the wall clock across both DST
+// transitions. Falling back replays an hour of readings, and the naive next
+// grid point during the second pass is in the past -- which the scheduler would
+// read as a negative delay and poll flat out until the hour cleared.
+func TestScoreboardDelayIsAlwaysPositiveAcrossDST(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	// Spring forward 2026-03-08, fall back 2026-11-01. A whole day either side
+	// of each, stepped a minute at a time.
+	for _, start := range []time.Time{
+		time.Date(2026, time.March, 7, 0, 0, 0, 0, eastern),
+		time.Date(2026, time.November, 1, 0, 0, 0, 0, eastern),
+	} {
+		for offset := range 48 * 60 {
+			now := start.Add(time.Duration(offset) * time.Minute)
+			for _, inSeason := range []bool{true, false} {
+				delay := ScoreboardDelay(now, eastern, inSeason)
+				if delay <= 0 {
+					t.Fatalf("ScoreboardDelay(%v, inSeason=%v) = %v, want positive", now, inSeason, delay)
+				}
+				// The grid is wall-clock, so the step across the repeated hour
+				// on the fall-back day is genuinely an hour longer in absolute
+				// time. That is the intended behaviour; what is being checked
+				// is that it stops there rather than skipping a whole cycle.
+				if delay > scoreboardOffseasonInterval+time.Hour {
+					t.Fatalf("ScoreboardDelay(%v, inSeason=%v) = %v, longer than a cadence stretched by the DST fall-back", now, inSeason, delay)
+				}
+			}
+		}
+	}
+}
+
+// The whole football sync now spends against a 30,000-request monthly
+// allowance, and the scoreboard is most of it: a five-minute cadence is ~8,600
+// calls per division. This walks real months at the real schedules so that
+// raising a rate, or adding a division, cannot quietly overrun the plan.
+//
+// The cap leaves ~6,000 under the allowance for the calendar job (~800 a month,
+// since each run walks every season since 2002), the rankings job (~120) and
+// the occasional manual seed, none of which are on a fast cadence.
+func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
+	const (
+		gamesAndLinesCallsPerRun = 2
+		monthlyCallsCap          = 24000
+
+		// The budget is checked at the widest division list an operator is
+		// likely to configure, not at the FBS-only default -- the default
+		// staying affordable says nothing about whether the knob is safe.
+		scoreboardDivisions = 2
+	)
+
+	eastern := mustLoad(t, "America/New_York")
+
+	countRuns := func(start, end time.Time, next func(time.Time) time.Time) int {
+		runs := 0
+		for now := start; ; runs++ {
+			now = next(now)
+			if !now.Before(end) {
+				return runs
+			}
+		}
+	}
+
+	for year := 2026; year <= 2027; year++ {
+		for month := time.January; month <= time.December; month++ {
+			start := time.Date(year, month, 1, 0, 0, 0, 0, eastern)
+			end := start.AddDate(0, 1, 0)
+
+			// In season the whole month through, which is the worst case: the
+			// offseason rate is twelve times cheaper.
+			scoreboardRuns := countRuns(start, end, func(now time.Time) time.Time {
+				return NextScoreboardSync(now, eastern, true)
+			})
+			syncRuns := countRuns(start, end, func(now time.Time) time.Time {
+				return NextSync(now, eastern)
+			})
+
+			calls := scoreboardRuns*scoreboardDivisions + syncRuns*gamesAndLinesCallsPerRun
+			if calls > monthlyCallsCap {
+				t.Errorf("%d-%02d: %d scoreboard runs and %d games runs = %d calls, over the %d budget",
+					year, month, scoreboardRuns, syncRuns, calls, monthlyCallsCap)
+			}
+		}
+	}
+}
