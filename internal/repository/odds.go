@@ -7,6 +7,25 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// nonCustomSource restates the predicate of the partial unique indexes on
+// (game_id, source), which an ON CONFLICT has to name verbatim to use one as
+// its arbiter.
+//
+// The source has to be written into the SQL as a literal rather than bound as a
+// parameter. Postgres picks the arbiter index while planning, by proving the
+// index's predicate from this one, and gorm prepares and reuses these
+// statements: the first few executions get a custom plan where the parameter is
+// folded to a constant and the proof holds, then the statement flips to a
+// generic plan where `source <> $n` proves nothing about `source <> 'custom'`
+// and every later upsert fails with "there is no unique or exclusion constraint
+// matching the ON CONFLICT specification". A sync would write five rows and
+// error on the rest of the slate.
+func nonCustomSource() clause.Where {
+	return clause.Where{Exprs: []clause.Expression{
+		clause.Expr{SQL: `"source" <> '` + string(models.OddsSourceCustom) + `'`},
+	}}
+}
+
 // MoneyLineOddsRepository provides methods for interacting with money line odds.
 type MoneyLineOddsRepository struct {
 	db *gorm.DB
@@ -109,10 +128,8 @@ func (r *MoneyLineOddsRepository) Upsert(odds *models.MoneyLineOdds) error {
 		// The unique index on (game_id, source) excludes custom lines, which are
 		// written per bet and may repeat. A partial index only serves as an
 		// arbiter for an ON CONFLICT that names the same predicate.
-		TargetWhere: clause.Where{Exprs: []clause.Expression{
-			clause.Neq{Column: "source", Value: string(models.OddsSourceCustom)},
-		}},
-		DoUpdates: clause.AssignmentColumns([]string{"home_odds", "away_odds", "updated_at"}),
+		TargetWhere: nonCustomSource(),
+		DoUpdates:   clause.AssignmentColumns([]string{"home_odds", "away_odds", "updated_at"}),
 	}).Create(odds).Error
 }
 
@@ -218,10 +235,8 @@ func (r *SpreadOddsRepository) Upsert(odds *models.SpreadOdds) error {
 		// The unique index on (game_id, source) excludes custom lines, which are
 		// written per bet and may repeat. A partial index only serves as an
 		// arbiter for an ON CONFLICT that names the same predicate.
-		TargetWhere: clause.Where{Exprs: []clause.Expression{
-			clause.Neq{Column: "source", Value: string(models.OddsSourceCustom)},
-		}},
-		DoUpdates: clause.AssignmentColumns([]string{"home_spread", "away_spread", "home_odds", "away_odds", "updated_at"}),
+		TargetWhere: nonCustomSource(),
+		DoUpdates:   clause.AssignmentColumns([]string{"home_spread", "away_spread", "home_odds", "away_odds", "updated_at"}),
 	}).Create(odds).Error
 }
 
@@ -327,9 +342,7 @@ func (r *OverUnderOddsRepository) Upsert(odds *models.OverUnderOdds) error {
 		// The unique index on (game_id, source) excludes custom lines, which are
 		// written per bet and may repeat. A partial index only serves as an
 		// arbiter for an ON CONFLICT that names the same predicate.
-		TargetWhere: clause.Where{Exprs: []clause.Expression{
-			clause.Neq{Column: "source", Value: string(models.OddsSourceCustom)},
-		}},
-		DoUpdates: clause.AssignmentColumns([]string{"total", "over_odds", "under_odds", "updated_at"}),
+		TargetWhere: nonCustomSource(),
+		DoUpdates:   clause.AssignmentColumns([]string{"total", "over_odds", "under_odds", "updated_at"}),
 	}).Create(odds).Error
 }

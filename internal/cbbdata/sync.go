@@ -2,6 +2,7 @@ package cbbdata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
+	"github.com/brian/paper-betting-with-friends/internal/syncerr"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -90,6 +92,14 @@ func (s *SyncService) SeedAll(ctx context.Context, season int) error {
 		time.Date(season, time.April, 1, 0, 0, 0, 0, time.UTC),
 	}
 
+	// A month whose lines would not all save should not cost the seed the five
+	// months after it -- the games are still there to fetch. The failure is
+	// still the seed's outcome, so the first one is held and returned at the
+	// end; anything that is not a partial write is the API or the database
+	// being unavailable, and there is no point walking the rest of the season
+	// through that.
+	var incomplete error
+
 	for i, start := range months {
 		var end time.Time
 		if i+1 < len(months) {
@@ -107,12 +117,18 @@ func (s *SyncService) SeedAll(ctx context.Context, season int) error {
 		}
 
 		if err := s.syncLines(ctx, LineQueryOpts{Season: &season, StartDateRange: &startStr, EndDateRange: &endStr}); err != nil {
-			return fmt.Errorf("syncing lines for %s: %w", start.Format("Jan 2006"), err)
+			err = fmt.Errorf("syncing lines for %s: %w", start.Format("Jan 2006"), err)
+			if !errors.Is(err, syncerr.ErrIncomplete) {
+				return err
+			}
+			if incomplete == nil {
+				incomplete = err
+			}
 		}
 	}
 
 	s.logger.Info("full seed completed for season", "season", season)
-	return nil
+	return incomplete
 }
 
 // SyncGamesAndLines performs an incremental sync of games and lines for a date window.
@@ -390,6 +406,10 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 	}
 
 	syncedCount := 0
+	// One line that will not save is not a reason to drop the rest of the
+	// slate, but the run has to end up reporting it -- see syncerr.
+	var failed syncerr.Tally
+
 	for _, l := range lines {
 		// Look up game by external ID.
 		game, err := s.gameRepo.FindByExternalID(int64(l.GameID), models.SportBasketball)
@@ -412,7 +432,8 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 					AwayOdds: decimal.NewFromFloat(*line.AwayMoneyline),
 				}
 				if err := s.moneyLineOddsRepo.Upsert(mlOdds); err != nil {
-					s.logger.Error("failed to upsert money line odds", "error", err)
+					s.logger.Error("failed to upsert money line odds", "game", l.GameID, "source", source, "error", err)
+					failed.Add(err)
 				}
 			}
 
@@ -431,7 +452,8 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 					AwayOdds:   decimal.NewFromInt(-110),
 				}
 				if err := s.spreadOddsRepo.Upsert(spreadOdds); err != nil {
-					s.logger.Error("failed to upsert spread odds", "error", err)
+					s.logger.Error("failed to upsert spread odds", "game", l.GameID, "source", source, "error", err)
+					failed.Add(err)
 				}
 			}
 
@@ -445,7 +467,8 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 					UnderOdds: decimal.NewFromInt(-110),
 				}
 				if err := s.overUnderOddsRepo.Upsert(ouOdds); err != nil {
-					s.logger.Error("failed to upsert over/under odds", "error", err)
+					s.logger.Error("failed to upsert over/under odds", "game", l.GameID, "source", source, "error", err)
+					failed.Add(err)
 				}
 			}
 		}
@@ -453,8 +476,8 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 		syncedCount++
 	}
 
-	s.logger.Info("synced lines for games", "for", syncedCount)
-	return nil
+	s.logger.Info("synced lines for games", "for", syncedCount, "failed_writes", failed.Count())
+	return failed.Err("odds")
 }
 
 // gameResultFrom builds the score row for a game the provider has reported
