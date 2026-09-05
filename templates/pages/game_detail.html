@@ -71,7 +71,6 @@
              which is why an unplayed period shows a dash rather than a zero. -->
         {{with .Result}}
         {{$periods := .PeriodScores}}
-        {{if $periods}}
         <div class="linescore">
             <table class="linescore-table">
                 <thead>
@@ -95,7 +94,6 @@
                 </tbody>
             </table>
         </div>
-        {{end}}
         {{end}}
 
         <!-- The live strip. Everything in it comes from the scoreboard feed and

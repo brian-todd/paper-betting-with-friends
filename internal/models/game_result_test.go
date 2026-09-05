@@ -137,8 +137,34 @@ func TestGameResultPeriodScores(t *testing.T) {
 			result: nil,
 		},
 		{
-			name:   "no line scores",
-			result: &GameResult{HomeScore: 10, AwayScore: 7},
+			// The four quarters are always drawn, so the table does not change
+			// shape as a game is played. A period the feed has said nothing
+			// about is a dash, which is not the same as a scoreless one.
+			name:       "no line scores",
+			result:     &GameResult{HomeScore: 10, AwayScore: 7},
+			wantLabels: []string{"Q1", "Q2", "Q3", "Q4"},
+			wantHome:   []string{"-", "-", "-", "-"},
+			wantAway:   []string{"-", "-", "-", "-"},
+		},
+		{
+			name: "first quarter only",
+			result: &GameResult{
+				HomeLineScores: IntSlice{7},
+				AwayLineScores: IntSlice{0},
+			},
+			wantLabels: []string{"Q1", "Q2", "Q3", "Q4"},
+			wantHome:   []string{"7", "-", "-", "-"},
+			wantAway:   []string{"0", "-", "-", "-"},
+		},
+		{
+			name: "single overtime adds one column",
+			result: &GameResult{
+				HomeLineScores: IntSlice{7, 7, 7, 7, 3},
+				AwayLineScores: IntSlice{7, 7, 7, 7, 0},
+			},
+			wantLabels: []string{"Q1", "Q2", "Q3", "Q4", "OT"},
+			wantHome:   []string{"7", "7", "7", "7", "3"},
+			wantAway:   []string{"7", "7", "7", "7", "0"},
 		},
 		{
 			name: "regulation",
@@ -171,16 +197,16 @@ func TestGameResultPeriodScores(t *testing.T) {
 				HomeLineScores: IntSlice{7, 3, 10},
 				AwayLineScores: IntSlice{0},
 			},
-			wantLabels: []string{"Q1", "Q2", "Q3"},
-			wantHome:   []string{"7", "3", "10"},
-			wantAway:   []string{"0", "-", "-"},
+			wantLabels: []string{"Q1", "Q2", "Q3", "Q4"},
+			wantHome:   []string{"7", "3", "10", "-"},
+			wantAway:   []string{"0", "-", "-", "-"},
 		},
 		{
 			name:       "only one side reported",
 			result:     &GameResult{AwayLineScores: IntSlice{0, 7}},
-			wantLabels: []string{"Q1", "Q2"},
-			wantHome:   []string{"-", "-"},
-			wantAway:   []string{"0", "7"},
+			wantLabels: []string{"Q1", "Q2", "Q3", "Q4"},
+			wantHome:   []string{"-", "-", "-", "-"},
+			wantAway:   []string{"0", "7", "-", "-"},
 		},
 	}
 

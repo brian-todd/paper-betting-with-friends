@@ -76,9 +76,13 @@ type PeriodScore struct {
 
 // PeriodScores is the line score as columns, ready to render.
 //
-// It returns nil when neither side has a breakdown, which is every game before
-// kickoff and every game from a feed that does not report one -- the caller
-// draws no table at all rather than an empty one.
+// The four quarters are always present, filled with nils where the feed has
+// reported nothing yet, so the table keeps its shape as a game is played rather
+// than growing a column every quarter. Overtime extends it one column at a
+// time, since there is no fixed number of those.
+//
+// It returns nil only for a nil receiver -- a game with no result row at all,
+// which has not kicked off.
 //
 // The two sides are zipped rather than assumed to be the same length. They
 // always have been, but they arrive as two independent arrays from an upstream
@@ -89,10 +93,7 @@ func (r *GameResult) PeriodScores() []PeriodScore {
 		return nil
 	}
 
-	periods := max(len(r.HomeLineScores), len(r.AwayLineScores))
-	if periods == 0 {
-		return nil
-	}
+	periods := max(regulationPeriods, len(r.HomeLineScores), len(r.AwayLineScores))
 
 	scores := make([]PeriodScore, periods)
 	for i := range scores {
