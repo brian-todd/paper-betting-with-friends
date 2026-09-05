@@ -15,7 +15,9 @@
     <div class="game-hero">
         <div class="game-status-badge {{.Game.Status}}">
             {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
-            {{if eq .Game.Status "in_progress"}}Live{{end}}
+            <!-- The clock stands in for the word "Live" when the scoreboard has
+                 one, which it does for every division that sync covers. -->
+            {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel}}{{.}}{{else}}Live{{end}}{{end}}
             {{if eq .Game.Status "final"}}Final{{end}}
             {{if eq .Game.Status "postponed"}}Postponed{{end}}
             {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
@@ -26,7 +28,7 @@
             <div class="team-display away">
                 {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 48px; height: 48px; margin-bottom: 8px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
                 {{if .AwayRank}}<span class="team-rank">#{{.AwayRank}}</span>{{end}}
-                <div class="team-abbr-large">{{.Game.AwayTeam.Abbreviation}}</div>
+                <div class="team-abbr-large">{{.Game.AwayTeam.Abbreviation}}{{if and (eq .Game.Status "in_progress") .Game.LiveState.AwayHasBall}} <span class="possession" title="Has possession">🏈</span>{{end}}</div>
                 <div class="team-name-full">{{.Game.AwayTeam.Name}}</div>
                 {{if .Result}}
                 <div class="team-score-large{{if not .Result.IsFinal}} live{{end}}">{{.Result.AwayScore}}</div>
@@ -45,13 +47,28 @@
             <div class="team-display home">
                 {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 48px; height: 48px; margin-bottom: 8px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
                 {{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}}
-                <div class="team-abbr-large">{{.Game.HomeTeam.Abbreviation}}</div>
+                <div class="team-abbr-large">{{.Game.HomeTeam.Abbreviation}}{{if and (eq .Game.Status "in_progress") .Game.LiveState.HomeHasBall}} <span class="possession" title="Has possession">🏈</span>{{end}}</div>
                 <div class="team-name-full">{{.Game.HomeTeam.Name}}</div>
                 {{if .Result}}
                 <div class="team-score-large{{if not .Result.IsFinal}} live{{end}}">{{.Result.HomeScore}}</div>
                 {{end}}
             </div>
         </div>
+
+        <!-- The live strip. Everything in it comes from the scoreboard feed and
+             is left in place once a game ends, so it is drawn only while the
+             game is running -- a finished game showing "3rd & 7" would read as
+             a page that had stopped updating. -->
+        {{if eq .Game.Status "in_progress"}}
+        {{with .Game.LiveState}}
+        {{if .HasLiveDetail}}
+        <div class="live-strip" aria-live="polite">
+            {{with .SituationText}}<div class="live-situation">{{.}}</div>{{end}}
+            {{with .LastPlayText}}<div class="live-last-play">{{.}}</div>{{end}}
+        </div>
+        {{end}}
+        {{end}}
+        {{end}}
     </div>
 
     <div class="game-info-section">
@@ -69,6 +86,18 @@
                 {{if .Game.NeutralSite}}
                 <dt>Site</dt>
                 <dd>Neutral Site</dd>
+                {{end}}
+                {{with .Game.LiveState.Broadcast}}
+                <dt>TV</dt>
+                <dd>{{.}}</dd>
+                {{end}}
+                {{with .Game.LiveState.WeatherText}}
+                <dt>Weather</dt>
+                <dd>{{.}}</dd>
+                {{end}}
+                {{with .Game.LiveState.WindText}}
+                <dt>Wind</dt>
+                <dd>{{.}}</dd>
                 {{end}}
             </dl>
         </div>
