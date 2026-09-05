@@ -173,12 +173,33 @@
                     <td class="spread-value clickable-odds" data-bet-type="spread" data-odds-id="{{.Spread.ID}}" data-home-spread="{{.Spread.HomeSpread}}" data-away-spread="{{.Spread.AwaySpread}}">
                         {{if .Spread.HomeSpread.IsNegative}}{{.Spread.HomeSpread}}{{else}}+{{.Spread.HomeSpread}}{{end}} / 
                         {{if .Spread.AwaySpread.IsNegative}}{{.Spread.AwaySpread}}{{else}}+{{.Spread.AwaySpread}}{{end}}
+                        <span class="odds-juice">
+                            {{if .Spread.HomeOdds.Equal .Spread.AwayOdds}}
+                                {{if .Spread.HomeOdds.IsPositive}}+{{end}}{{.Spread.HomeOdds.IntPart}}
+                            {{else}}
+                                {{if .Spread.HomeOdds.IsPositive}}+{{end}}{{.Spread.HomeOdds.IntPart}} /
+                                {{if .Spread.AwayOdds.IsPositive}}+{{end}}{{.Spread.AwayOdds.IntPart}}
+                            {{end}}
+                        </span>
                     </td>
                     {{else}}
                     <td class="no-data">—</td>
                     {{end}}
                     {{if .OverUnder}}
-                    <td class="total-value clickable-odds" data-bet-type="overunder" data-odds-id="{{.OverUnder.ID}}" data-total="{{.OverUnder.Total}}">{{.OverUnder.Total}}</td>
+                    <td class="total-value clickable-odds" data-bet-type="overunder" data-odds-id="{{.OverUnder.ID}}" data-total="{{.OverUnder.Total}}">
+                        {{.OverUnder.Total}}
+                        <!-- Both sides carry the same price whenever the sync
+                             wrote them, so one number says it; a custom line
+                             that differs gets both, in column order. -->
+                        <span class="odds-juice">
+                            {{if .OverUnder.OverOdds.Equal .OverUnder.UnderOdds}}
+                                {{if .OverUnder.OverOdds.IsPositive}}+{{end}}{{.OverUnder.OverOdds.IntPart}}
+                            {{else}}
+                                O {{if .OverUnder.OverOdds.IsPositive}}+{{end}}{{.OverUnder.OverOdds.IntPart}} /
+                                U {{if .OverUnder.UnderOdds.IsPositive}}+{{end}}{{.OverUnder.UnderOdds.IntPart}}
+                            {{end}}
+                        </span>
+                    </td>
                     {{else}}
                     <td class="no-data">—</td>
                     {{end}}
@@ -235,7 +256,7 @@
                     <select name="odds_id" id="spread-source" class="form-select source-select">
                         {{range .UnifiedOdds}}
                         {{if .Spread}}
-                        <option value="{{.Spread.ID}}" data-home-spread="{{.Spread.HomeSpread}}" data-away-spread="{{.Spread.AwaySpread}}">
+                        <option value="{{.Spread.ID}}" data-home-spread="{{.Spread.HomeSpread}}" data-away-spread="{{.Spread.AwaySpread}}" data-home-odds="{{.Spread.HomeOdds}}" data-away-odds="{{.Spread.AwayOdds}}">
                             {{.Source}}
                         </option>
                         {{end}}
@@ -263,11 +284,11 @@
                     <div class="pick-selector" id="spread-picks">
                         <label class="pick-option">
                             <input type="radio" name="pick" value="home" required>
-                            <span class="pick-label">{{.Game.HomeTeam.Abbreviation}} <span class="pick-odds"></span></span>
+                            <span class="pick-label">{{.Game.HomeTeam.Abbreviation}} <span class="pick-odds"></span><span class="odds-juice"></span></span>
                         </label>
                         <label class="pick-option">
                             <input type="radio" name="pick" value="away">
-                            <span class="pick-label">{{.Game.AwayTeam.Abbreviation}} <span class="pick-odds"></span></span>
+                            <span class="pick-label">{{.Game.AwayTeam.Abbreviation}} <span class="pick-odds"></span><span class="odds-juice"></span></span>
                         </label>
                     </div>
                 </div>
@@ -286,6 +307,12 @@
                         <label>Stake</label>
                         <input type="number" name="stake" min="1" step="1" required placeholder="100" class="form-input stake-input" id="spread-stake">
                     </div>
+                </div>
+
+                <div class="payout-preview" id="spread-payout" aria-live="polite" hidden>
+                    <span class="payout-label">To win</span>
+                    <span class="payout-value"></span>
+                    <span class="payout-detail"></span>
                 </div>
 
                 {{if $.HolyLockEligible}}
@@ -365,6 +392,12 @@
                     </div>
                 </div>
 
+                <div class="payout-preview" id="moneyline-payout" aria-live="polite" hidden>
+                    <span class="payout-label">To win</span>
+                    <span class="payout-value"></span>
+                    <span class="payout-detail"></span>
+                </div>
+
                 {{if $.HolyLockEligible}}
                 <div class="form-group holy-lock-group">
                     <label class="holy-lock-option">
@@ -390,7 +423,7 @@
                     <select name="odds_id" id="overunder-source" class="form-select source-select">
                         {{range .UnifiedOdds}}
                         {{if .OverUnder}}
-                        <option value="{{.OverUnder.ID}}" data-total="{{.OverUnder.Total}}">
+                        <option value="{{.OverUnder.ID}}" data-total="{{.OverUnder.Total}}" data-over-odds="{{.OverUnder.OverOdds}}" data-under-odds="{{.OverUnder.UnderOdds}}">
                             {{.Source}}
                         </option>
                         {{end}}
@@ -421,11 +454,11 @@
                     <div class="pick-selector" id="overunder-picks">
                         <label class="pick-option">
                             <input type="radio" name="pick" value="over" required>
-                            <span class="pick-label">Over <span class="pick-odds"></span></span>
+                            <span class="pick-label">Over <span class="pick-odds"></span><span class="odds-juice"></span></span>
                         </label>
                         <label class="pick-option">
                             <input type="radio" name="pick" value="under">
-                            <span class="pick-label">Under <span class="pick-odds"></span></span>
+                            <span class="pick-label">Under <span class="pick-odds"></span><span class="odds-juice"></span></span>
                         </label>
                     </div>
                 </div>
@@ -444,6 +477,12 @@
                         <label>Stake</label>
                         <input type="number" name="stake" min="1" step="1" required placeholder="100" class="form-input stake-input" id="overunder-stake">
                     </div>
+                </div>
+
+                <div class="payout-preview" id="overunder-payout" aria-live="polite" hidden>
+                    <span class="payout-label">To win</span>
+                    <span class="payout-value"></span>
+                    <span class="payout-detail"></span>
                 </div>
 
                 {{if $.HolyLockEligible}}
@@ -517,6 +556,7 @@
 
                 // Reset the form that was submitted.
                 event.target.reset();
+                updatePayout(event.target.id.replace('-form', ''));
             }
         }
 
@@ -532,6 +572,71 @@
             return num >= 0 ? '+' + num : num.toString();
         }
 
+        // Money as the purse reports it.
+        function formatMoney(value) {
+            return '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        // Total return (stake + profit) for a stake at American odds. This
+        // mirrors models.PayoutForOdds, which is what settlement actually
+        // credits -- the two have to agree, or the slip promises a number the
+        // purse never pays.
+        function payoutForOdds(stake, odds) {
+            const profit = odds > 0 ? stake * (odds / 100) : stake * (100 / Math.abs(odds));
+            return stake + profit;
+        }
+
+        // The odds the picked side would be graded at: the selected source's
+        // number for that side, or the custom field standing in for it. A
+        // spread's custom odds are one field applying to both sides, matching
+        // what resolveSpreadOdds writes.
+        function selectedOdds(type) {
+            const form = document.getElementById(type + '-form');
+            const select = document.getElementById(type + '-source');
+            if (!form || !select) return NaN;
+
+            const pick = form.querySelector('input[name="pick"]:checked');
+            if (!pick) return NaN;
+
+            const opt = select.options[select.selectedIndex];
+            const custom = !opt || !opt.value;
+            const home = pick.value === 'home' || pick.value === 'over';
+
+            const field = name => parseFloat(form.querySelector(`input[name="${name}"]`)?.value);
+
+            if (type === 'spread') {
+                if (custom) return field('custom_odds');
+                return parseFloat(home ? opt.dataset.homeOdds : opt.dataset.awayOdds);
+            }
+            if (type === 'moneyline') {
+                if (custom) return field(home ? 'custom_home_odds' : 'custom_away_odds');
+                return parseFloat(home ? opt.dataset.homeOdds : opt.dataset.awayOdds);
+            }
+            if (custom) return field(home ? 'custom_over_odds' : 'custom_under_odds');
+            return parseFloat(home ? opt.dataset.overOdds : opt.dataset.underOdds);
+        }
+
+        // Show what the bet as filled in would return. Odds of zero are not a
+        // line, so they read as nothing chosen yet rather than as an even bet.
+        function updatePayout(type) {
+            const preview = document.getElementById(type + '-payout');
+            const stakeInput = document.getElementById(type + '-stake');
+            if (!preview || !stakeInput) return;
+
+            const stake = parseFloat(stakeInput.value);
+            const odds = selectedOdds(type);
+            if (!(stake > 0) || !isFinite(odds) || odds === 0) {
+                preview.hidden = true;
+                return;
+            }
+
+            const total = payoutForOdds(stake, odds);
+            preview.querySelector('.payout-value').textContent = formatMoney(total - stake);
+            preview.querySelector('.payout-detail').textContent =
+                formatMoney(total) + ' back at ' + formatOdds(odds);
+            preview.hidden = false;
+        }
+
         // Format source select options to title case.
         document.querySelectorAll('.source-select').forEach(select => {
             Array.from(select.options).forEach(opt => {
@@ -539,32 +644,45 @@
             });
         });
 
-        // Update pick button odds display based on selected source.
+        // Update pick button odds display based on selected source: the number
+        // the side is taken at, with the price it would be graded at beneath.
+        // A money line's number is already its price, so it has no second line.
         function updatePickOdds(type) {
             const select = document.getElementById(type + '-source');
             const picks = document.getElementById(type + '-picks');
             if (!select || !picks) return;
 
-            const opt = select.options[select.selectedIndex];
-            const homeSpan = picks.querySelector('input[value="home"], input[value="over"]')?.closest('.pick-option')?.querySelector('.pick-odds');
-            const awaySpan = picks.querySelector('input[value="away"], input[value="under"]')?.closest('.pick-option')?.querySelector('.pick-odds');
+            const side = value => {
+                const option = picks.querySelector(`input[value="${value}"]`)?.closest('.pick-option');
+                return { number: option?.querySelector('.pick-odds'), juice: option?.querySelector('.odds-juice') };
+            };
+            const write = (target, number, juice) => {
+                if (target.number) target.number.textContent = number;
+                if (target.juice) target.juice.textContent = juice;
+            };
 
+            const home = side(type === 'overunder' ? 'over' : 'home');
+            const away = side(type === 'overunder' ? 'under' : 'away');
+
+            const opt = select.options[select.selectedIndex];
             if (!opt || !opt.value) {
-                if (homeSpan) homeSpan.textContent = '';
-                if (awaySpan) awaySpan.textContent = '';
+                write(home, '', '');
+                write(away, '', '');
                 return;
             }
 
             if (type === 'spread') {
-                if (homeSpan) homeSpan.textContent = formatOdds(opt.dataset.homeSpread);
-                if (awaySpan) awaySpan.textContent = formatOdds(opt.dataset.awaySpread);
+                write(home, formatOdds(opt.dataset.homeSpread), formatOdds(opt.dataset.homeOdds));
+                write(away, formatOdds(opt.dataset.awaySpread), formatOdds(opt.dataset.awayOdds));
             } else if (type === 'moneyline') {
-                if (homeSpan) homeSpan.textContent = formatOdds(opt.dataset.homeOdds);
-                if (awaySpan) awaySpan.textContent = formatOdds(opt.dataset.awayOdds);
+                write(home, formatOdds(opt.dataset.homeOdds), '');
+                write(away, formatOdds(opt.dataset.awayOdds), '');
             } else if (type === 'overunder') {
+                // The total is the same on both sides; the price need not be,
+                // so each button carries its own.
                 const total = opt.dataset.total || '';
-                if (homeSpan) homeSpan.textContent = total;
-                if (awaySpan) awaySpan.textContent = total;
+                write(home, total, formatOdds(opt.dataset.overOdds));
+                write(away, total, formatOdds(opt.dataset.underOdds));
             }
         }
 
@@ -591,10 +709,23 @@
                 select.addEventListener('change', function() {
                     if (customFields) customFields.style.display = this.value === '' ? 'block' : 'none';
                     updatePickOdds(type);
+                    updatePayout(type);
                 });
                 // Initialize on load.
                 updatePickOdds(type);
             }
+
+            // Everything the payout depends on: the stake, which side is
+            // picked, and the custom odds when the source is Custom.
+            document.getElementById(type + '-stake')?.addEventListener('input', () => updatePayout(type));
+            document.querySelectorAll(`#${type}-picks input[name="pick"]`).forEach(radio => {
+                radio.addEventListener('change', () => updatePayout(type));
+            });
+            customFields?.querySelectorAll('input').forEach(input => {
+                input.addEventListener('input', () => updatePayout(type));
+            });
+
+            updatePayout(type);
         });
 
         // Handle clickable odds in the betting lines table.

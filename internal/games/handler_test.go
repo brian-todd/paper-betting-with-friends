@@ -11,6 +11,7 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/templates"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // renderGameDetail renders the bet slip for real. A parse succeeds happily on an
@@ -137,6 +138,115 @@ func TestGameDetailHidesUserBetBadgeByDefault(t *testing.T) {
 	}
 }
 
+// The calculator reads the odds off the selected source option, so a side
+// whose juice never reaches the markup can only show the reader nothing.
+func TestBetSlipCarriesOddsForThePayoutCalculator(t *testing.T) {
+	league := uuid.New()
+	html := renderGameDetail(t, league, map[string]any{
+		"UnifiedOdds": []UnifiedOdds{{
+			Source: models.OddsSourceDraftKings,
+			Spread: &models.SpreadOdds{
+				ID:         uuid.New(),
+				HomeSpread: decimal.RequireFromString("-7"),
+				AwaySpread: decimal.RequireFromString("7"),
+				HomeOdds:   decimal.RequireFromString("-110"),
+				AwayOdds:   decimal.RequireFromString("-105"),
+			},
+			OverUnder: &models.OverUnderOdds{
+				ID:        uuid.New(),
+				Total:     decimal.RequireFromString("54.5"),
+				OverOdds:  decimal.RequireFromString("-115"),
+				UnderOdds: decimal.RequireFromString("100"),
+			},
+			MoneyLine: &models.MoneyLineOdds{
+				ID:       uuid.New(),
+				HomeOdds: decimal.RequireFromString("-250"),
+				AwayOdds: decimal.RequireFromString("200"),
+			},
+		}},
+	})
+
+	for _, want := range []string{
+		`data-home-odds="-110" data-away-odds="-105"`,
+		`data-over-odds="-115" data-under-odds="100"`,
+		`data-home-odds="-250" data-away-odds="200"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("bet slip is missing %q", want)
+		}
+	}
+
+	// One preview per form, so the number is there whichever tab is open.
+	if got := strings.Count(html, `class="payout-preview"`); got != 3 {
+		t.Errorf("bet slip has %d payout previews, want 3 (one per form)", got)
+	}
+}
+
+// A spread and a total are both priced, and the price is what the payout is
+// figured from -- so it belongs under the number it prices.
+func TestGameDetailShowsLineOdds(t *testing.T) {
+	league := uuid.New()
+
+	// Priced the same both ways, which is every line the sync writes: one
+	// number rather than the same one twice.
+	html := renderGameDetail(t, league, map[string]any{
+		"UnifiedOdds": []UnifiedOdds{{
+			Source: models.OddsSourceDraftKings,
+			Spread: &models.SpreadOdds{
+				ID:         uuid.New(),
+				HomeSpread: decimal.RequireFromString("-7"),
+				AwaySpread: decimal.RequireFromString("7"),
+				HomeOdds:   decimal.RequireFromString("-110"),
+				AwayOdds:   decimal.RequireFromString("-110"),
+			},
+			OverUnder: &models.OverUnderOdds{
+				ID:        uuid.New(),
+				Total:     decimal.RequireFromString("54.5"),
+				OverOdds:  decimal.RequireFromString("-110"),
+				UnderOdds: decimal.RequireFromString("-110"),
+			},
+		}},
+	})
+	flat := strings.Join(strings.Fields(html), " ")
+	for _, want := range []string{
+		`54.5 <span class="odds-juice"> -110`,
+		`-7 / +7 <span class="odds-juice"> -110`,
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("the lines table is missing %q", want)
+		}
+	}
+	if strings.Contains(flat, "-110 / -110") {
+		t.Error("the lines table named both sides of an evenly priced line")
+	}
+
+	// A custom line can be priced either way, so both sides show.
+	html = renderGameDetail(t, league, map[string]any{
+		"UnifiedOdds": []UnifiedOdds{{
+			Source: models.OddsSourceCustom,
+			Spread: &models.SpreadOdds{
+				ID:         uuid.New(),
+				HomeSpread: decimal.RequireFromString("-7"),
+				AwaySpread: decimal.RequireFromString("7"),
+				HomeOdds:   decimal.RequireFromString("-120"),
+				AwayOdds:   decimal.RequireFromString("105"),
+			},
+			OverUnder: &models.OverUnderOdds{
+				ID:        uuid.New(),
+				Total:     decimal.RequireFromString("54.5"),
+				OverOdds:  decimal.RequireFromString("-115"),
+				UnderOdds: decimal.RequireFromString("100"),
+			},
+		}},
+	})
+	flat = strings.Join(strings.Fields(html), " ")
+	for _, want := range []string{"O -115 / U +100", "-120 / +105"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("the lines table is missing %q on a two-way priced line", want)
+		}
+	}
+}
+
 // renderGamesGrid renders the games grid page for real, the same reason
 // renderGameDetail does: a template that parses fine can still blow up at
 // execution on an untyped nil.
@@ -230,5 +340,37 @@ func TestGamesGridHidesBetBadgeWithoutBet(t *testing.T) {
 
 	if strings.Contains(html, "badge-user-bet") {
 		t.Error("games grid marked a game the user has not bet on")
+	}
+}
+
+// The grid prices its lines too, so the two views agree on what a bet costs.
+func TestGamesGridShowsLineOdds(t *testing.T) {
+	html := renderGamesGrid(t, []GameWithOdds{{
+		Game: models.Game{ID: uuid.New(), HomeTeam: models.Team{Abbreviation: "GT"}, AwayTeam: models.Team{Abbreviation: "CLEM"}},
+		Spread: &models.SpreadOdds{
+			ID:         uuid.New(),
+			HomeSpread: decimal.RequireFromString("-7"),
+			AwaySpread: decimal.RequireFromString("7"),
+			HomeOdds:   decimal.RequireFromString("-110"),
+			AwayOdds:   decimal.RequireFromString("-105"),
+		},
+		OverUnder: &models.OverUnderOdds{
+			ID:        uuid.New(),
+			Total:     decimal.RequireFromString("54.5"),
+			OverOdds:  decimal.RequireFromString("-115"),
+			UnderOdds: decimal.RequireFromString("100"),
+		},
+	}})
+
+	flat := strings.Join(strings.Fields(html), " ")
+	for _, want := range []string{
+		`U 54.5 <span class="odds-juice">+100`,
+		`O 54.5 <span class="odds-juice">-115`,
+		`-7 <span class="odds-juice">-110`,
+		`+7 <span class="odds-juice">-105`,
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("the games grid is missing %q", want)
+		}
 	}
 }
