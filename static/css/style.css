@@ -1624,7 +1624,10 @@ button.btn {
     font-weight: 700;
     color: var(--color-primary);
     font-family: var(--font-mono);
-    align-self: center; /* Center the score regardless of team alignment */
+    /* The score inherits its team's edge rather than centring itself. .team is a
+       column flex, so align-self works on the horizontal axis and centring put
+       the number in the middle of the half-card while the logo and name stayed
+       pinned to the outside -- a score that visibly belonged to neither team. */
 }
 
 /* A score that is still moving. Distinguished from a final one so a live card
