@@ -31,6 +31,7 @@ type SyncService struct {
 	weekRepo          *repository.WeekRepository
 	gameRepo          *repository.GameRepository
 	gameResultRepo    *repository.GameResultRepository
+	gameLiveStateRepo *repository.GameLiveStateRepository
 	moneyLineOddsRepo *repository.MoneyLineOddsRepository
 	spreadOddsRepo    *repository.SpreadOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
@@ -50,6 +51,7 @@ func NewSyncService(client *Client, db *gorm.DB) *SyncService {
 		weekRepo:          repository.NewWeekRepository(db),
 		gameRepo:          repository.NewGameRepository(db),
 		gameResultRepo:    repository.NewGameResultRepository(db),
+		gameLiveStateRepo: repository.NewGameLiveStateRepository(db),
 		moneyLineOddsRepo: repository.NewMoneyLineOddsRepository(db),
 		spreadOddsRepo:    repository.NewSpreadOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
@@ -73,6 +75,24 @@ func (s *SyncService) GetCurrentSeasonYear() int {
 	}
 	// Fallback to current calendar year.
 	return now.Year()
+}
+
+// InSeason reports whether now falls inside a week of the stored calendar.
+//
+// It is the schedule's notion of "the season is on", and it reads the same
+// filtered query GetCurrentSeasonYear does, so a week row with an impossible
+// span cannot make the scoreboard poll flat out through July.
+//
+// A database error reads as in season. The cost of being wrong that way is a
+// few extra requests; the cost of being wrong the other way is a whole
+// Saturday of scores arriving an hour late.
+func (s *SyncService) InSeason(now time.Time) bool {
+	season, err := s.weekRepo.FindSeasonContainingDate(now)
+	if err != nil {
+		s.logger.Error("failed to resolve season for scoreboard schedule", "error", err)
+		return true
+	}
+	return season > 0
 }
 
 // SeedAll performs a full seed of all data for a given year, optionally filtered by week and season type.

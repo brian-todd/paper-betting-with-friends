@@ -34,6 +34,7 @@ func (r *GameRepository) FindByID(id uuid.UUID) (*models.Game, error) {
 		Preload("Venue").
 		Preload("Week").
 		Preload("Result").
+		Preload("LiveState").
 		First(&game, id).Error
 	if err != nil {
 		return nil, err
@@ -118,6 +119,7 @@ func (r *GameRepository) FindWeekGames(weekID uuid.UUID, filter GameFilter, offs
 		Preload("Venue").
 		Preload("Week").
 		Preload("Result").
+		Preload("LiveState").
 		Order("CASE games.status WHEN 'in_progress' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END").
 		Order("games.scheduled_at").
 		Order("games.id").
@@ -332,15 +334,56 @@ func (r *GameRepository) FindByExternalID(externalID int64, sport string) (*mode
 }
 
 // Upsert creates or updates a game based on (external_id, sport).
+//
+// A game that has finished stays finished. Two football feeds write this row --
+// the scoreboard, which reports a real status within minutes, and /games, which
+// only infers one from the kickoff time until it catches up and marks the game
+// completed. For the stretch between the two, the scoreboard says "final" and
+// /games still says "in progress"; without this the card would flap between the
+// two every few minutes, and a settled game would advertise itself as live.
 func (r *GameRepository) Upsert(game *models.Game) error {
 	return r.db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "external_id"}, {Name: "sport"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"home_team_id", "away_team_id", "venue_id", "week_id",
-			"season", "season_type", "tournament", "home_seed", "away_seed",
-			"scheduled_at", "status", "neutral_site", "conference_game", "completed", "updated_at",
+		DoUpdates: clause.Assignments(map[string]any{
+			"home_team_id":    gorm.Expr("excluded.home_team_id"),
+			"away_team_id":    gorm.Expr("excluded.away_team_id"),
+			"venue_id":        gorm.Expr("excluded.venue_id"),
+			"week_id":         gorm.Expr("excluded.week_id"),
+			"season":          gorm.Expr("excluded.season"),
+			"season_type":     gorm.Expr("excluded.season_type"),
+			"tournament":      gorm.Expr("excluded.tournament"),
+			"home_seed":       gorm.Expr("excluded.home_seed"),
+			"away_seed":       gorm.Expr("excluded.away_seed"),
+			"scheduled_at":    gorm.Expr("excluded.scheduled_at"),
+			"neutral_site":    gorm.Expr("excluded.neutral_site"),
+			"conference_game": gorm.Expr("excluded.conference_game"),
+			"updated_at":      gorm.Expr("excluded.updated_at"),
+
+			"status":    gorm.Expr("CASE WHEN games.status = ? THEN games.status ELSE excluded.status END", models.GameStatusFinal),
+			"completed": gorm.Expr("games.completed OR excluded.completed"),
 		}),
 	}).Create(game).Error
+}
+
+// UpdateReportedStatus advances a game's status from a feed that reports one
+// directly, rather than inferring it from the clock.
+//
+// It is a targeted update rather than an Upsert because the scoreboard knows a
+// game's status and nothing else about it -- no week, no venue, no team rows --
+// so writing a whole game row from it would blank the fields it never saw.
+//
+// The same "does not un-finish" rule as Upsert applies, for the same reason:
+// /games reports a completed game before the scoreboard drops it from the
+// current week, and this must not walk that back.
+func (r *GameRepository) UpdateReportedStatus(gameID uuid.UUID, status models.GameStatus, completed bool) error {
+	return r.db.Model(&models.Game{}).
+		Where("id = ?", gameID).
+		Where("status <> ?", models.GameStatusFinal).
+		Updates(map[string]any{
+			"status":     status,
+			"completed":  gorm.Expr("games.completed OR ?", completed),
+			"updated_at": time.Now(),
+		}).Error
 }
 
 // FindByDateRangeAndSport retrieves all games for a sport within a date range.

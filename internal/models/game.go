@@ -52,6 +52,11 @@ type Game struct {
 	Venue    Venue       `gorm:"foreignKey:VenueID"`
 	Week     *Week       `gorm:"foreignKey:WeekID"`
 	Result   *GameResult `gorm:"foreignKey:GameID"`
+	// LiveState is the scoreboard feed's view of the game -- clock, situation,
+	// broadcast, weather. Nil for any game the scoreboard has not covered,
+	// which is every basketball game and every football game outside the
+	// classifications and week the scoreboard sync asks for.
+	LiveState *GameLiveState `gorm:"foreignKey:GameID"`
 }
 
 // BeforeCreate sets the UUID before creating a new game.

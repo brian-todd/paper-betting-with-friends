@@ -41,10 +41,27 @@ func (r *GameResultRepository) FindByGameID(gameID uuid.UUID) (*models.GameResul
 }
 
 // Upsert creates or updates a game result based on game_id.
+//
+// finalized_at is kept once set. Two football feeds write scores now -- the
+// scoreboard while the game is on, /games once it is over -- and the later
+// writer must not be able to reopen a settled result, nor to keep pushing the
+// timestamp forward every time it re-reports a game that finished hours ago.
 func (r *GameResultRepository) Upsert(result *models.GameResult) error {
 	return r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "game_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"home_score", "away_score", "home_line_scores", "away_line_scores", "excitement_index", "finalized_at", "updated_at"}),
+		Columns: []clause.Column{{Name: "game_id"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"home_score": gorm.Expr("excluded.home_score"),
+			"away_score": gorm.Expr("excluded.away_score"),
+			// The quarter breakdown and the excitement index come from /games
+			// and not from the scoreboard, so a scoreboard write reports them
+			// as null. COALESCE keeps the two feeds additive: whichever one has
+			// the value wins, and the one that does not know it cannot erase it.
+			"home_line_scores": gorm.Expr("COALESCE(excluded.home_line_scores, game_results.home_line_scores)"),
+			"away_line_scores": gorm.Expr("COALESCE(excluded.away_line_scores, game_results.away_line_scores)"),
+			"excitement_index": gorm.Expr("COALESCE(excluded.excitement_index, game_results.excitement_index)"),
+			"finalized_at":     gorm.Expr("COALESCE(game_results.finalized_at, excluded.finalized_at)"),
+			"updated_at":       gorm.Expr("excluded.updated_at"),
+		}),
 	}).Create(result).Error
 }
 

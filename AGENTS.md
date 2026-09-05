@@ -228,18 +228,42 @@ the provider calls the game complete. `EvaluateBetsForGame` refuses to settle
 against a result where `IsFinal()` is false — otherwise a halftime lead pays out.
 Anything new that reads a score has to decide which of the two it wants.
 
-**No live scores actually arrive today.** CFBD's `/games` returns null points
-until `completed` flips true, so for football the nil-`FinalizedAt` path never
-runs. Live football scores are on `/scoreboard` (with `period`, `clock`,
-`possession`), which is FBS-only and deliberately not synced. The basketball feed
-reports a real status and filters on `status=in_progress`, so it may well carry
-live points — unverified, as it was checked out of season. Templates mark a
-non-final score with a `live` class; that styling is currently unreachable for
-football.
+Live football scores come from `/scoreboard`, not `/games`. CFBD's `/games`
+returns null points until `completed` flips true, so the nil-`FinalizedAt` path
+never runs from there; `internal/cfbdata/scoreboard.go` is what fills it. The
+basketball feed reports a real status and filters on `status=in_progress`, so it
+may well carry live points — unverified, as it was checked out of season.
 
-Football `Game.Status` is *inferred* (`now > startDate + 5min`), not reported, so
-a card reading "Live" may be a finished game the feed has not updated. Basketball
-takes its status from the API.
+**Two feeds write a football game, and they disagree for minutes at a time.**
+The scoreboard calls a game over within five minutes; `/games` keeps inferring
+"in progress" until its own sync sees `completed`. Two rules keep that from
+flapping, and both live in SQL so neither writer has to read before writing:
+
+- `GameRepository.Upsert` (and `UpdateReportedStatus`) never regress a `final`
+  status, and `completed` is OR'd rather than assigned
+- `GameResultRepository.Upsert` keeps the first `finalized_at`, and COALESCEs
+  the line scores and excitement index so the feed that does not know a value
+  cannot erase it
+
+The scoreboard deliberately does **not** settle bets. Finality is a claim about
+money, `/games` remains the feed that makes it, and `EvaluateBetsForGame` is
+still called from `syncGames` alone — so the worst a bad scoreboard reading can
+do is mislabel a card until the next games sync corrects it. Its odds are
+ignored for a related reason: they name no sportsbook, and the odds tables are
+keyed by one.
+
+`Game.Status` is reported for any football game the scoreboard covers, and
+*inferred* (`now > startDate + 5min`) for the rest — which is every division
+outside `CFB_SCOREBOARD_CLASSIFICATIONS` and every game outside the current
+week. Basketball takes its status from the API.
+
+Everything the scoreboard reports beyond the score — period, clock, situation,
+possession, last play, TV, weather, win probability — lands in
+`models.GameLiveState`, one row per game, preloaded as `Game.LiveState`. Its
+display helpers are all nil-safe receivers, because the templates call them on
+games the scoreboard has never covered. A row's presence means "the scoreboard
+has seen this game", never "this game is live"; the clock is left in place once
+a game ends, so the live strip gates on `Game.Status`, not on the row.
 
 ### Testing
 
@@ -273,6 +297,20 @@ and an unrecovered panic on one of those takes down the whole process — so a
 malformed field in a single upstream response would stop the server serving
 pages. The recovered error lands in `Status.LastError` for the admin page and
 the stack goes to the log, where it is actually readable.
+
+Job cadence is a spending plan, not a freshness knob. CFBD meters us at 30,000
+requests a month and the football jobs are most of it:
+
+- `cfb-scoreboard` polls every 5 minutes in season and hourly out of it, one
+  request per division per run (`cfbdata.ScoreboardDelay`). "In season" is
+  `SyncService.InSeason`, which asks the same plausible-week query the rest of
+  the calendar logic does. Each extra division in
+  `CFB_SCOREBOARD_CLASSIFICATIONS` is another ~8,600 requests a month
+- `cfb-games-and-lines` follows the football week — 15 minutes Thu–Sat, 30
+  midweek, hourly overnight (`cfbdata.SyncDelay`) — at two requests a run
+
+`TestFootballCadenceStaysWithinMonthlyCallBudget` walks real months at the real
+schedules and fails if a change to either overruns the plan.
 
 A job can also be run on demand: `Trigger(name)` sends on a capacity-1 channel,
 and that buffer *is* the debounce — a second trigger while one is pending
@@ -342,6 +380,8 @@ embedded copy read the same directory.
 - `Truncate(24 * time.Hour)` or `Add(24 * time.Hour)` for calendar days — use `timeutil.StartOfDay` and `AddDate`
 - Bare `db.Save(bet)` in a bet repository — a preloaded association overwrites the foreign key; `Omit(clause.Associations)`
 - Treating a `GameResult` as final — check `IsFinal()`, or bets settle on a live score
+- Assigning `status` or `finalized_at` unconditionally in a football upsert — two feeds write those rows and a plain assignment lets the slower one un-finish a settled game
+- Treating a `GameLiveState` row as "this game is live" — it exists from before kickoff and keeps the last clock after the whistle; gate on `Game.Status`
 - Trusting stored week dates unchecked — filter on `models.Week.Plausible()` in *every* path that asks "which season/week is it now"
 - Calling `j.Run` directly, or starting any goroutine whose panic nothing recovers — one takes down the whole process
 - `.Format`-style mtime cache busting for assets — every embedded file reports the zero mtime; hash the contents

@@ -38,6 +38,11 @@ import (
 // syncRunTimeout bounds a single background sync run.
 const syncRunTimeout = 5 * time.Minute
 
+// scoreboardRunTimeout bounds a single live scoreboard run. It is well under
+// the five-minute cadence so a run that hangs on the upstream is abandoned
+// before the next one is due, rather than pushing the whole schedule back.
+const scoreboardRunTimeout = 3 * time.Minute
+
 // calendarRunTimeout bounds a single calendar sync run, which covers many
 // seasons and so takes longer than an incremental game sync.
 const calendarRunTimeout = 10 * time.Minute
@@ -307,6 +312,22 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			Timeout: syncRunTimeout,
 			Run: func(ctx context.Context) error {
 				return syncService.SyncGamesAndLines(ctx, syncService.GetCurrentSeasonYear(), nil, nil)
+			},
+		})
+
+		// The live feed. It is polled far harder than games and lines because it
+		// is the only thing that reports a score while a game is being played,
+		// and it costs one request a run to do it -- see cfbdata.ScoreboardDelay
+		// for the arithmetic behind the cadence.
+		sched.Add(scheduler.Job{
+			Name:  "cfb-scoreboard",
+			Label: "Football live scores",
+			NextDelay: func(now time.Time) time.Duration {
+				return cfbdata.ScoreboardDelay(now, location, syncService.InSeason(now))
+			},
+			Timeout: scoreboardRunTimeout,
+			Run: func(ctx context.Context) error {
+				return syncService.SyncScoreboard(ctx, cfg.CFBScoreboardClassifications)
 			},
 		})
 

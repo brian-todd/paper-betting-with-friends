@@ -159,3 +159,78 @@ type APILine struct {
 	AwayScore          *int              `json:"awayScore"`
 	Lines              []APILineProvider `json:"lines"`
 }
+
+// APIScoreboardTeam is one side of a scoreboard game.
+//
+// Points and LineScores are nil before kickoff, and Points can be nil for one
+// side of a game already under way -- the feed reports a side that has not
+// scored as null rather than as zero.
+type APIScoreboardTeam struct {
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	Conference     string   `json:"conference"`
+	Classification string   `json:"classification"`
+	Points         *int     `json:"points"`
+	LineScores     []int    `json:"lineScores"`
+	WinProbability *float64 `json:"winProbability"`
+}
+
+// APIScoreboardVenue is the venue as the scoreboard reports it: a display name
+// and a city, with none of the identifiers /venues carries.
+type APIScoreboardVenue struct {
+	Name  string `json:"name"`
+	City  string `json:"city"`
+	State string `json:"state"`
+}
+
+// APIScoreboardWeather is the conditions at kickoff. Every field is nullable
+// and all four are null together for games the provider has no station for.
+type APIScoreboardWeather struct {
+	Temperature   *float64 `json:"temperature"`
+	Description   *string  `json:"description"`
+	WindSpeed     *float64 `json:"windSpeed"`
+	WindDirection *int     `json:"windDirection"`
+}
+
+// APIScoreboardBetting is the scoreboard's single consensus line.
+//
+// It is deliberately not synced into the odds tables: those are keyed by book,
+// and this line names no provider, so storing it would invent a source. /lines
+// remains where odds come from.
+type APIScoreboardBetting struct {
+	Spread        *float64 `json:"spread"`
+	OverUnder     *float64 `json:"overUnder"`
+	HomeMoneyline *int     `json:"homeMoneyline"`
+	AwayMoneyline *int     `json:"awayMoneyline"`
+}
+
+// Statuses reported by the scoreboard feed. Unlike /games, which reports only
+// whether a game is completed, this endpoint reports the state directly.
+const (
+	ScoreboardStatusScheduled  = "scheduled"
+	ScoreboardStatusInProgress = "in_progress"
+	ScoreboardStatusCompleted  = "completed"
+)
+
+// APIScoreboardGame represents a game from the CFB Data API's /scoreboard
+// endpoint, which covers the current week only and carries the live clock the
+// /games endpoint does not.
+type APIScoreboardGame struct {
+	ID             int64                 `json:"id"`
+	StartDate      time.Time             `json:"startDate"`
+	StartTimeTBD   bool                  `json:"startTimeTBD"`
+	TV             string                `json:"tv"`
+	NeutralSite    bool                  `json:"neutralSite"`
+	ConferenceGame bool                  `json:"conferenceGame"`
+	Status         string                `json:"status"`
+	Period         *int                  `json:"period"`
+	Clock          *string               `json:"clock"`
+	Situation      *string               `json:"situation"`
+	Possession     *string               `json:"possession"`
+	LastPlay       *string               `json:"lastPlay"`
+	Venue          *APIScoreboardVenue   `json:"venue"`
+	HomeTeam       APIScoreboardTeam     `json:"homeTeam"`
+	AwayTeam       APIScoreboardTeam     `json:"awayTeam"`
+	Weather        *APIScoreboardWeather `json:"weather"`
+	Betting        *APIScoreboardBetting `json:"betting"`
+}
