@@ -73,8 +73,8 @@ To run without Docker, point `DATABASE_URL` at your own PostgreSQL, then
 Each sport's sync registers itself only if its API key is present, so running
 one sport is supported; a missing key logs a warning and disables that sync.
 
-Football is polled on a cadence that follows the football week rather than a
-flat interval, in `APP_TIMEZONE` wall-clock:
+Football's games-and-lines sync is polled on a cadence that follows the
+football week rather than a flat interval, in `APP_TIMEZONE` wall-clock:
 
 | When | Interval |
 | --- | --- |
@@ -86,18 +86,36 @@ flat interval, in `APP_TIMEZONE` wall-clock:
 Sunday holds the game-day pace until 2am because Saturday's late West Coast
 kickoffs are still being settled well after midnight Eastern. Runs sit on a grid
 measured from midnight, so a redeploy cannot shift the schedule onto an
-arbitrary offset.
+arbitrary offset. The shape lives in `cfbdata.NextSync`.
 
-**The cadence is a budget, not just a freshness setting.** CFBD's free tier
-allows 5,000 calls a month and each run spends two. The schedule above costs
-3,262–3,730; a flat 15-minute poll costs about 5,760 and exhausts the allowance
-on its own. `TestSyncCadenceStaysWithinMonthlyCallBudget` walks real calendar
-months and fails if a change overruns the plan. The shape lives in
-`cfbdata.NextSync`.
+**The cadence is a budget, not just a freshness setting.** CFBD meters us at
+30,000 calls a month, shared across every job below. Rough in-season cost of
+each, at default configuration (FBS-only scoreboard, `CBB_SYNC_INTERVAL_MINS`
+unset):
 
-Basketball uses a flat `CBB_SYNC_INTERVAL_MINS` (default 15) — that provider is
-not metered the same way, and a basketball schedule has no single enormous
-Saturday to shape a cadence around.
+| Job | Cadence | Calls/run | ~Calls/month |
+| --- | --- | --- | --- |
+| `cfb-games-and-lines` | table above | 2 (`/games` + `/lines`) | ~3,550 |
+| `cfb-scoreboard` | 5 min in-season, hourly off-season, one call per division | 1 | ~8,640 |
+| `cfb-calendar` | daily, loops years until the API returns empty | ~25 | ~750 |
+| `cfb-rankings` | every 6 hours | 1 | ~120 |
+| `cbb-games-and-lines` | flat `CBB_SYNC_INTERVAL_MINS` (default 15), no seasonal throttle | 2 (`/games` + `/lines`) | ~5,760 |
+| **Total** | | | **~18,800 / 30,000** |
+
+That leaves roughly a third of the budget as headroom. Two things to watch if
+this changes:
+
+- `TestFootballCadenceStaysWithinMonthlyCallBudget` (`internal/cfbdata`) only
+  covers the two football jobs, capped at 24,000 rather than the real 30,000,
+  to leave room for calendar, rankings, and basketball. It's tested against
+  `CFB_SCOREBOARD_CLASSIFICATIONS` set to two divisions (the widest an operator
+  would plausibly configure), which alone would consume nearly all of that
+  24,000 — so adding a second division is not free, and there is no test
+  guarding the combined total across both sports.
+- Unlike football, `cbb-games-and-lines` has no seasonal throttle: it polls
+  flat year-round, including the CBB offseason (spring/summer), so a chunk of
+  its ~5,760/month is spent returning near-empty results outside
+  November–April.
 
 Every page footer reports when each sync last *succeeded*, deliberately not when
 it last *ran*: a job that ran two minutes ago and errored has refreshed nothing,
