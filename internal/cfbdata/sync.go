@@ -12,6 +12,7 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
+	"github.com/brian/paper-betting-with-friends/internal/syncerr"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -579,6 +580,10 @@ func (s *SyncService) syncLines(ctx context.Context, year int, week *int, season
 	}
 
 	syncedCount := 0
+	// One line that will not save is not a reason to drop the rest of the
+	// slate, but the run has to end up reporting it -- see syncerr.
+	var failed syncerr.Tally
+
 	for _, l := range lines {
 		// Look up game by external ID.
 		game, err := s.gameRepo.FindByExternalID(l.ID, models.SportFootball)
@@ -606,7 +611,8 @@ func (s *SyncService) syncLines(ctx context.Context, year int, week *int, season
 					AwayOdds: decimal.NewFromInt(int64(*line.AwayMoneyline)),
 				}
 				if err := s.moneyLineOddsRepo.Upsert(mlOdds); err != nil {
-					s.logger.Error("failed to upsert money line odds", "error", err)
+					s.logger.Error("failed to upsert money line odds", "game", l.ID, "source", source, "error", err)
+					failed.Add(err)
 				}
 			}
 
@@ -623,7 +629,8 @@ func (s *SyncService) syncLines(ctx context.Context, year int, week *int, season
 					AwayOdds: decimal.NewFromInt(-110),
 				}
 				if err := s.spreadOddsRepo.Upsert(spreadOdds); err != nil {
-					s.logger.Error("failed to upsert spread odds", "error", err)
+					s.logger.Error("failed to upsert spread odds", "game", l.ID, "source", source, "error", err)
+					failed.Add(err)
 				}
 			}
 
@@ -638,7 +645,8 @@ func (s *SyncService) syncLines(ctx context.Context, year int, week *int, season
 					UnderOdds: decimal.NewFromInt(-110),
 				}
 				if err := s.overUnderOddsRepo.Upsert(ouOdds); err != nil {
-					s.logger.Error("failed to upsert over/under odds", "error", err)
+					s.logger.Error("failed to upsert over/under odds", "game", l.ID, "source", source, "error", err)
+					failed.Add(err)
 				}
 			}
 		}
@@ -646,8 +654,8 @@ func (s *SyncService) syncLines(ctx context.Context, year int, week *int, season
 		syncedCount++
 	}
 
-	s.logger.Info("synced lines for games", "for", syncedCount)
-	return nil
+	s.logger.Info("synced lines for games", "for", syncedCount, "failed_writes", failed.Count())
+	return failed.Err("odds")
 }
 
 // parseSpread parses the formatted spread and returns separate home and away spreads.
