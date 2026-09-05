@@ -44,10 +44,14 @@ type GameLiveState struct {
 	Period *int
 	Clock  *string `gorm:"type:varchar(16)"`
 
-	// Situation and Possession are provider prose -- down and distance, and
-	// whichever wording the feed uses for the side with the ball. Nothing here
-	// parses them; Possession is matched loosely for display and shown as-is
-	// when it does not resolve.
+	// Situation is provider prose -- the down and distance, unparsed.
+	//
+	// Possession is normalised to "home", "away" or nil on the way in, because
+	// those are the only values the feed has been observed to send and the only
+	// ones anything reads. Storing whatever arrives would put an unbounded
+	// upstream string in a bounded column, where one long enough to overflow it
+	// fails the whole row's upsert and costs the clock, the situation and the
+	// broadcast along with it.
 	Situation  *string `gorm:"type:text"`
 	Possession *string `gorm:"type:varchar(16)"`
 	LastPlay   *string `gorm:"type:text"`

@@ -239,5 +239,59 @@ func TestScoreboardLiveStateWithoutWeather(t *testing.T) {
 	}
 }
 
+func TestNormalizePossession(t *testing.T) {
+	tests := []struct {
+		name  string
+		input *string
+		want  *string
+	}{
+		{"absent", nil, nil},
+		{"home", stringPtr("home"), stringPtr("home")},
+		{"away", stringPtr("away"), stringPtr("away")},
+		{"mixed case and spaces", stringPtr(" Home "), stringPtr("home")},
+		// The column is bounded and the feed is not. A team name here -- or
+		// anything else the provider might switch to -- is dropped rather than
+		// stored, because one longer than the column fails the whole row's
+		// upsert and takes the clock and the situation down with it.
+		{"a team name", stringPtr("North Carolina A&T Aggies"), nil},
+		{"empty", stringPtr(""), nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizePossession(tt.input)
+			switch {
+			case tt.want == nil && got != nil:
+				t.Errorf("normalizePossession() = %q, want nil", *got)
+			case tt.want != nil && got == nil:
+				t.Errorf("normalizePossession() = nil, want %q", *tt.want)
+			case tt.want != nil && *got != *tt.want:
+				t.Errorf("normalizePossession() = %q, want %q", *got, *tt.want)
+			}
+		})
+	}
+}
+
+// The stored value is what HomeHasBall and AwayHasBall read, so normalising on
+// the way in must not change which side the page points at.
+func TestScoreboardLiveStateResolvesPossession(t *testing.T) {
+	for _, tt := range []struct {
+		possession         string
+		wantHome, wantAway bool
+	}{
+		{"home", true, false},
+		{"away", false, true},
+		{"Alabama", false, false},
+	} {
+		t.Run(tt.possession, func(t *testing.T) {
+			state := scoreboardLiveState(uuid.New(), APIScoreboardGame{Possession: stringPtr(tt.possession)})
+			if state.HomeHasBall() != tt.wantHome || state.AwayHasBall() != tt.wantAway {
+				t.Errorf("possession %q resolved to home %v / away %v, want %v / %v",
+					tt.possession, state.HomeHasBall(), state.AwayHasBall(), tt.wantHome, tt.wantAway)
+			}
+		})
+	}
+}
+
 func intPtr(v int) *int          { return &v }
 func stringPtr(v string) *string { return &v }

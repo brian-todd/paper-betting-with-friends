@@ -239,11 +239,17 @@ The scoreboard calls a game over within five minutes; `/games` keeps inferring
 "in progress" until its own sync sees `completed`. Two rules keep that from
 flapping, and both live in SQL so neither writer has to read before writing:
 
-- `GameRepository.Upsert` (and `UpdateReportedStatus`) never regress a `final`
-  status, and `completed` is OR'd rather than assigned
-- `GameResultRepository.Upsert` keeps the first `finalized_at`, and COALESCEs
-  the line scores and excitement index so the feed that does not know a value
-  cannot erase it
+- `GameRepository.Upsert` never regresses a `final` status, and `completed` is
+  OR'd rather than assigned
+- `GameRepository.UpdateReportedStatus` is stricter still: `advancesFrom` lists
+  what each status may replace, so a game only ever moves forward. Cancelling a
+  bet is gated on `Game.Status` alone, so a status that could fall back to
+  `scheduled` would reopen the refund window on a game already being played
+- `GameResultRepository.Upsert` keeps the first `finalized_at`, COALESCEs the
+  line scores and excitement index so the feed that does not know a value cannot
+  erase it, and refuses to let a *provisional* write overwrite the score of an
+  already-finalized result — `EvaluateBetsForGame` re-reads that row, so
+  guarding `finalized_at` without guarding what it certifies is half a rule
 
 The scoreboard deliberately does **not** settle bets. Finality is a claim about
 money, `/games` remains the feed that makes it, and `EvaluateBetsForGame` is
@@ -271,7 +277,11 @@ column at a time.
 
 Everything the scoreboard reports beyond the score — period, clock, situation,
 possession, last play, TV, weather, win probability — lands in
-`models.GameLiveState`, one row per game, preloaded as `Game.LiveState`. Its
+`models.GameLiveState`, one row per game, preloaded as `Game.LiveState`.
+`possession` is normalised to `home`, `away` or nil on the way in: those are the
+only values the feed sends and the only ones anything reads, and the column is
+bounded where the upstream string is not — one long enough to overflow it fails
+the whole row's upsert and costs the clock and the situation with it. Its
 display helpers are all nil-safe receivers, because the templates call them on
 games the scoreboard has never covered. A row's presence means "the scoreboard
 has seen this game", never "this game is live"; the clock is left in place once

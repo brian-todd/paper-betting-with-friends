@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
@@ -181,7 +182,7 @@ func scoreboardLiveState(gameID uuid.UUID, g APIScoreboardGame) *models.GameLive
 		Period:             g.Period,
 		Clock:              g.Clock,
 		Situation:          g.Situation,
-		Possession:         g.Possession,
+		Possession:         normalizePossession(g.Possession),
 		LastPlay:           g.LastPlay,
 		TV:                 strPtr(g.TV),
 		HomeWinProbability: decimalPtr(g.HomeTeam.WinProbability),
@@ -195,6 +196,27 @@ func scoreboardLiveState(gameID uuid.UUID, g APIScoreboardGame) *models.GameLive
 	}
 
 	return state
+}
+
+// normalizePossession keeps only the two values the feed sends and drops
+// anything else.
+//
+// The column is bounded and the feed is not. "home" and "away" are the only
+// values observed and the only ones anything reads, so storing whatever arrives
+// would buy nothing and risk a string long enough to fail the row's upsert --
+// which would cost the clock, the situation and the broadcast along with it,
+// every run, for as long as the feed kept sending it.
+func normalizePossession(possession *string) *string {
+	if possession == nil {
+		return nil
+	}
+
+	switch side := strings.ToLower(strings.TrimSpace(*possession)); side {
+	case "home", "away":
+		return &side
+	default:
+		return nil
+	}
 }
 
 // intOrZero reads an absent count as none, which for points is zero.
