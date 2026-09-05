@@ -3082,6 +3082,44 @@ button.btn {
     font-weight: 500;
 }
 
+/* Potential winnings for the bet as it is filled in. */
+.payout-preview {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--color-bg-elevated);
+    border-radius: var(--radius-md);
+    border-left: 3px solid var(--color-success);
+}
+
+.payout-preview[hidden] {
+    display: none;
+}
+
+.payout-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+}
+
+.payout-value {
+    font-family: var(--font-mono);
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-success);
+}
+
+.payout-detail {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+
 /* Clickable odds in betting lines table. */
 .clickable-odds {
     cursor: pointer;
@@ -3091,6 +3129,21 @@ button.btn {
 .clickable-odds:hover {
     background: rgba(59, 130, 246, 0.15);
     color: var(--color-primary);
+}
+
+/* The price a side is graded at, on its own line under the number it prices --
+   a cell then reads as one figure with a footnote rather than two figures. */
+.odds-juice {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.75em;
+    line-height: 1.4;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+.odds-juice:empty {
+    display: none;
 }
 
 /* Odds display on pick buttons. */
@@ -3103,7 +3156,8 @@ button.btn {
     margin-top: 0.25rem;
 }
 
-.pick-option input:checked + .pick-label .pick-odds {
+.pick-option input:checked + .pick-label .pick-odds,
+.pick-option input:checked + .pick-label .odds-juice {
     color: rgba(255, 255, 255, 0.85);
 }
 

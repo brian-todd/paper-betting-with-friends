@@ -95,9 +95,10 @@
                             <td>
                                 {{if .Spread}}
                                     {{if .Spread.HomeSpread.IsNegative}}{{.Spread.HomeSpread}}{{else}}+{{.Spread.HomeSpread}}{{end}}
+                                    <span class="odds-juice">{{if .Spread.HomeOdds.IsPositive}}+{{end}}{{.Spread.HomeOdds.IntPart}}</span>
                                 {{else}}<span class="text-muted">-</span>{{end}}
                             </td>
-                            <td>{{if .OverUnder}}U {{.OverUnder.Total}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+                            <td>{{if .OverUnder}}U {{.OverUnder.Total}} <span class="odds-juice">{{if .OverUnder.UnderOdds.IsPositive}}+{{end}}{{.OverUnder.UnderOdds.IntPart}}</span>{{else}}<span class="text-muted">-</span>{{end}}</td>
                             <td>
                                 {{if .MoneyLine}}
                                     {{if .MoneyLine.HomeOdds.IsPositive}}+{{end}}{{.MoneyLine.HomeOdds.IntPart}}
@@ -109,9 +110,10 @@
                             <td>
                                 {{if .Spread}}
                                     {{if .Spread.AwaySpread.IsNegative}}{{.Spread.AwaySpread}}{{else}}+{{.Spread.AwaySpread}}{{end}}
+                                    <span class="odds-juice">{{if .Spread.AwayOdds.IsPositive}}+{{end}}{{.Spread.AwayOdds.IntPart}}</span>
                                 {{else}}<span class="text-muted">-</span>{{end}}
                             </td>
-                            <td>{{if .OverUnder}}O {{.OverUnder.Total}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+                            <td>{{if .OverUnder}}O {{.OverUnder.Total}} <span class="odds-juice">{{if .OverUnder.OverOdds.IsPositive}}+{{end}}{{.OverUnder.OverOdds.IntPart}}</span>{{else}}<span class="text-muted">-</span>{{end}}</td>
                             <td>
                                 {{if .MoneyLine}}
                                     {{if .MoneyLine.AwayOdds.IsPositive}}+{{end}}{{.MoneyLine.AwayOdds.IntPart}}
