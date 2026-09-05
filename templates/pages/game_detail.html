@@ -48,9 +48,9 @@
                      nowhere would be worse than none. -->
                 {{if eq .Game.Status "in_progress"}}
                 {{if .Game.LiveState.AwayHasBall}}
-                <div class="possession-arrow" aria-label="{{.Game.AwayTeam.Name}} has possession" title="{{.Game.AwayTeam.Name}} has possession">←</div>
+                <div class="possession-arrow" aria-label="{{.Game.AwayTeam.Name}} has possession" title="{{.Game.AwayTeam.Name}} has possession">◄</div>
                 {{else if .Game.LiveState.HomeHasBall}}
-                <div class="possession-arrow" aria-label="{{.Game.HomeTeam.Name}} has possession" title="{{.Game.HomeTeam.Name}} has possession">→</div>
+                <div class="possession-arrow" aria-label="{{.Game.HomeTeam.Name}} has possession" title="{{.Game.HomeTeam.Name}} has possession">►</div>
                 {{end}}
                 {{end}}
             </div>

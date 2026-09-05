@@ -261,9 +261,9 @@
                         @
                         {{if eq .Game.Status "in_progress"}}
                         {{if .Game.LiveState.AwayHasBall}}
-                        <span class="possession-arrow" aria-label="{{.Game.AwayTeam.Name}} has possession" title="{{.Game.AwayTeam.Name}} has possession">←</span>
+                        <span class="possession-arrow" aria-label="{{.Game.AwayTeam.Name}} has possession" title="{{.Game.AwayTeam.Name}} has possession">◄</span>
                         {{else if .Game.LiveState.HomeHasBall}}
-                        <span class="possession-arrow" aria-label="{{.Game.HomeTeam.Name}} has possession" title="{{.Game.HomeTeam.Name}} has possession">→</span>
+                        <span class="possession-arrow" aria-label="{{.Game.HomeTeam.Name}} has possession" title="{{.Game.HomeTeam.Name}} has possession">►</span>
                         {{end}}
                         {{end}}
                     </div>
