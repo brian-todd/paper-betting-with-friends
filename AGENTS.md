@@ -257,6 +257,13 @@ keyed by one.
 outside `CFB_SCOREBOARD_CLASSIFICATIONS` and every game outside the current
 week. Basketball takes its status from the API.
 
+The line score is the exception: it stays on `GameResult`, where the score
+lives, and `PeriodScores` zips the two sides into columns for the game page.
+The column labels come from the same `periodLabel` the live badge uses, so an
+"OT" column and an "OT" badge on the same page cannot drift apart. An unplayed
+period is nil rather than zero — the feed fills quarters in as they are played,
+so the table renders mid-game as readily as after it.
+
 Everything the scoreboard reports beyond the score — period, clock, situation,
 possession, last play, TV, weather, win probability — lands in
 `models.GameLiveState`, one row per game, preloaded as `Game.LiveState`. Its

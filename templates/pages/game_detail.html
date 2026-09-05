@@ -63,6 +63,16 @@
         {{with .Game.LiveState}}
         {{if .HasLiveDetail}}
         <div class="live-strip" aria-live="polite">
+            <!-- The marker beside a team's abbreviation says which side has the
+                 ball; this says it in words, since a football glyph tucked
+                 against an abbreviation is easy to miss and means nothing to a
+                 screen reader. The feed reports possession only while a drive
+                 is live, so both are absent between them. -->
+            {{if or .HomeHasBall .AwayHasBall}}
+            <div class="live-possession">
+                🏈 {{if .HomeHasBall}}{{$.Game.HomeTeam.Abbreviation}}{{else}}{{$.Game.AwayTeam.Abbreviation}}{{end}} ball
+            </div>
+            {{end}}
             {{with .SituationText}}<div class="live-situation">{{.}}</div>{{end}}
             {{with .LastPlayText}}<div class="live-last-play">{{.}}</div>{{end}}
         </div>
@@ -70,6 +80,39 @@
         {{end}}
         {{end}}
     </div>
+
+    <!-- Scoring by period. The feed fills these in as the quarters are played,
+         so this is drawn for a game in progress as readily as a finished one --
+         which is why an unplayed period shows a dash rather than a zero. -->
+    {{with .Result}}
+    {{$periods := .PeriodScores}}
+    {{if $periods}}
+    <div class="linescore-section">
+        <h2>Scoring by Quarter</h2>
+        <table class="linescore-table">
+            <thead>
+                <tr>
+                    <th scope="col">Team</th>
+                    {{range $periods}}<th scope="col">{{.Label}}</th>{{end}}
+                    <th scope="col" class="linescore-total">T</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <th scope="row">{{$.Game.AwayTeam.Abbreviation}}</th>
+                    {{range $periods}}<td>{{if .Away}}{{.Away}}{{else}}<span class="no-data">—</span>{{end}}</td>{{end}}
+                    <td class="linescore-total">{{.AwayScore}}</td>
+                </tr>
+                <tr>
+                    <th scope="row">{{$.Game.HomeTeam.Abbreviation}}</th>
+                    {{range $periods}}<td>{{if .Home}}{{.Home}}{{else}}<span class="no-data">—</span>{{end}}</td>{{end}}
+                    <td class="linescore-total">{{.HomeScore}}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+    {{end}}
 
     <div class="game-info-section">
         <div class="info-card">

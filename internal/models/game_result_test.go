@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -116,6 +117,97 @@ func TestGameResultIsFinal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.result.IsFinal(); got != tt.want {
 				t.Errorf("IsFinal() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGameResultPeriodScores(t *testing.T) {
+	tests := []struct {
+		name       string
+		result     *GameResult
+		wantLabels []string
+		wantHome   []string
+		wantAway   []string
+	}{
+		{
+			// Every game before kickoff, and every feed that reports no
+			// breakdown. The caller draws no table rather than an empty one.
+			name:   "nil receiver",
+			result: nil,
+		},
+		{
+			name:   "no line scores",
+			result: &GameResult{HomeScore: 10, AwayScore: 7},
+		},
+		{
+			name: "regulation",
+			result: &GameResult{
+				HomeLineScores: IntSlice{14, 21, 24, 0},
+				AwayLineScores: IntSlice{0, 7, 0, 3},
+			},
+			wantLabels: []string{"Q1", "Q2", "Q3", "Q4"},
+			wantHome:   []string{"14", "21", "24", "0"},
+			wantAway:   []string{"0", "7", "0", "3"},
+		},
+		{
+			// The labels come from the same helper the live badge uses, so an
+			// overtime column and an overtime badge cannot disagree.
+			name: "double overtime",
+			result: &GameResult{
+				HomeLineScores: IntSlice{7, 7, 7, 7, 7, 3},
+				AwayLineScores: IntSlice{7, 7, 7, 7, 7, 0},
+			},
+			wantLabels: []string{"Q1", "Q2", "Q3", "Q4", "OT", "2OT"},
+			wantHome:   []string{"7", "7", "7", "7", "7", "3"},
+			wantAway:   []string{"7", "7", "7", "7", "7", "0"},
+		},
+		{
+			// The two arrays arrive independently from an upstream nobody here
+			// controls. Indexing one by the other's length is how that becomes
+			// a panic on a page, so the short side reports no entry instead.
+			name: "sides of unequal length",
+			result: &GameResult{
+				HomeLineScores: IntSlice{7, 3, 10},
+				AwayLineScores: IntSlice{0},
+			},
+			wantLabels: []string{"Q1", "Q2", "Q3"},
+			wantHome:   []string{"7", "3", "10"},
+			wantAway:   []string{"0", "-", "-"},
+		},
+		{
+			name:       "only one side reported",
+			result:     &GameResult{AwayLineScores: IntSlice{0, 7}},
+			wantLabels: []string{"Q1", "Q2"},
+			wantHome:   []string{"-", "-"},
+			wantAway:   []string{"0", "7"},
+		},
+	}
+
+	show := func(v *int) string {
+		if v == nil {
+			return "-"
+		}
+		return strconv.Itoa(*v)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scores := tt.result.PeriodScores()
+			if len(scores) != len(tt.wantLabels) {
+				t.Fatalf("got %d periods, want %d", len(scores), len(tt.wantLabels))
+			}
+
+			for i, score := range scores {
+				if score.Label != tt.wantLabels[i] {
+					t.Errorf("period %d label = %q, want %q", i, score.Label, tt.wantLabels[i])
+				}
+				if got := show(score.Home); got != tt.wantHome[i] {
+					t.Errorf("period %d home = %s, want %s", i, got, tt.wantHome[i])
+				}
+				if got := show(score.Away); got != tt.wantAway[i] {
+					t.Errorf("period %d away = %s, want %s", i, got, tt.wantAway[i])
+				}
 			}
 		})
 	}

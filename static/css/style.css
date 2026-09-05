@@ -1907,6 +1907,15 @@ button.btn {
     gap: 0.375rem;
 }
 
+/* Who has the ball, in words. Sits above the down and distance because it is
+   the thing the marker on the team abbreviation is also saying, and a reader
+   who missed that glyph should find it here first. */
+.live-possession {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--color-text);
+}
+
 .live-situation {
     font-size: 1rem;
     font-weight: 600;
@@ -1917,6 +1926,83 @@ button.btn {
     font-size: 0.875rem;
     color: var(--color-text-muted);
     line-height: 1.5;
+}
+
+/* Scoring by quarter. Fixed layout with equal period columns, so the quarters
+   line up between the two rows however wide a score gets, and the table does
+   not shuffle as points come in. */
+.linescore-section {
+    margin-bottom: 2rem;
+}
+
+.linescore-section h2 {
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.linescore-table {
+    /* Capped rather than full-bleed: at full page width the team column absorbs
+       all the slack and strands each side's name a long way from its own
+       numbers. Overflows to a scroll only on a narrow phone in overtime. */
+    width: 100%;
+    max-width: 32rem;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-family: var(--font-mono);
+    background: var(--color-bg-card);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.linescore-table th,
+.linescore-table td {
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.linescore-table tbody tr:last-child th,
+.linescore-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.linescore-table thead th {
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+}
+
+/* The team column is the only one carrying words, so it takes the slack and
+   the period columns stay evenly divided. */
+.linescore-table th:first-child,
+.linescore-table td:first-child {
+    width: auto;
+    text-align: left;
+    padding-left: 1rem;
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.linescore-table th:not(:first-child),
+.linescore-table td:not(:first-child) {
+    width: 3.5rem;
+}
+
+.linescore-table tbody td {
+    font-size: 1.05rem;
+    color: var(--color-text);
+}
+
+.linescore-table .linescore-total {
+    border-left: 1px solid var(--color-border);
+}
+
+.linescore-table tbody td.linescore-total {
+    font-weight: 700;
+    color: var(--color-primary);
 }
 
 .matchup-vs {

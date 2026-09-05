@@ -76,9 +76,16 @@ func (s *GameLiveState) PeriodLabel() string {
 	if s == nil || s.Period == nil || *s.Period < 1 {
 		return ""
 	}
+	return periodLabel(*s.Period)
+}
 
-	period := *s.Period
+// periodLabel names the nth period of a football game. It is shared with the
+// line score, so the column headed "OT" there and the badge reading "OT" on the
+// same page cannot drift apart.
+func periodLabel(period int) string {
 	switch {
+	case period < 1:
+		return ""
 	case period <= regulationPeriods:
 		return "Q" + strconv.Itoa(period)
 	case period == regulationPeriods+1:
