@@ -1,6 +1,7 @@
 package bets
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
+	"github.com/brian/paper-betting-with-friends/internal/syncerr"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -47,6 +49,8 @@ type Service struct {
 	holyLockRepo      *repository.HolyLockRepository
 	userBetRepo       *repository.UserBetRepository
 	betPageRepo       *repository.BetPageRepository
+	settlementRepo    *repository.SettlementRepository
+	logger            *slog.Logger
 }
 
 // NewService creates a new bets service.
@@ -68,6 +72,8 @@ func NewService(db *gorm.DB) *Service {
 		holyLockRepo:      repository.NewHolyLockRepository(db),
 		userBetRepo:       repository.NewUserBetRepository(db),
 		betPageRepo:       repository.NewBetPageRepository(db),
+		settlementRepo:    repository.NewSettlementRepository(db),
+		logger:            slog.Default().With("component", "bet-settlement"),
 	}
 }
 
@@ -446,7 +452,73 @@ func (s *Service) CancelOverUnderBet(betID, userID uuid.UUID) error {
 	return s.purseRepo.CreditWinnings(bet.UserID, bet.LeagueID, bet.Stake)
 }
 
+// minTimeToPlay is how long after kickoff a game must be before its bets may
+// settle.
+//
+// Finality now comes from whichever feed reports it first, and for football
+// that is the scoreboard -- minutes after the whistle rather than at the next
+// /games run. That speed is the point of the sweep, and it cuts both ways: a
+// feed that mislabels a game as complete is acted on just as quickly, and a
+// settled bet has already moved money.
+//
+// No football or basketball game is played out in ninety minutes, so a "final"
+// arriving sooner than that is a feed error rather than a result. Waiting costs
+// nothing, because the sweep comes round again five minutes later.
+const minTimeToPlay = 90 * time.Minute
+
+// SettleFinalGames settles the bets on every game whose result is final.
+//
+// It exists because finalizing a game and paying out on it used to be the same
+// act: EvaluateBetsForGame was reached only from the middle of a /games sync,
+// so a bet settled when that endpoint next happened to be polled and the feed
+// that had actually seen the game end -- the scoreboard, which writes
+// finalized_at and stops there -- could not settle anything at all.
+//
+// Running it as its own sweep decouples the two. Any feed can finalize a game;
+// this turns finality into money, on its own schedule, reading nothing but the
+// database. It also makes settlement retriable, which it was not: a game whose
+// payout failed halfway used to depend on another sync run passing the same way.
+//
+// Settling one game is best effort. A single bet that will not save is no
+// reason to leave the rest of a Saturday unpaid, so failures are tallied and
+// reported at the end rather than abandoning the run -- see syncerr.
+func (s *Service) SettleFinalGames(ctx context.Context) error {
+	games, err := s.settlementRepo.FindGamesAwaitingSettlement(time.Now().Add(-minTimeToPlay))
+	if err != nil {
+		return err
+	}
+	if len(games) == 0 {
+		// The common case by far, and not worth a log line every five minutes.
+		return nil
+	}
+
+	var failed syncerr.Tally
+	settled := 0
+
+	for _, gameID := range games {
+		// Shutdown cancels mid-sweep. Stopping between games leaves the rest
+		// for the next run, which is exactly what the sweep is for.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		if err := s.EvaluateBetsForGame(gameID); err != nil {
+			s.logger.Error("failed to settle bets for game", "game", gameID, "error", err)
+			failed.Add(err)
+			continue
+		}
+		settled++
+	}
+
+	s.logger.Info("settled finalized games", "games", settled, "failed", failed.Count())
+	return failed.Err("settlement")
+}
+
 // EvaluateBetsForGame evaluates all pending bets for a completed game.
+//
+// It is safe to call repeatedly and from more than one place at once: a bet is
+// only ever moved off pending by the conditional update in SettleIfPending, and
+// the purse is credited only by the caller that won that update.
 func (s *Service) EvaluateBetsForGame(gameID uuid.UUID) error {
 	// Get game result.
 	result, err := s.gameResultRepo.FindByGameID(gameID)
@@ -471,10 +543,18 @@ func (s *Service) EvaluateBetsForGame(gameID uuid.UUID) error {
 	}
 	for i := range spreadBets {
 		status := evaluateSpreadBet(&spreadBets[i], result)
-		spreadBets[i].Status = status
-		if err := s.spreadBetRepo.Update(&spreadBets[i]); err != nil {
+
+		settled, err := s.spreadBetRepo.SettleIfPending(spreadBets[i].ID, status)
+		if err != nil {
 			return err
 		}
+		if !settled {
+			// Someone else settled it between the read and the write.
+			// Crediting the purse now would pay the bet a second time.
+			continue
+		}
+		spreadBets[i].Status = status
+
 		// Update purse based on outcome.
 		if err := s.updatePurseForBet(spreadBets[i].UserID, spreadBets[i].LeagueID, spreadBets[i].Stake, spreadBets[i].OddsSnapshot, status); err != nil {
 			return err
@@ -488,10 +568,18 @@ func (s *Service) EvaluateBetsForGame(gameID uuid.UUID) error {
 	}
 	for i := range moneyLineBets {
 		status := evaluateMoneyLineBet(&moneyLineBets[i], result)
-		moneyLineBets[i].Status = status
-		if err := s.moneyLineBetRepo.Update(&moneyLineBets[i]); err != nil {
+
+		settled, err := s.moneyLineBetRepo.SettleIfPending(moneyLineBets[i].ID, status)
+		if err != nil {
 			return err
 		}
+		if !settled {
+			// Someone else settled it between the read and the write.
+			// Crediting the purse now would pay the bet a second time.
+			continue
+		}
+		moneyLineBets[i].Status = status
+
 		// Update purse based on outcome.
 		if err := s.updatePurseForBet(moneyLineBets[i].UserID, moneyLineBets[i].LeagueID, moneyLineBets[i].Stake, moneyLineBets[i].OddsSnapshot, status); err != nil {
 			return err
@@ -505,10 +593,18 @@ func (s *Service) EvaluateBetsForGame(gameID uuid.UUID) error {
 	}
 	for i := range overUnderBets {
 		status := evaluateOverUnderBet(&overUnderBets[i], result)
-		overUnderBets[i].Status = status
-		if err := s.overUnderBetRepo.Update(&overUnderBets[i]); err != nil {
+
+		settled, err := s.overUnderBetRepo.SettleIfPending(overUnderBets[i].ID, status)
+		if err != nil {
 			return err
 		}
+		if !settled {
+			// Someone else settled it between the read and the write.
+			// Crediting the purse now would pay the bet a second time.
+			continue
+		}
+		overUnderBets[i].Status = status
+
 		// Update purse based on outcome.
 		if err := s.updatePurseForBet(overUnderBets[i].UserID, overUnderBets[i].LeagueID, overUnderBets[i].Stake, overUnderBets[i].OddsSnapshot, status); err != nil {
 			return err

@@ -47,6 +47,16 @@ const scoreboardRunTimeout = 3 * time.Minute
 // seasons and so takes longer than an incremental game sync.
 const calendarRunTimeout = 10 * time.Minute
 
+// settlementInterval is how often finalized games are swept for bets still
+// owed a payout. It matches the live scoreboard's own cadence, so a football
+// bet settles about as quickly as the score that settles it arrives.
+const settlementInterval = 5 * time.Minute
+
+// settlementRunTimeout bounds one settlement sweep. The work is a handful of
+// database round trips per game and touches no upstream at all, so anything
+// approaching this bound is a stuck query rather than a slow feed.
+const settlementRunTimeout = 2 * time.Minute
+
 // seedRunTimeout bounds a full seed. A seed walks venues, teams, the calendar
 // and then every game and line of a season, so it is far longer than any
 // incremental run -- and it is triggered by hand, not on a schedule, so a
@@ -132,6 +142,18 @@ func main() {
 	basketballService := basketball.NewService(db, location)
 
 	registerSyncJobs(sched, cfg, location, db, betsService, logger)
+
+	// Settling bets is not a sync, and it is deliberately not registered
+	// alongside them: it reads results the feeds have already written and owes
+	// nothing to any upstream, so it has to run whether or not an API key is
+	// configured. A database with a finalized game and a pending bet on it has
+	// a payout outstanding regardless of whether anything can still fetch.
+	sched.Add(scheduler.Job{
+		Name:     "bet-settlement",
+		Interval: settlementInterval,
+		Timeout:  settlementRunTimeout,
+		Run:      betsService.SettleFinalGames,
+	})
 
 	adminService := admin.NewService(db, cfg, sched, betsService, gamesService)
 
