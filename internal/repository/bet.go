@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -61,6 +63,29 @@ func (r *SpreadBetRepository) FindPendingByGame(gameID uuid.UUID) ([]models.Spre
 // moving a bet to a different line silently kept it pointing at the old one.
 func (r *SpreadBetRepository) Update(bet *models.SpreadBet) error {
 	return r.db.Omit(clause.Associations).Save(bet).Error
+}
+
+// SettleIfPending moves a pending spread bet to status, reporting whether this
+// call is the one that moved it.
+//
+// The guard is the whole point. Two callers can now reach the same finalized
+// game at once -- the periodic settlement sweep, and a sync run that has just
+// written the result -- and a bet both of them read as pending would be paid
+// into the purse twice. Settling in the WHERE clause and believing RowsAffected
+// makes the transition atomic, the same way PurseRepository.DeductStake makes
+// spending one.
+//
+// It is a targeted update rather than Update so a caller cannot write anything
+// else through it: settlement changes a bet's status and nothing more.
+func (r *SpreadBetRepository) SettleIfPending(betID uuid.UUID, status models.BetStatus) (bool, error) {
+	result := r.db.Model(&models.SpreadBet{}).
+		Where("id = ? AND status = ?", betID, models.BetStatusPending).
+		Updates(map[string]any{"status": status, "updated_at": time.Now()})
+
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // BetFilter contains optional filters for querying bets. Every field is
@@ -187,6 +212,29 @@ func (r *MoneyLineBetRepository) Update(bet *models.MoneyLineBet) error {
 	return r.db.Omit(clause.Associations).Save(bet).Error
 }
 
+// SettleIfPending moves a pending money line bet to status, reporting whether this
+// call is the one that moved it.
+//
+// The guard is the whole point. Two callers can now reach the same finalized
+// game at once -- the periodic settlement sweep, and a sync run that has just
+// written the result -- and a bet both of them read as pending would be paid
+// into the purse twice. Settling in the WHERE clause and believing RowsAffected
+// makes the transition atomic, the same way PurseRepository.DeductStake makes
+// spending one.
+//
+// It is a targeted update rather than Update so a caller cannot write anything
+// else through it: settlement changes a bet's status and nothing more.
+func (r *MoneyLineBetRepository) SettleIfPending(betID uuid.UUID, status models.BetStatus) (bool, error) {
+	result := r.db.Model(&models.MoneyLineBet{}).
+		Where("id = ? AND status = ?", betID, models.BetStatusPending).
+		Updates(map[string]any{"status": status, "updated_at": time.Now()})
+
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
 // FindFiltered retrieves money line bets matching filter, newest first. Every filter
 // field is optional, so this serves both a single user's bet list and the
 // admin browser over all users.
@@ -296,6 +344,29 @@ func (r *OverUnderBetRepository) FindPendingByGame(gameID uuid.UUID) ([]models.O
 // .Update for why associations are omitted.
 func (r *OverUnderBetRepository) Update(bet *models.OverUnderBet) error {
 	return r.db.Omit(clause.Associations).Save(bet).Error
+}
+
+// SettleIfPending moves a pending over/under bet to status, reporting whether this
+// call is the one that moved it.
+//
+// The guard is the whole point. Two callers can now reach the same finalized
+// game at once -- the periodic settlement sweep, and a sync run that has just
+// written the result -- and a bet both of them read as pending would be paid
+// into the purse twice. Settling in the WHERE clause and believing RowsAffected
+// makes the transition atomic, the same way PurseRepository.DeductStake makes
+// spending one.
+//
+// It is a targeted update rather than Update so a caller cannot write anything
+// else through it: settlement changes a bet's status and nothing more.
+func (r *OverUnderBetRepository) SettleIfPending(betID uuid.UUID, status models.BetStatus) (bool, error) {
+	result := r.db.Model(&models.OverUnderBet{}).
+		Where("id = ? AND status = ?", betID, models.BetStatusPending).
+		Updates(map[string]any{"status": status, "updated_at": time.Now()})
+
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // FindFiltered retrieves over/under bets matching filter, newest first. Every filter

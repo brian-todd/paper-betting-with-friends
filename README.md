@@ -100,6 +100,7 @@ unset):
 | `cfb-calendar` | daily, loops years until the API returns empty | ~25 | ~750 |
 | `cfb-rankings` | every 6 hours | 1 | ~120 |
 | `cbb-games-and-lines` | flat `CBB_SYNC_INTERVAL_MINS` (default 15), no seasonal throttle | 2 (`/games` + `/lines`) | ~5,760 |
+| `bet-settlement` | every 5 minutes | 0 — database only | 0 |
 | **Total** | | | **~18,800 / 30,000** |
 
 That leaves roughly a third of the budget as headroom. Two things to watch if

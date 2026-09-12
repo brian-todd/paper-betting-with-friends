@@ -253,12 +253,32 @@ flapping, and both live in SQL so neither writer has to read before writing:
   already-finalized result — `EvaluateBetsForGame` re-reads that row, so
   guarding `finalized_at` without guarding what it certifies is half a rule
 
-The scoreboard deliberately does **not** settle bets. Finality is a claim about
-money, `/games` remains the feed that makes it, and `EvaluateBetsForGame` is
-still called from `syncGames` alone — so the worst a bad scoreboard reading can
-do is mislabel a card until the next games sync corrects it. Its odds are
-ignored for a related reason: they name no sportsbook, and the odds tables are
-keyed by one.
+**Finalizing a game and paying out on it are separate acts.** Any feed may
+finalize: the scoreboard has always written `finalized_at` when it sees a game
+complete, and since `GameResultRepository.Upsert` keeps the *first* one, at five
+minutes against `/games`'s fifteen it is usually the feed that does. What it
+could not do was act on it — `EvaluateBetsForGame` was reached only from the
+middle of `syncGames`, so a fully finalized game sat with its bets pending until
+that endpoint was next polled and happened to agree.
+
+The `bet-settlement` job closes that gap. It sweeps every five minutes for games
+with a finalized result and a bet still pending (`SettlementRepository`), and
+calls `EvaluateBetsForGame` on each. It reads only the database, so it is
+registered in `main` outside `registerSyncJobs` — a pending payout is owed
+whether or not an API key is configured. It also makes settlement *retriable*,
+which it was not: a game whose payout failed halfway used to depend on another
+sync run passing the same way.
+
+Two things follow. `minTimeToPlay` (90 minutes past kickoff) is a floor on how
+soon a "final" is believed, because acting on the scoreboard within five minutes
+means acting on a mislabelled one within five minutes too, and no game is played
+out that fast. And settlement now has more than one caller, so moving a bet off
+pending goes through `SettleIfPending` — a conditional update whose
+`RowsAffected` decides who credits the purse. Two callers reading the same bet as
+pending would otherwise both pay it.
+
+The scoreboard's odds are still ignored: they name no sportsbook, and the odds
+tables are keyed by one.
 
 `Game.Status` is reported for any football game the scoreboard covers, and
 *inferred* (`now > startDate + 5min`) for the rest — which is every division
@@ -404,6 +424,7 @@ embedded copy read the same directory.
 - `Truncate(24 * time.Hour)` or `Add(24 * time.Hour)` for calendar days — use `timeutil.StartOfDay` and `AddDate`
 - Bare `db.Save(bet)` in a bet repository — a preloaded association overwrites the foreign key; `Omit(clause.Associations)`
 - Treating a `GameResult` as final — check `IsFinal()`, or bets settle on a live score
+- Crediting a purse for a settled bet without first winning `SettleIfPending` — the settlement sweep is not the only caller, and a bet read as pending twice is paid twice
 - Assigning `status` or `finalized_at` unconditionally in a football upsert — two feeds write those rows and a plain assignment lets the slower one un-finish a settled game
 - Treating a `GameLiveState` row as "this game is live" — it exists from before kickoff and keeps the last clock after the whistle; gate on `Game.Status`
 - Trusting stored week dates unchecked — filter on `models.Week.Plausible()` in *every* path that asks "which season/week is it now"
