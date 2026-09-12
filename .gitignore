@@ -62,3 +62,6 @@ Desktop.ini
 
 # Cached API responses collected for analysis (scripts/capture-scoreboard.sh)
 samples/
+
+# Ignore spec docs.
+docs/
