@@ -170,6 +170,15 @@ func spRatingsFrom(year int, payload []APITeamSP, resolve func(string) (uuid.UUI
 			continue
 		}
 
+		// Overall is NOT NULL, and a null rating decoded into a float64 is not
+		// an absent number but a zero one -- which on this scale is a real
+		// value, roughly the league average. SPProjection then differences that
+		// fabrication against the other side and prints a margin that looks
+		// sourced. FPI and CORE guard the same way.
+		if r.Rating == nil {
+			continue
+		}
+
 		teamID, ok := resolve(r.Team)
 		if !ok {
 			continue
@@ -179,7 +188,7 @@ func spRatingsFrom(year int, payload []APITeamSP, resolve func(string) (uuid.UUI
 			TeamID:       teamID,
 			Season:       year,
 			Source:       models.RatingSourceSP,
-			Overall:      decimal.NewFromFloat(r.Rating),
+			Overall:      decimal.NewFromFloat(*r.Rating),
 			OverallRank:  r.Ranking,
 			Offense:      decimalPtr(r.Offense.Rating),
 			OffenseRank:  r.Offense.Ranking,

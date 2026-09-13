@@ -39,6 +39,18 @@ type Job struct {
 	// miscomputes cannot spin the loop.
 	NextDelay func(now time.Time) time.Duration
 
+	// RunOnStart brings the first run forward to startup instead of waiting a
+	// full interval for it. It is for a job whose schedule is longer than the
+	// process's own uptime: a daily job computes "time until tomorrow's slot"
+	// from every start, so on a service deployed more than once a day it never
+	// runs at all, and nothing in the log says so -- the schedule looks healthy
+	// right up until someone asks why the table is empty. Ignored by a
+	// manual-only job, which has no schedule to bring forward.
+	//
+	// It costs one extra run per restart, so it belongs on work measured in
+	// requests a day rather than requests a minute.
+	RunOnStart bool
+
 	// ManualOnly marks a job with no schedule at all: it runs only when Trigger
 	// asks for it. It exists for work that is genuinely occasional -- seeding a
 	// season's teams and venues, say -- which still wants everything the
@@ -339,6 +351,14 @@ func (s *Scheduler) runJob(ctx context.Context, j Job) {
 	}
 
 	defer s.logger.Info("background job stopped", "job", j.Name)
+
+	// Ahead of the loop rather than inside it: the select below can only be
+	// woken by the timer or by a trigger, and the whole point of this run is
+	// that the timer is too far out to wait for.
+	if j.RunOnStart && timer != nil && ctx.Err() == nil {
+		s.invoke(ctx, j, nil)
+		s.reschedule(j, timer, true)
+	}
 
 	for {
 		select {

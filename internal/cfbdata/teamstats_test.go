@@ -25,7 +25,7 @@ func TestSPRatingsFromKeepsOnlyPopulatedFields(t *testing.T) {
 	payload := []APITeamSP{{
 		Year:    2026,
 		Team:    "Ohio State",
-		Rating:  30,
+		Rating:  new(30.0),
 		Ranking: &rank,
 	}}
 	payload[0].Offense.Rating, payload[0].Offense.Ranking = &offRating, &offRank
@@ -72,8 +72,8 @@ func TestSPRatingsFromSkipsNationalAveragesBeforeResolving(t *testing.T) {
 	}
 
 	rows := spRatingsFrom(2026, []APITeamSP{
-		{Team: "Ohio State", Rating: 30},
-		{Team: APINationalAveragesTeam, Rating: -0.13405797101449277},
+		{Team: "Ohio State", Rating: new(30.0)},
+		{Team: APINationalAveragesTeam, Rating: new(-0.13405797101449277)},
 	}, resolve)
 
 	if len(rows) != 1 {
@@ -95,8 +95,8 @@ func TestSPRatingsFromDropsUnresolvedTeams(t *testing.T) {
 	}
 
 	rows := spRatingsFrom(2026, []APITeamSP{
-		{Team: "Ohio State", Rating: 30},
-		{Team: "Renamed School", Rating: 12},
+		{Team: "Ohio State", Rating: new(30.0)},
+		{Team: "Renamed School", Rating: new(12.0)},
 	}, resolve)
 
 	if len(rows) != 1 {
@@ -136,6 +136,17 @@ func TestFPIRatingsFromPreservesThreeDecimalPlaces(t *testing.T) {
 
 // Overall is NOT NULL. A team the model has no headline number for has nothing
 // to store, and the efficiencies are percentiles that cannot stand in for it.
+// SP+'s headline rating is nullable like every other field on the row, and zero
+// is a real SP+ figure -- so a dropped row is the only honest answer to a null
+// one. Stored as 0.000 it would read as an average team and project like one.
+func TestSPRatingsFromSkipsRowsWithoutARating(t *testing.T) {
+	payload := []APITeamSP{{Team: "Somebody"}}
+
+	if rows := spRatingsFrom(2026, payload, resolveAll(uuid.New())); len(rows) != 0 {
+		t.Fatalf("got %d rows, want 0", len(rows))
+	}
+}
+
 func TestFPIRatingsFromSkipsRowsWithoutARating(t *testing.T) {
 	efficiency := 51.8
 	payload := []APITeamFPI{{Team: "Somebody"}}

@@ -221,3 +221,57 @@ func TestGameDetailDrawsNoForecastSection(t *testing.T) {
 		t.Error("the page did not render its game information")
 	}
 }
+
+// renderLiveWeather renders the page for a game the scoreboard has reported
+// weather for, with forecast passed as the page would have it at that moment.
+func renderLiveWeather(t *testing.T, forecast *models.GameForecast) string {
+	t.Helper()
+
+	temperature, wind := decimal.RequireFromString("41.3"), decimal.RequireFromString("12.4")
+	description, direction := "Light Snow", 295
+
+	return html.UnescapeString(renderGameDetail(t, uuid.New(), map[string]any{
+		"Forecast": forecast,
+		"Game": models.Game{
+			ID:          uuid.New(),
+			ScheduledAt: time.Now().Add(-time.Hour),
+			Status:      models.GameStatusInProgress,
+			HomeTeam:    models.Team{Abbreviation: "GT"},
+			AwayTeam:    models.Team{Abbreviation: "CLEM"},
+			LiveState: &models.GameLiveState{
+				WeatherDescription: &description,
+				Temperature:        &temperature,
+				WindSpeed:          &wind,
+				WindDirection:      &direction,
+			},
+		},
+	}))
+}
+
+// The forecast card stops rendering at kickoff, which is the point at which the
+// weather starts to matter. What the scoreboard reports has to reach the reader
+// from somewhere after that, and the game information card is the somewhere.
+func TestGameDetailShowsLiveWeatherOnceTheForecastIsGone(t *testing.T) {
+	page := renderLiveWeather(t, nil)
+
+	if !strings.Contains(page, "Light Snow, 41°F") {
+		t.Error("the live weather was not drawn")
+	}
+	if !strings.Contains(page, "12 mph WNW") {
+		t.Error("the live wind was not drawn")
+	}
+}
+
+// Before kickoff both are available and they describe the same sky, so only the
+// forecast -- the fuller of the two -- is drawn.
+func TestGameDetailPrefersTheForecastToLiveWeather(t *testing.T) {
+	temperature := decimal.RequireFromString("38.0")
+	page := renderLiveWeather(t, &models.GameForecast{Temperature: &temperature})
+
+	if !strings.Contains(page, "Kickoff forecast") {
+		t.Fatal("the forecast section was not drawn, so this proves nothing")
+	}
+	if strings.Contains(page, "Light Snow, 41°F") {
+		t.Error("the live weather was drawn alongside the forecast")
+	}
+}

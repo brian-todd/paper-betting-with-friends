@@ -442,12 +442,18 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 		}
 	}
 
-	// The comparison panel is football-only because its provider is. It is
-	// gated on having produced something rather than on the sport, since the
-	// absent case has to render anyway for a football game synced before the
-	// stats job first ran.
-	if matchup := s.buildMatchup(game); matchup.HasAny() {
-		detail.Matchup = matchup
+	// The comparison panel is football-only because its provider is, and the
+	// sport has to be checked before HasAny rather than instead of it. Nothing
+	// basketball reaches here populates a rating, a record or an efficiency
+	// figure -- but RecentResults is sport-aware and answers happily, so a
+	// basketball page drew a panel consisting of nothing but form, and spent a
+	// dozen queries finding out that the rest of it was empty. HasAny still
+	// earns its place afterwards: a football game synced before the stats job
+	// first ran has to render the absent case.
+	if game.Sport == models.SportFootball {
+		if matchup := s.buildMatchup(game); matchup.HasAny() {
+			detail.Matchup = matchup
+		}
 	}
 	detail.Forecast = s.forecastFor(game)
 

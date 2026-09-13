@@ -125,9 +125,11 @@ func TestGameDetailRendersAFullMatchup(t *testing.T) {
 		t.Error("the as-of line is missing")
 	}
 	// Times are rendered through localTime, never .Format, or the server's UTC
-	// leaks into the page.
-	if !strings.Contains(page, `data-format="mediumdate"`) {
-		t.Error("the as-of date was not rendered through localTime")
+	// leaks into the page. The format carries a time as well as a date: the
+	// line exists to say how stale the panel is, and a bare date cannot tell
+	// fifteen minutes from twenty hours.
+	if !strings.Contains(page, `data-format="datetime"`) {
+		t.Error("the as-of timestamp was not rendered through localTime")
 	}
 
 	// The FBS-only footnote describes a panel short some rows. This one is not.

@@ -251,9 +251,13 @@
             {{end}}
 
             <!-- Without this a reader assumes the numbers are live. During a
-                 Saturday slate they can be most of a day old. -->
+                 Saturday slate they can be most of a day old -- which is why
+                 this carries the time as well as the date: "as of today" is
+                 exactly as reassuring for a panel refreshed twenty hours ago as
+                 for one refreshed fifteen minutes ago, and the two are not the
+                 same answer. -->
             {{with .AsOf}}
-            <p class="matchup-note">Ratings and records as of {{localTime . "mediumdate"}}.</p>
+            <p class="matchup-note">Ratings and records as of {{localTime . "datetime"}}.</p>
             {{end}}
         </div>
 
@@ -355,6 +359,19 @@
                     {{with .Game.LiveState.Broadcast}}
                     <dt>TV</dt>
                     <dd>{{.}}</dd>
+                    {{end}}
+                    <!-- The scoreboard's weather, which is the only weather
+                         there is once a game has kicked off: the forecast card
+                         above stops rendering at kickoff, and without this the
+                         page went from a full forecast to nothing at all at the
+                         moment the weather started to matter. Suppressed while
+                         that card is up so the two do not both describe the
+                         same sky. -->
+                    {{if not .Forecast}}
+                    {{with .Game.LiveState.WeatherText}}
+                    <dt>Weather</dt>
+                    <dd>{{.}}{{with $.Game.LiveState.WindText}}, {{.}}{{end}}</dd>
+                    {{end}}
                     {{end}}
                 </dl>
                 <!-- localTime, never .Format: the server runs in UTC and a

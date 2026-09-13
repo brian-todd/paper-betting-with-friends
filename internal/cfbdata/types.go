@@ -242,11 +242,11 @@ type APIScoreboardGame struct {
 // tier, for a completed season as readily as a live one. Only what the endpoint
 // actually populates is modelled.
 type APITeamSP struct {
-	Year       int     `json:"year"`
-	Team       string  `json:"team"`
-	Conference string  `json:"conference"`
-	Rating     float64 `json:"rating"`
-	Ranking    *int    `json:"ranking"`
+	Year       int      `json:"year"`
+	Team       string   `json:"team"`
+	Conference string   `json:"conference"`
+	Rating     *float64 `json:"rating"`
+	Ranking    *int     `json:"ranking"`
 	Offense    struct {
 		Rating  *float64 `json:"rating"`
 		Ranking *int     `json:"ranking"`

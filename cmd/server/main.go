@@ -376,13 +376,19 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 		// page's comparison panels. Daily is already generous: every source in
 		// it moves once a week, after Saturday, and the six requests a run make
 		// the cadence a rounding error against the monthly allowance.
+		//
+		// RunOnStart because a daily slot is longer than the gap between two
+		// deploys: NextDelay answers "time until tomorrow's 04:00" from every
+		// start, so without it a week of afternoon releases leaves every one of
+		// these tables empty with the schedule still reporting healthy.
 		sched.Add(scheduler.Job{
 			Name:  "cfb-team-stats",
 			Label: "Football team stats",
 			NextDelay: func(now time.Time) time.Duration {
 				return cfbdata.TeamStatsDelay(now, location)
 			},
-			Timeout: syncRunTimeout,
+			RunOnStart: true,
+			Timeout:    syncRunTimeout,
 			Run: func(ctx context.Context) error {
 				return syncService.SyncTeamStats(ctx, syncService.GetCurrentSeasonYear())
 			},
@@ -399,7 +405,8 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			NextDelay: func(now time.Time) time.Duration {
 				return cfbdata.GameContextDelay(now, location)
 			},
-			Timeout: syncRunTimeout,
+			RunOnStart: true,
+			Timeout:    syncRunTimeout,
 			Run: func(ctx context.Context) error {
 				return syncService.SyncGameContext(ctx, syncService.GetCurrentSeasonYear())
 			},

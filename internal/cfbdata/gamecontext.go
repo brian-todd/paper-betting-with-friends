@@ -148,6 +148,9 @@ func pregameWinProbabilitiesFrom(payload []APIPregameWP, games map[int64]uuid.UU
 	return rows
 }
 
+// maxWeatherConditionLen is the width of the weather_condition column.
+const maxWeatherConditionLen = 64
+
 // gameForecastsFrom maps a /games/weather payload onto rows.
 //
 // Indoor games are kept rather than skipped. The row is what lets the page know
@@ -176,7 +179,14 @@ func gameForecastsFrom(payload []APIGameWeather, games map[int64]uuid.UUID) []mo
 		// Code 0 is the feed's way of saying it has no label yet, and it always
 		// arrives with a null condition. Normalising the empty string to nil as
 		// well keeps the template's {{with}} honest whichever way it comes.
-		if w.WeatherCondition != nil && *w.WeatherCondition != "" {
+		//
+		// An over-long label is dropped the same way rather than carried into
+		// an upsert that would reject the whole row and take the temperature
+		// and wind down with it -- the two things the panel actually renders,
+		// with the label a bonus on top. Bounded in bytes against a column
+		// counted in characters, which errs the safe way.
+		if w.WeatherCondition != nil && *w.WeatherCondition != "" &&
+			len(*w.WeatherCondition) <= maxWeatherConditionLen {
 			row.WeatherCondition = w.WeatherCondition
 		}
 
