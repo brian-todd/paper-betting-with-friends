@@ -34,7 +34,7 @@
                 <div class="team-score-large">{{.Result.AwayScore}}</div>
                 {{end}}
             </div>
-            
+
             <div class="matchup-vs">
                 <span class="vs-text">@</span>
                 <div class="game-datetime">
@@ -54,7 +54,7 @@
                 {{end}}
                 {{end}}
             </div>
-            
+
             <div class="team-display home">
                 {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
                 {{if .HomeRank}}<span class="team-rank">#{{.HomeRank}}</span>{{end}}
@@ -112,42 +112,268 @@
         {{end}}
     </div>
 
+    <!-- Pre-game comparison. Everything in it is decision support for choosing a
+         bet, so it is drawn for a finished game too but makes no claim to show
+         what the numbers were before kickoff -- the "as of" line says when they
+         were fetched. Football only: the basketball provider supplies none of it. -->
+    {{with .Matchup}}
+    {{$matchup := .}}
+    <div class="matchup-section">
+        <div class="info-card">
+            <h3>Matchup</h3>
+            <table class="matchup-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Metric</th>
+                        <th scope="col">{{.Away.Team.Abbreviation}}</th>
+                        <th scope="col">{{.Home.Team.Abbreviation}}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{if or .Away.Record .Home.Record}}
+                    <tr>
+                        <th scope="row"><span class="metric-help" title="{{$matchup.Explain "Record"}}">Record</span></th>
+                        <td>{{with .Away.Record}}{{if .Overall.Played}}{{.Overall}}{{else}}<span class="no-data">—</span>{{end}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{with .Home.Record}}{{if .Overall.Played}}{{.Overall}}{{else}}<span class="no-data">—</span>{{end}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                    </tr>
+                    <!-- The split that actually applies to this game: how the
+                         visitor has done on the road and the host at home. -->
+                    {{if not .NeutralSite}}
+                    <tr>
+                        <th scope="row"><span class="metric-help" title="{{$matchup.Explain "Away / Home"}}">Away / Home</span></th>
+                        <td>{{with .Away.Record}}{{if .Away.Played}}{{.Away}} away{{else}}<span class="no-data">—</span>{{end}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{with .Home.Record}}{{if .Home.Played}}{{.Home}} home{{else}}<span class="no-data">—</span>{{end}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                    </tr>
+                    {{end}}
+                    {{end}}
+
+                    <!-- The one row on this panel that is about the bet rather
+                         than the game: a rating says who is better, this says
+                         who has been beating the number. Both sides or neither,
+                         as with the ratings. -->
+                    {{if .HasATS}}
+                    <tr>
+                        <th scope="row">
+                            <span class="metric-help" title="{{$matchup.Explain "Against the spread"}}">Against the spread</span>
+                        </th>
+                        <td>{{.Away.ATS.Record}} <span class="matchup-rank">({{.Away.ATS.CoverMarginText}})</span></td>
+                        <td>{{.Home.ATS.Record}} <span class="matchup-rank">({{.Home.ATS.CoverMarginText}})</span></td>
+                    </tr>
+                    {{end}}
+
+                    <!-- A rating row is drawn only when both sides have one. A
+                         row reading "— | 14.2" invites the reader to conclude the
+                         unrated team is bad rather than uncovered, and an FBS
+                         side hosting an FCS one is a normal September Saturday. -->
+                    {{range $source := .RatingRows}}
+                    {{$away := index $matchup.Away.Ratings $source}}
+                    {{$home := index $matchup.Home.Ratings $source}}
+                    <tr{{if $matchup.RatingUnits $source}} class="matchup-parent"{{end}}>
+                        <th scope="row">
+                            <span class="metric-help" title="{{$matchup.Explain $source.Label}}">{{$source.Label}}</span>
+                            <!-- The one number on this page we compute rather
+                                 than source, so it is a parenthetical on the row
+                                 it is derived from and not a row of its own. -->
+                            {{if eq $source.Label "SP+"}}{{with $matchup.SPProjection}}
+                            <span class="matchup-projection">(projects {{.Favorite.Abbreviation}} by {{.Margin}})</span>
+                            {{end}}{{end}}
+                        </th>
+                        <td>{{$away.OverallText}}{{with $away.OverallRank}} <span class="matchup-rank">#{{.}}</span>{{end}}</td>
+                        <td>{{$home.OverallText}}{{with $home.OverallRank}} <span class="matchup-rank">#{{.}}</span>{{end}}</td>
+                    </tr>
+
+                    <!-- Each source breaks out into the units behind it, as
+                         far as this page can say which way they run: SP+ and
+                         CORE score a defence low and an offence high, FPI runs
+                         both as percentiles. Indented rows rather than a nested
+                         table -- they are the same three columns, and a table
+                         inside a cell would stop the two teams lining up with
+                         everything above. -->
+                    {{range $matchup.RatingUnits $source}}
+                    <tr class="matchup-subrow">
+                        <th scope="row">{{.Label}}</th>
+                        <td>{{.Away}}{{with .AwayRank}} <span class="matchup-rank">#{{.}}</span>{{end}}</td>
+                        <td>{{.Home}}{{with .HomeRank}} <span class="matchup-rank">#{{.}}</span>{{end}}</td>
+                    </tr>
+                    {{end}}
+                    {{end}}
+
+                    {{if .HasElo}}
+                    <tr>
+                        <th scope="row"><span class="metric-help" title="{{$matchup.Explain "Elo"}}">Elo</span></th>
+                        <td>{{.Away.PregameElo}}</td>
+                        <td>{{.Home.PregameElo}}</td>
+                    </tr>
+                    {{end}}
+
+                    <!-- Sourced, not computed: the provider derives this from a
+                         posted line, which is why most games do not have one
+                         until the week they are played. Nothing is substituted
+                         when it is missing. -->
+                    {{with .WinProbability}}
+                    <tr>
+                        <th scope="row">
+                            <span class="metric-help" title="{{$matchup.Explain "Win probability"}}">Win probability</span>
+                            <span class="matchup-projection">(from a {{.Spread}} line)</span>
+                        </th>
+                        <td>{{.AwayPercent}}%</td>
+                        <td>{{.HomePercent}}%</td>
+                    </tr>
+                    {{end}}
+
+                    <!-- Recent form: the last five finished games each,
+                         newest first, this season only -- so week 1 draws
+                         nothing and week 2 draws one game. That is the honest
+                         answer to "how have they been playing lately".
+
+                         One header spans the lot rather than a label per row:
+                         these are five lines of one metric, not five metrics,
+                         and the rows are already in order. -->
+                    {{$form := .FormRows}}
+                    {{if $form}}
+                    {{range $i, $row := $form}}
+                    <tr class="recent-row">
+                        {{if eq $i 0}}<th scope="rowgroup" rowspan="{{len $form}}"><span class="metric-help" title="{{$matchup.Explain "Recent"}}">Recent</span></th>{{end}}
+                        <td>
+                            {{with $row.Away}}<a class="recent-result" href="/games/{{.Game.ID}}" title="{{.Outcome}} {{.Score}} {{if .AtHome}}vs{{else}}at{{end}} {{.Opponent.Name}}"><span class="form-chip form-{{.Outcome}}">{{.Outcome}}</span> {{.Score}}<span class="recent-opponent">{{.OpponentText}}</span></a>{{else}}<span class="no-data">—</span>{{end}}
+                        </td>
+                        <td>
+                            {{with $row.Home}}<a class="recent-result" href="/games/{{.Game.ID}}" title="{{.Outcome}} {{.Score}} {{if .AtHome}}vs{{else}}at{{end}} {{.Opponent.Name}}"><span class="form-chip form-{{.Outcome}}">{{.Outcome}}</span> {{.Score}}<span class="recent-opponent">{{.OpponentText}}</span></a>{{else}}<span class="no-data">—</span>{{end}}
+                        </td>
+                    </tr>
+                    {{end}}
+                    {{end}}
+                </tbody>
+            </table>
+
+            {{if .RatingsAreFBSOnly}}
+            <p class="matchup-note">Ratings and efficiency figures are published for FBS teams only.</p>
+            {{end}}
+
+            <!-- Without this a reader assumes the numbers are live. During a
+                 Saturday slate they can be most of a day old. -->
+            {{with .AsOf}}
+            <p class="matchup-note">Ratings and records as of {{localTime . "mediumdate"}}.</p>
+            {{end}}
+        </div>
+
+        <!-- Season efficiency. Not a fourth rating: SP+ already prices all of
+             this, and the job of the panel is to say why a team is rated where
+             it is -- whether a good number comes from moving the ball every
+             down or from four long plays. Drawn only when both sides have run
+             enough football for the rates to mean anything. -->
+        {{if .HasEfficiency}}
+        <div class="info-card efficiency-card">
+            <h3>Efficiency</h3>
+            <table class="matchup-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Metric</th>
+                        <th scope="col">{{.Away.Team.Abbreviation}}</th>
+                        <th scope="col">{{.Home.Team.Abbreviation}}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Metric-major, with each metric's two units nested under
+                         it. Every figure this endpoint publishes comes in an
+                         offensive and a defensive flavour, and the comparison
+                         worth making is one team's offense against the other's
+                         defense -- which needs the pair adjacent.
+
+                         The metric spans the table because it holds no value of
+                         its own; the two columns belong to the units. -->
+                    {{range .EfficiencyMetrics}}
+                    <tr class="efficiency-group">
+                        <th scope="row" colspan="3">
+                            <span class="metric-help" title="{{.Help}}">{{.Label}}</span>
+                        </th>
+                    </tr>
+                    {{range .Units}}
+                    <tr class="matchup-subrow">
+                        <th scope="row">{{.Label}}</th>
+                        <td>{{if .Away}}{{.Away}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{if .Home}}{{.Home}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                    </tr>
+                    {{end}}
+                    {{end}}
+                </tbody>
+            </table>
+
+            <!-- Two teams three games in produce numbers that look exactly as
+                 authoritative as two teams ten games in. -->
+            {{with .EfficiencySample}}
+            <p class="matchup-note">{{.}}</p>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+
+    <!-- Kickoff forecast. Present only before kickoff and only outdoors: the
+         provider returns a full, plausible forecast for a domed stadium, which
+         is the weather outside the roof. Once the game starts the live strip
+         owns the weather. -->
+    {{with .Forecast}}
+    <div class="forecast-section">
+        <div class="info-card">
+            <h3>Kickoff forecast</h3>
+            <ul class="forecast-list">
+                <li><span class="forecast-label">Temperature</span> <span class="forecast-value">{{.TemperatureText}}</span></li>
+                {{with .ConditionText}}<li><span class="forecast-label">Conditions</span> <span class="forecast-value">{{.}}</span></li>{{end}}
+                {{with .WindText}}<li><span class="forecast-label">Wind</span> <span class="forecast-value">{{.}}</span></li>{{end}}
+                {{with .PrecipitationText}}<li><span class="forecast-label">Precipitation</span> <span class="forecast-value">{{.}}</span></li>{{end}}
+                {{with .HumidityText}}<li><span class="forecast-label">Humidity</span> <span class="forecast-value">{{.}}</span></li>{{end}}
+            </ul>
+            <!-- Staleness matters more here than anywhere else on the page. A
+                 rating moves once a week; a forecast moves all afternoon. -->
+            <p class="matchup-note">Forecast as of {{localTime .FetchedAt "datetime"}}.</p>
+        </div>
+    </div>
+    {{end}}
+
     <div class="game-info-section">
         <div class="info-card">
             <h3>Game Information</h3>
-            <dl class="info-list">
-                <dt>Venue</dt>
-                <dd>{{.Game.Venue.Name}}</dd>
-                <dt>Location</dt>
-                <dd>{{.Game.Venue.City}}, {{.Game.Venue.State}}</dd>
-                {{if .Game.ConferenceGame}}
-                <dt>Type</dt>
-                <dd>Conference Game</dd>
-                {{end}}
-                {{if .Game.NeutralSite}}
-                <dt>Site</dt>
-                <dd>Neutral Site</dd>
-                {{end}}
-                {{with .Game.LiveState.Broadcast}}
-                <dt>TV</dt>
-                <dd>{{.}}</dd>
-                {{end}}
-                {{with .Game.LiveState.WeatherText}}
-                <dt>Weather</dt>
-                <dd>{{.}}</dd>
-                {{end}}
-                {{with .Game.LiveState.WindText}}
-                <dt>Wind</dt>
-                <dd>{{.}}</dd>
-                {{end}}
-            </dl>
+            <!-- Two lists side by side rather than one four-column grid: half
+                 the rows on the left are conditional, and a single grid flows
+                 row-major, so a game with no TV listing would pull the kickoff
+                 up into the gap it left. Each column keeps its own order. -->
+            <div class="info-columns">
+                <dl class="info-list">
+                    <dt>Venue</dt>
+                    <dd>{{.Game.Venue.Name}}</dd>
+                    <dt>Location</dt>
+                    <dd>{{.Game.Venue.City}}, {{.Game.Venue.State}}</dd>
+                    {{if .Game.ConferenceGame}}
+                    <dt>Type</dt>
+                    <dd>Conference Game</dd>
+                    {{end}}
+                    {{if .Game.NeutralSite}}
+                    <dt>Site</dt>
+                    <dd>Neutral Site</dd>
+                    {{end}}
+                    {{with .Game.LiveState.Broadcast}}
+                    <dt>TV</dt>
+                    <dd>{{.}}</dd>
+                    {{end}}
+                </dl>
+                <!-- localTime, never .Format: the server runs in UTC and a
+                     kickoff printed in it reads as the wrong day either side of
+                     the Atlantic. -->
+                <dl class="info-list">
+                    <dt>Date</dt>
+                    <dd>{{localTime .Game.ScheduledAt "longdate"}}</dd>
+                    <dt>Time</dt>
+                    <dd>{{localTime .Game.ScheduledAt "time"}}</dd>
+                </dl>
+            </div>
         </div>
     </div>
 
     {{if .UnifiedOdds}}
     <div class="betting-section">
         <h2>Betting Lines</h2>
-        
+
         <div class="odds-table-container">
         <table class="odds-table unified">
             <thead>
@@ -172,7 +398,7 @@
                     <td class="source-name">{{.Source}}</td>
                     {{if .Spread}}
                     <td class="spread-value clickable-odds" data-bet-type="spread" data-odds-id="{{.Spread.ID}}" data-home-spread="{{.Spread.HomeSpread}}" data-away-spread="{{.Spread.AwaySpread}}">
-                        {{if .Spread.HomeSpread.IsNegative}}{{.Spread.HomeSpread}}{{else}}+{{.Spread.HomeSpread}}{{end}} / 
+                        {{if .Spread.HomeSpread.IsNegative}}{{.Spread.HomeSpread}}{{else}}+{{.Spread.HomeSpread}}{{end}} /
                         {{if .Spread.AwaySpread.IsNegative}}{{.Spread.AwaySpread}}{{else}}+{{.Spread.AwaySpread}}{{end}}
                         <span class="odds-juice">
                             {{if .Spread.HomeOdds.Equal .Spread.AwayOdds}}
@@ -206,7 +432,7 @@
                     {{end}}
                     {{if .MoneyLine}}
                     <td class="total-value clickable-odds" data-bet-type="moneyline" data-odds-id="{{.MoneyLine.ID}}" data-home-odds="{{.MoneyLine.HomeOdds}}" data-away-odds="{{.MoneyLine.AwayOdds}}" colspan="2">
-                        {{if .MoneyLine.HomeOdds.IsPositive}}+{{end}}{{.MoneyLine.HomeOdds.IntPart}} / 
+                        {{if .MoneyLine.HomeOdds.IsPositive}}+{{end}}{{.MoneyLine.HomeOdds.IntPart}} /
                         {{if .MoneyLine.AwayOdds.IsPositive}}+{{end}}{{.MoneyLine.AwayOdds.IntPart}}
                     </td>
                     {{else}}
@@ -239,7 +465,7 @@
     {{if gt (len .UserLeagues) 0}}
     <div class="bet-slip-section">
         <h2>Place a Bet</h2>
-        
+
         <div id="bet-response"></div>
 
         <div class="bet-slip">
@@ -252,7 +478,7 @@
             <!-- Spread Bet Form -->
             <form id="spread-form" class="bet-form active" hx-post="/bets/spread" hx-target="#bet-response" hx-swap="innerHTML">
                 <input type="hidden" name="game_id" value="{{.Game.ID}}">
-                
+
                 <div class="form-group">
                     <label>Odds Source</label>
                     <select name="odds_id" id="spread-source" class="form-select source-select">
@@ -336,7 +562,7 @@
             <!-- Moneyline Bet Form -->
             <form id="moneyline-form" class="bet-form" hx-post="/bets/moneyline" hx-target="#bet-response" hx-swap="innerHTML">
                 <input type="hidden" name="game_id" value="{{.Game.ID}}">
-                
+
                 <div class="form-group">
                     <label>Odds Source</label>
                     <select name="odds_id" id="moneyline-source" class="form-select source-select">
@@ -419,7 +645,7 @@
             <!-- Over/Under Bet Form -->
             <form id="overunder-form" class="bet-form" hx-post="/bets/overunder" hx-target="#bet-response" hx-swap="innerHTML">
                 <input type="hidden" name="game_id" value="{{.Game.ID}}">
-                
+
                 <div class="form-group">
                     <label>Odds Source</label>
                     <select name="odds_id" id="overunder-source" class="form-select source-select">
@@ -537,11 +763,11 @@
             // Check if the response contains a success alert and new balance.
             const newBalanceEl = response.querySelector('[data-new-balance]');
             const leagueIdEl = response.querySelector('[data-league-id]');
-            
+
             if (newBalanceEl && leagueIdEl) {
                 const newBalance = newBalanceEl.dataset.newBalance;
                 const leagueId = leagueIdEl.dataset.leagueId;
-                
+
                 // Update all league selects with the new balance.
                 document.querySelectorAll('.league-select').forEach(select => {
                     const option = select.querySelector(`option[value="${leagueId}"]`);

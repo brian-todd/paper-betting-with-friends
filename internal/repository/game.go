@@ -296,6 +296,38 @@ func (r *GameRepository) FindByTeam(teamID uuid.UUID) ([]models.Game, error) {
 	return games, nil
 }
 
+// RecentResults returns up to limit of the team's finished games from one
+// season that kicked off before before, newest first, with the result and both
+// teams preloaded.
+//
+// Scope is one season on purpose. "How have they been playing lately" is a
+// question about the current campaign, and a strip padded out with last
+// November's games answers a different one -- so a week 1 game returns nothing
+// and a week 2 game returns one row, which is the honest answer.
+//
+// The finalized_at filter is load-bearing: a game_results row exists as soon as
+// a score is reported, so without it a game currently 7-3 in the first quarter
+// reads as a loss.
+func (r *GameRepository) RecentResults(teamID uuid.UUID, sport string, season int, before time.Time, limit int) ([]models.Game, error) {
+	var games []models.Game
+	err := r.db.
+		Preload("HomeTeam").
+		Preload("AwayTeam").
+		Preload("Result").
+		Joins("JOIN game_results ON game_results.game_id = games.id").
+		Where("games.sport = ? AND games.season = ?", sport, season).
+		Where("(games.home_team_id = ? OR games.away_team_id = ?)", teamID, teamID).
+		Where("games.scheduled_at < ?", before).
+		Where("game_results.finalized_at IS NOT NULL").
+		Order("games.scheduled_at DESC").
+		Limit(limit).
+		Find(&games).Error
+	if err != nil {
+		return nil, err
+	}
+	return games, nil
+}
+
 // FindBySeasonAndWeek retrieves all games for a given season and week number.
 func (r *GameRepository) FindBySeasonAndWeek(season, weekNumber int) ([]models.Game, error) {
 	var games []models.Game
@@ -333,6 +365,37 @@ func (r *GameRepository) FindByExternalID(externalID int64, sport string) (*mode
 	return &game, nil
 }
 
+// IDsByExternalID maps the provider's game ids onto ours, for a whole feed at
+// once.
+//
+// FindByExternalID exists and would do, but it preloads four associations and
+// would run once per row: the pre-game context feeds arrive several hundred
+// rows at a time and need nothing but the id. Games the database does not have
+// are simply absent from the map.
+func (r *GameRepository) IDsByExternalID(sport string, externalIDs []int64) (map[int64]uuid.UUID, error) {
+	if len(externalIDs) == 0 {
+		return nil, nil
+	}
+
+	var rows []struct {
+		ExternalID int64
+		ID         uuid.UUID
+	}
+	err := r.db.Model(&models.Game{}).
+		Select("external_id", "id").
+		Where("sport = ? AND external_id IN ?", sport, externalIDs).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	byExternal := make(map[int64]uuid.UUID, len(rows))
+	for _, row := range rows {
+		byExternal[row.ExternalID] = row.ID
+	}
+	return byExternal, nil
+}
+
 // Upsert creates or updates a game based on (external_id, sport).
 //
 // A game that has finished stays finished. Two football feeds write this row --
@@ -358,6 +421,14 @@ func (r *GameRepository) Upsert(game *models.Game) error {
 			"neutral_site":    gorm.Expr("excluded.neutral_site"),
 			"conference_game": gorm.Expr("excluded.conference_game"),
 			"updated_at":      gorm.Expr("excluded.updated_at"),
+
+			// Plain assignment, deliberately. The "two feeds write a football
+			// game" rule that guards status and completed does not reach these:
+			// the scoreboard never calls Upsert at all, it goes through
+			// UpdateReportedStatus. /games is the only writer, and a COALESCE
+			// here would pin the first Elo ever seen for the rest of the season.
+			"home_pregame_elo": gorm.Expr("excluded.home_pregame_elo"),
+			"away_pregame_elo": gorm.Expr("excluded.away_pregame_elo"),
 
 			"status":    gorm.Expr("CASE WHEN games.status = ? THEN games.status ELSE excluded.status END", models.GameStatusFinal),
 			"completed": gorm.Expr("games.completed OR excluded.completed"),

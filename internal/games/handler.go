@@ -290,6 +290,8 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		"UnifiedOdds":   gameDetail.UnifiedOdds,
 		"HomeRank":      gameDetail.HomeRank,
 		"AwayRank":      gameDetail.AwayRank,
+		"Matchup":       gameDetail.Matchup,
+		"Forecast":      gameDetail.Forecast,
 		"BetSummary":    gameDetail.BetSummary,
 		"UserLeagues":   userLeagues,
 		"PurseBalances": purseBalances,

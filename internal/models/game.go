@@ -43,8 +43,16 @@ type Game struct {
 	NeutralSite    bool       `gorm:"default:false"`
 	ConferenceGame bool       `gorm:"default:false"`
 	Completed      bool       `gorm:"default:false"`
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+
+	// HomePregameElo and AwayPregameElo are the /games feed's Elo for each side
+	// going into this game. They are reported for unplayed games too, which is
+	// what makes them the one rating on this page that costs no extra request.
+	// Nil for basketball, and for any game synced before they were stored.
+	HomePregameElo *int
+	AwayPregameElo *int
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 
 	// Relationships.
 	HomeTeam Team        `gorm:"foreignKey:HomeTeamID"`

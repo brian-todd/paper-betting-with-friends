@@ -959,6 +959,15 @@ button.btn {
     font-weight: 500;
 }
 
+/* Parallel columns of definition list, each flowing on its own. align-items
+   start so a short column does not stretch its rows to match a taller one. */
+.info-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 0.5rem 2rem;
+}
+
 .invite-code-section {
     margin-top: 1.5rem;
     padding-top: 1rem;
@@ -3300,4 +3309,250 @@ button.btn {
     width: 6.5rem;
     display: inline-block;
     margin-right: 0.4rem;
+}
+
+/* Pre-game comparison panel.
+   ------------------------------------------------------------------------- */
+
+.matchup-section {
+    margin-bottom: 2rem;
+}
+
+/* Fixed layout so the two team columns stay equal and the metric labels keep
+   their own width, the same reasoning as .linescore-table. */
+.matchup-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.matchup-table th,
+.matchup-table td {
+    padding: 0.6rem 0.5rem;
+    border-bottom: 1px solid var(--color-border);
+    text-align: center;
+}
+
+.matchup-table tbody tr:last-child th,
+.matchup-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.matchup-table thead th {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    font-weight: 500;
+}
+
+/* The metric column reads as a label, not a value: left aligned and wider than
+   the two it describes. Muting is left to the nested rows -- see
+   .matchup-subrow -- so that depth in the table is what the colour says, and a
+   top-level row reads as one whether or not it has rows under it. */
+.matchup-table th:first-child,
+.matchup-table td:first-child {
+    width: 44%;
+    text-align: left;
+    font-weight: 400;
+}
+
+.matchup-table tbody td {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.matchup-rank {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+/* A row with rows nested under it carries the weight an efficiency metric does.
+   Weight alone now, not colour: every top-level label is full strength, and what
+   this says is that there is something underneath. Qualified past .matchup-table
+   th:first-child, which it ties with unqualified. */
+.matchup-table .matchup-parent th:first-child,
+.matchup-table .recent-row th:first-child {
+    font-weight: 600;
+}
+
+/* SP+'s unit rows sit under the rating they decompose, indented rather than in
+   a table of their own -- they share its three columns. Qualified with
+   .matchup-table so the indent outweighs .matchup-table th:first-child, which
+   it ties with on its own and would then lose to on source order. */
+.matchup-table .matchup-subrow th:first-child {
+    padding-left: 1.5rem;
+    color: var(--color-text-muted);
+}
+
+.matchup-table .matchup-subrow th,
+.matchup-table .matchup-subrow td {
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+    font-size: 0.9rem;
+}
+
+/* The projection is ours rather than a provider's, so it is deliberately the
+   quietest thing in its row. */
+.matchup-projection {
+    display: block;
+    font-size: 0.75rem;
+    font-style: italic;
+    color: var(--color-text-muted);
+}
+
+/* A label with an explanation behind it. The dotted underline is the only thing
+   on the page saying there is something to hover, so it goes on every label that
+   has help and on nothing else -- an underline that sometimes means nothing
+   teaches the reader to stop looking. The title attribute does the rest: no
+   JavaScript, no positioning, and no tooltip that a table can clip. */
+.metric-help {
+    cursor: help;
+    text-decoration: underline dotted;
+    text-decoration-color: var(--color-text-muted);
+    text-underline-offset: 0.25em;
+}
+
+.form-chip {
+    display: inline-block;
+    width: 1.35rem;
+    line-height: 1.35rem;
+    margin: 0 0.1rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+/* One header spans every recent-form row, so it is centred against the block
+   rather than sitting on the first line of it. Its own bottom border is dropped
+   because it falls at the end of the span, where it would draw a rule under the
+   label column and nothing else. */
+.matchup-table .recent-row th:first-child {
+    vertical-align: middle;
+    border-bottom: none;
+}
+
+.matchup-table .recent-row td {
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+    font-size: 0.9rem;
+}
+
+/* Rows after the first have no cell of their own in the label column -- the
+   header above them spans it -- so the away result lands as the row's
+   :first-child and takes the muted, left-aligned styling meant for a metric
+   label. Put it back to being a value. Spelled with :first-child rather than
+   relying on source order, which the two selectors would otherwise tie on. */
+.matchup-table .recent-row td:first-child {
+    text-align: center;
+    color: inherit;
+}
+
+/* The whole cell is the link, so the target is the result rather than the four
+   characters of the score. Inherited colour because a column of blue underlined
+   scores would read as chrome rather than as data. */
+.recent-result {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+
+.recent-result:hover,
+.recent-result:focus-visible {
+    text-decoration: underline;
+}
+
+/* The opponent drops to its own line rather than sitting beside the score: the
+   two team columns are 28% of the panel each, and "W 31-17 @ OSU" on one line
+   wraps at a different place in every row. Named recent- rather than form-
+   because .form-row already belongs to the bet entry forms further down. */
+.recent-opponent {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.form-W { background: var(--color-success); }
+.form-L { background: var(--color-error); }
+.form-T { background: var(--color-secondary); }
+
+.matchup-note {
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+/* The efficiency card sits under the matchup card in the same section, so it
+   needs the gap the section's own margin does not provide between siblings. */
+.efficiency-card {
+    margin-top: 1.5rem;
+}
+
+/* A group heading spans the table rather than sitting in the label column,
+   because "Offense" is not a metric whose value the two columns hold. The
+   metrics indent beneath it, so it has to outweigh .matchup-table
+   th:first-child -- which it ties with unqualified, and would then win only on
+   its position in this file. */
+.matchup-table .efficiency-group th:first-child {
+    padding-top: 1rem;
+    text-align: left;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+/* The first heading has the card's own padding above it already. */
+.matchup-table .efficiency-group:first-child th:first-child {
+    padding-top: 0.25rem;
+}
+
+/* The heading is uppercased; the note under it is a sentence and must not be.
+   It is a child of the heading rather than a sibling because the heading spans
+   the table and there is no cell beside it to put it in. */
+.forecast-section {
+    margin-bottom: 2rem;
+}
+
+.forecast-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    gap: 0.75rem 1rem;
+}
+
+.forecast-label {
+    display: block;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+}
+
+.forecast-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+    /* Two label-and-value columns do not fit a phone; stack them and the second
+       list simply follows the first. */
+    .info-columns {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .matchup-table th,
+    .matchup-table td {
+        padding: 0.5rem 0.25rem;
+        font-size: 0.9rem;
+    }
+
+    .matchup-table th:first-child,
+    .matchup-table td:first-child {
+        width: 38%;
+    }
 }

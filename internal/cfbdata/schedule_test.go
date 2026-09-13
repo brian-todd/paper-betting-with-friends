@@ -291,10 +291,23 @@ func TestScoreboardDelayIsAlwaysPositiveAcrossDST(t *testing.T) {
 // The cap leaves ~6,000 under the allowance for the calendar job (~800 a month,
 // since each run walks every season since 2002), the rankings job (~120) and
 // the occasional manual seed, none of which are on a fast cadence.
+//
+// The daily team stats job is counted here rather than left to the headroom,
+// because it is the one whose request count per run could grow: it is four
+// resources today and adding a fifth is a one-line change.
 func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 	const (
 		gamesAndLinesCallsPerRun = 2
-		monthlyCallsCap          = 24000
+
+		// Three ratings, records, ATS and season efficiency.
+		teamStatsCallsPerRun = 6
+
+		// Pre-game win probability and the kickoff forecast. Both are fetched
+		// season-wide with no week parameter, so neither scales with the
+		// schedule -- see GetPregameWinProbabilities and GetGameWeather.
+		gameContextCallsPerRun = 2
+
+		monthlyCallsCap = 24000
 
 		// The budget is checked at the widest division list an operator is
 		// likely to configure, not at the FBS-only default -- the default
@@ -327,12 +340,140 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 			syncRuns := countRuns(start, end, func(now time.Time) time.Time {
 				return NextSync(now, eastern)
 			})
+			teamStatsRuns := countRuns(start, end, func(now time.Time) time.Time {
+				return NextTeamStatsSync(now, eastern)
+			})
+			gameContextRuns := countRuns(start, end, func(now time.Time) time.Time {
+				return NextGameContextSync(now, eastern)
+			})
 
-			calls := scoreboardRuns*scoreboardDivisions + syncRuns*gamesAndLinesCallsPerRun
+			calls := scoreboardRuns*scoreboardDivisions +
+				syncRuns*gamesAndLinesCallsPerRun +
+				teamStatsRuns*teamStatsCallsPerRun +
+				gameContextRuns*gameContextCallsPerRun
 			if calls > monthlyCallsCap {
-				t.Errorf("%d-%02d: %d scoreboard runs and %d games runs = %d calls, over the %d budget",
-					year, month, scoreboardRuns, syncRuns, calls, monthlyCallsCap)
+				t.Errorf("%d-%02d: %d scoreboard, %d games, %d team-stats and %d game-context runs = %d calls, over the %d budget",
+					year, month, scoreboardRuns, syncRuns, teamStatsRuns, gameContextRuns, calls, monthlyCallsCap)
 			}
 		}
+	}
+}
+
+// The daily team stats sync targets a wall-clock hour rather than running on a
+// flat 24-hour interval, so a restart does not permanently move it to whatever
+// time the process happened to come up.
+func TestNextTeamStatsSyncTargetsTheSameHourEveryDay(t *testing.T) {
+	eastern, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{
+			name: "before the hour waits until it",
+			now:  time.Date(2026, 9, 12, 1, 30, 0, 0, eastern),
+			want: time.Date(2026, 9, 12, 4, 0, 0, 0, eastern),
+		},
+		{
+			name: "after the hour waits for tomorrow",
+			now:  time.Date(2026, 9, 12, 19, 0, 0, 0, eastern),
+			want: time.Date(2026, 9, 13, 4, 0, 0, 0, eastern),
+		},
+		{
+			// Exactly on the hour must move to tomorrow, not return a zero
+			// delay and re-run immediately against a metered API.
+			name: "exactly on the hour waits for tomorrow",
+			now:  time.Date(2026, 9, 12, 4, 0, 0, 0, eastern),
+			want: time.Date(2026, 9, 13, 4, 0, 0, 0, eastern),
+		},
+		{
+			// A DST day is 23 or 25 hours long. Targeting the wall clock means
+			// the run still lands at 4am local, which Add(24*time.Hour) would
+			// miss by an hour.
+			name: "clocks go forward, still 4am local",
+			now:  time.Date(2026, 3, 7, 19, 0, 0, 0, eastern),
+			want: time.Date(2026, 3, 8, 4, 0, 0, 0, eastern),
+		},
+		{
+			name: "clocks go back, still 4am local",
+			now:  time.Date(2026, 10, 31, 19, 0, 0, 0, eastern),
+			want: time.Date(2026, 11, 1, 4, 0, 0, 0, eastern),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NextTeamStatsSync(tt.now, eastern)
+			if !got.Equal(tt.want) {
+				t.Errorf("NextTeamStatsSync(%s) = %s, want %s", tt.now, got, tt.want)
+			}
+			if got.In(eastern).Hour() != teamStatsHour {
+				t.Errorf("landed at hour %d, want %d", got.In(eastern).Hour(), teamStatsHour)
+			}
+			if delay := TeamStatsDelay(tt.now, eastern); delay < minDelay {
+				t.Errorf("TeamStatsDelay = %s, want at least %s", delay, minDelay)
+			}
+		})
+	}
+}
+
+// The per-game context job runs on the same daily grid as the team stats one,
+// an hour later. The stagger is not load-bearing -- the two write different
+// tables -- but it should not quietly disappear either.
+func TestNextGameContextSyncStaggersBehindTeamStats(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{
+			name: "before both hours waits for its own",
+			now:  time.Date(2026, 9, 12, 1, 30, 0, 0, eastern),
+			want: time.Date(2026, 9, 12, 5, 0, 0, 0, eastern),
+		},
+		{
+			// The window between the two jobs. Team stats has already run
+			// today; game context has not.
+			name: "between the two hours still runs today",
+			now:  time.Date(2026, 9, 12, 4, 30, 0, 0, eastern),
+			want: time.Date(2026, 9, 12, 5, 0, 0, 0, eastern),
+		},
+		{
+			name: "exactly on the hour waits for tomorrow",
+			now:  time.Date(2026, 9, 12, 5, 0, 0, 0, eastern),
+			want: time.Date(2026, 9, 13, 5, 0, 0, 0, eastern),
+		},
+		{
+			name: "clocks go forward, still 5am local",
+			now:  time.Date(2026, 3, 7, 19, 0, 0, 0, eastern),
+			want: time.Date(2026, 3, 8, 5, 0, 0, 0, eastern),
+		},
+		{
+			name: "clocks go back, still 5am local",
+			now:  time.Date(2026, 10, 31, 19, 0, 0, 0, eastern),
+			want: time.Date(2026, 11, 1, 5, 0, 0, 0, eastern),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NextGameContextSync(tt.now, eastern)
+			if !got.Equal(tt.want) {
+				t.Errorf("NextGameContextSync(%s) = %s, want %s", tt.now, got, tt.want)
+			}
+			if delay := GameContextDelay(tt.now, eastern); delay < minDelay {
+				t.Errorf("GameContextDelay = %s, want at least %s", delay, minDelay)
+			}
+		})
+	}
+
+	if teamStatsHour == gameContextHour {
+		t.Errorf("the two daily jobs both target hour %d; the stagger is gone", teamStatsHour)
 	}
 }

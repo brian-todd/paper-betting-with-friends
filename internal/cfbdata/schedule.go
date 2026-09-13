@@ -166,3 +166,78 @@ func intervalAt(t time.Time) time.Duration {
 		return offDayInterval
 	}
 }
+
+// Daily pre-game context cadence.
+//
+// Everything on these two jobs refreshes once a day, which is the ceiling this
+// page's data was specified against. SP+, FPI, CORE, records, ATS and season
+// efficiency all move once a week, after Saturday's games, so a daily refresh is
+// already more than the data justifies. The forecast moves faster than that and
+// is the one place the ceiling costs something -- a Saturday-evening kickoff is
+// read off a forecast taken that morning.
+//
+// Eight requests a day between them is ~240 a month against an allowance of
+// 30,000.
+const (
+	// teamStatsHour is the local hour the team-season refresh targets. Early
+	// enough that it is never competing with a slate, and a fixed wall-clock
+	// hour rather than a flat 24-hour interval so a restart does not permanently
+	// move the run to whatever time the process happened to come up.
+	teamStatsHour = 4
+
+	// gameContextHour staggers the per-game refresh an hour after the
+	// team-season one. Nothing breaks if they overlap -- they write different
+	// tables -- but two jobs waking together against a metered API for no
+	// reason is a habit worth not forming.
+	gameContextHour = 5
+)
+
+// nextDailyAt returns the next instant at the given local hour after now.
+func nextDailyAt(now time.Time, loc *time.Location, hour int) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	t := now.In(loc)
+	next := time.Date(t.Year(), t.Month(), t.Day(), hour, 0, 0, 0, loc)
+	if !next.After(t) {
+		// AddDate, not Add(24*time.Hour): a DST day is 23 or 25 hours long, and
+		// the target is a wall-clock hour.
+		next = next.AddDate(0, 0, 1)
+	}
+	return next
+}
+
+// NextTeamStatsSync returns the next instant the daily team stats sync should
+// run after now.
+//
+// Nothing depends on the exact hour -- unlike the scoreboard, there is no event
+// this has to land before. A run that drifts costs a rating a day staler than it
+// had to be, on a number that changes weekly.
+func NextTeamStatsSync(now time.Time, loc *time.Location) time.Time {
+	return nextDailyAt(now, loc, teamStatsHour)
+}
+
+// TeamStatsDelay returns how long to wait after now before the next team stats
+// sync.
+func TeamStatsDelay(now time.Time, loc *time.Location) time.Duration {
+	if delay := NextTeamStatsSync(now, loc).Sub(now); delay > minDelay {
+		return delay
+	}
+	return minDelay
+}
+
+// NextGameContextSync returns the next instant the daily per-game context sync
+// should run after now.
+func NextGameContextSync(now time.Time, loc *time.Location) time.Time {
+	return nextDailyAt(now, loc, gameContextHour)
+}
+
+// GameContextDelay returns how long to wait after now before the next per-game
+// context sync.
+func GameContextDelay(now time.Time, loc *time.Location) time.Duration {
+	if delay := NextGameContextSync(now, loc).Sub(now); delay > minDelay {
+		return delay
+	}
+	return minDelay
+}
