@@ -295,6 +295,11 @@ func TestScoreboardDelayIsAlwaysPositiveAcrossDST(t *testing.T) {
 // The daily team stats job is counted here rather than left to the headroom,
 // because it is the one whose request count per run could grow: it is four
 // resources today and adding a fifth is a one-line change.
+//
+// Restarts are counted too. Both daily jobs run on startup -- without it a
+// daily slot is longer than the gap between two deploys and they never run at
+// all -- which makes deploys a line item in the plan rather than free, and one
+// that grows with the request count of whatever those jobs fetch.
 func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 	const (
 		gamesAndLinesCallsPerRun = 2
@@ -306,6 +311,13 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		// season-wide with no week parameter, so neither scales with the
 		// schedule -- see GetPregameWinProbabilities and GetGameWeather.
 		gameContextCallsPerRun = 2
+
+		// Deploys in a month, as a worst case rather than an observed rate.
+		// Both daily jobs carry scheduler.RunOnStart, so each restart buys one
+		// extra run of each on top of the schedule -- the point of the flag,
+		// and a cost the plan should carry rather than discover. Two a working
+		// day is a busier release cadence than this project has ever had.
+		restartsPerMonth = 40
 
 		monthlyCallsCap = 24000
 
@@ -347,13 +359,19 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 				return NextGameContextSync(now, eastern)
 			})
 
+			// A startup run does not replace the scheduled one: both delays
+			// target a wall-clock hour, so the job still fires at its usual
+			// time afterwards and the restart runs are purely additive.
+			restartCalls := restartsPerMonth * (teamStatsCallsPerRun + gameContextCallsPerRun)
+
 			calls := scoreboardRuns*scoreboardDivisions +
 				syncRuns*gamesAndLinesCallsPerRun +
 				teamStatsRuns*teamStatsCallsPerRun +
-				gameContextRuns*gameContextCallsPerRun
+				gameContextRuns*gameContextCallsPerRun +
+				restartCalls
 			if calls > monthlyCallsCap {
-				t.Errorf("%d-%02d: %d scoreboard, %d games, %d team-stats and %d game-context runs = %d calls, over the %d budget",
-					year, month, scoreboardRuns, syncRuns, teamStatsRuns, gameContextRuns, calls, monthlyCallsCap)
+				t.Errorf("%d-%02d: %d scoreboard, %d games, %d team-stats and %d game-context runs plus %d restarts = %d calls, over the %d budget",
+					year, month, scoreboardRuns, syncRuns, teamStatsRuns, gameContextRuns, restartsPerMonth, calls, monthlyCallsCap)
 			}
 		}
 	}
