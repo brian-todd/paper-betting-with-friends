@@ -55,6 +55,16 @@ type GameDetail struct {
 	// effective poll. Always nil for basketball, which has no WeekID.
 	HomeRank *int
 	AwayRank *int
+	// Matchup is the pre-game comparison panel -- ratings, records and recent
+	// form for both sides. Nil for basketball, whose provider supplies none of
+	// it, and for a football game whose teams have not been synced yet.
+	Matchup *Matchup
+	// Forecast is the weather expected at kickoff, for a game that has not
+	// kicked off yet and is not played under a roof. Separate from Matchup
+	// because it is a fact about the venue rather than about either side, and
+	// absent once the game starts -- from then on Game.LiveState owns the
+	// weather and two sources would eventually disagree on the page.
+	Forecast *models.GameForecast
 	// BetSummary describes the live bet the viewing user already holds on this
 	// game, empty when there is none. Set by the handler, not this service,
 	// since it is per-viewer.
@@ -119,6 +129,13 @@ type Service struct {
 	spreadOddsRepo    *repository.SpreadOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
 	rankingRepo       *repository.RankingRepository
+	teamRatingRepo    *repository.TeamRatingRepository
+	teamRecordRepo    *repository.TeamRecordRepository
+
+	teamATSRecordRepo     *repository.TeamATSRecordRepository
+	teamAdvancedStatsRepo *repository.TeamAdvancedStatsRepository
+	gamePregameWPRepo     *repository.GamePregameWinProbabilityRepository
+	gameForecastRepo      *repository.GameForecastRepository
 
 	// location resolves the calendar-day and time-of-day filters. Those ask
 	// which local day a kickoff falls on, which no instant can answer alone.
@@ -138,7 +155,15 @@ func NewService(db *gorm.DB, location *time.Location) *Service {
 		spreadOddsRepo:    repository.NewSpreadOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
 		rankingRepo:       repository.NewRankingRepository(db),
-		location:          location,
+		teamRatingRepo:    repository.NewTeamRatingRepository(db),
+		teamRecordRepo:    repository.NewTeamRecordRepository(db),
+
+		teamATSRecordRepo:     repository.NewTeamATSRecordRepository(db),
+		teamAdvancedStatsRepo: repository.NewTeamAdvancedStatsRepository(db),
+		gamePregameWPRepo:     repository.NewGamePregameWinProbabilityRepository(db),
+		gameForecastRepo:      repository.NewGameForecastRepository(db),
+
+		location: location,
 	}
 }
 
@@ -417,7 +442,147 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 		}
 	}
 
+	// The comparison panel is football-only because its provider is, and the
+	// sport has to be checked before HasAny rather than instead of it. Nothing
+	// basketball reaches here populates a rating, a record or an efficiency
+	// figure -- but RecentResults is sport-aware and answers happily, so a
+	// basketball page drew a panel consisting of nothing but form, and spent a
+	// dozen queries finding out that the rest of it was empty. HasAny still
+	// earns its place afterwards: a football game synced before the stats job
+	// first ran has to render the absent case.
+	if game.Sport == models.SportFootball {
+		if matchup := s.buildMatchup(game); matchup.HasAny() {
+			detail.Matchup = matchup
+		}
+	}
+	detail.Forecast = s.forecastFor(game)
+
 	return detail, nil
+}
+
+// forecastFor is the kickoff weather, or nil when there is nothing to show.
+//
+// Gated on the kickoff time rather than on Game.Status, deliberately and
+// unlike most of this page: status only advances when a sync runs, so a game
+// that started twenty minutes ago can still read "scheduled", and a forecast
+// is exactly the thing nobody wants to see once the game is being played.
+// The instant comparison needs no location -- see AGENTS.md.
+func (s *Service) forecastFor(game *models.Game) *models.GameForecast {
+	if !game.ScheduledAt.After(time.Now()) {
+		return nil
+	}
+
+	forecast, err := s.gameForecastRepo.FindByGameID(game.ID)
+	if err != nil {
+		slog.Error("failed to fetch game forecast", "game", game.ID, "error", err)
+		return nil
+	}
+	if !forecast.Show() {
+		return nil
+	}
+	return forecast
+}
+
+// formGames is how many recent results the form strip shows.
+const formGames = 5
+
+// buildMatchup assembles the comparison panel for a game.
+//
+// Every lookup in here degrades to an absent section, logged: a page that
+// renders without its ratings is worth more than a 500, and the log is what
+// keeps an unsynced season distinguishable from a season where nobody is rated.
+// Callers get a non-nil Matchup and ask HasAny whether it is worth drawing.
+func (s *Service) buildMatchup(game *models.Game) *Matchup {
+	matchup := &Matchup{
+		NeutralSite: game.NeutralSite,
+		Home: TeamStats{
+			Team:       game.HomeTeam,
+			PregameElo: game.HomePregameElo,
+			Ratings:    make(map[models.RatingSource]models.TeamRating),
+		},
+		Away: TeamStats{
+			Team:       game.AwayTeam,
+			PregameElo: game.AwayPregameElo,
+			Ratings:    make(map[models.RatingSource]models.TeamRating),
+		},
+	}
+
+	// One query for both sides rather than one per side -- the page always
+	// wants the pair, and at three sources this is six rows.
+	ratings, err := s.teamRatingRepo.FindForTeams(game.Season, game.HomeTeamID, game.AwayTeamID)
+	if err != nil {
+		slog.Error("failed to fetch team ratings", "game", game.ID, "error", err)
+	}
+	for _, rating := range ratings {
+		switch rating.TeamID {
+		case game.HomeTeamID:
+			matchup.Home.Ratings[rating.Source] = rating
+		case game.AwayTeamID:
+			matchup.Away.Ratings[rating.Source] = rating
+		}
+	}
+
+	records, err := s.teamRecordRepo.FindForTeams(game.Season, game.HomeTeamID, game.AwayTeamID)
+	if err != nil {
+		slog.Error("failed to fetch team records", "game", game.ID, "error", err)
+	}
+	if record, ok := records[game.HomeTeamID]; ok {
+		matchup.Home.Record = &record
+	}
+	if record, ok := records[game.AwayTeamID]; ok {
+		matchup.Away.Record = &record
+	}
+
+	ats, err := s.teamATSRecordRepo.FindForTeams(game.Season, game.HomeTeamID, game.AwayTeamID)
+	if err != nil {
+		slog.Error("failed to fetch ats records", "game", game.ID, "error", err)
+	}
+	if record, ok := ats[game.HomeTeamID]; ok {
+		matchup.Home.ATS = &record
+	}
+	if record, ok := ats[game.AwayTeamID]; ok {
+		matchup.Away.ATS = &record
+	}
+
+	advanced, err := s.teamAdvancedStatsRepo.FindForTeams(game.Season, game.HomeTeamID, game.AwayTeamID)
+	if err != nil {
+		slog.Error("failed to fetch advanced stats", "game", game.ID, "error", err)
+	}
+	if stats, ok := advanced[game.HomeTeamID]; ok {
+		matchup.Home.Advanced = &stats
+	}
+	if stats, ok := advanced[game.AwayTeamID]; ok {
+		matchup.Away.Advanced = &stats
+	}
+
+	winProbability, err := s.gamePregameWPRepo.FindByGameID(game.ID)
+	if err != nil {
+		slog.Error("failed to fetch pregame win probability", "game", game.ID, "error", err)
+	}
+	matchup.WinProbability = winProbability
+
+	matchup.Home.Form = s.recentForm(game, game.HomeTeamID)
+	matchup.Away.Form = s.recentForm(game, game.AwayTeamID)
+
+	return matchup
+}
+
+// recentForm is one team's last few finished games before this one, within the
+// same season. An empty strip in week 1 is the correct answer, not a failure.
+func (s *Service) recentForm(game *models.Game, teamID uuid.UUID) []RecentResult {
+	played, err := s.gameRepo.RecentResults(teamID, game.Sport, game.Season, game.ScheduledAt, formGames)
+	if err != nil {
+		slog.Error("failed to fetch recent results", "game", game.ID, "team", teamID, "error", err)
+		return nil
+	}
+
+	form := make([]RecentResult, 0, len(played))
+	for _, previous := range played {
+		if result, ok := recentResultFrom(previous, teamID); ok {
+			form = append(form, result)
+		}
+	}
+	return form
 }
 
 // mergeOddsBySources combines odds from different types by their source.

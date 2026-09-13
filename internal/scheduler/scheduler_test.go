@@ -55,6 +55,50 @@ func TestSchedulerRunsOnInterval(t *testing.T) {
 	})
 }
 
+// A job whose interval outlasts the process would otherwise never run: the
+// timer is armed for tomorrow and the restart throws it away. RunOnStart is
+// what makes the first run survive a redeploy, and the schedule still has to
+// pick up normally afterwards.
+func TestSchedulerRunOnStartRunsImmediatelyAndKeepsItsSchedule(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var runs atomic.Int64
+
+		s := New(discardLogger())
+		s.Add(Job{
+			Name:       "daily",
+			Interval:   24 * time.Hour,
+			RunOnStart: true,
+			Run: func(ctx context.Context) error {
+				runs.Add(1)
+				return nil
+			},
+		})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		s.Start(ctx)
+
+		synctest.Wait()
+		if got := runs.Load(); got != 1 {
+			t.Fatalf("at startup: runs = %d, want 1", got)
+		}
+
+		// The startup run resets the clock rather than shortening it, so the
+		// next one is a full interval out and not a moment sooner.
+		synctest.Sleep(23 * time.Hour)
+		if got := runs.Load(); got != 1 {
+			t.Fatalf("after 23 hours: runs = %d, want 1", got)
+		}
+
+		synctest.Sleep(time.Hour)
+		if got := runs.Load(); got != 2 {
+			t.Fatalf("after 24 hours: runs = %d, want 2", got)
+		}
+
+		cancel()
+		s.Wait()
+	})
+}
+
 func TestSchedulerContinuesAfterJobError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var runs atomic.Int64

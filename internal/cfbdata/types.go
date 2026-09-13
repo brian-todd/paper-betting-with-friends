@@ -234,3 +234,187 @@ type APIScoreboardGame struct {
 	Weather        *APIScoreboardWeather `json:"weather"`
 	Betting        *APIScoreboardBetting `json:"betting"`
 }
+
+// APITeamSP is one team's SP+ rating from /ratings/sp.
+//
+// The nested objects carry far more fields than these -- success, explosiveness,
+// havoc, rushing and passing splits -- and every one of them is null on this
+// tier, for a completed season as readily as a live one. Only what the endpoint
+// actually populates is modelled.
+type APITeamSP struct {
+	Year       int      `json:"year"`
+	Team       string   `json:"team"`
+	Conference string   `json:"conference"`
+	Rating     *float64 `json:"rating"`
+	Ranking    *int     `json:"ranking"`
+	Offense    struct {
+		Rating  *float64 `json:"rating"`
+		Ranking *int     `json:"ranking"`
+	} `json:"offense"`
+	Defense struct {
+		Rating  *float64 `json:"rating"`
+		Ranking *int     `json:"ranking"`
+	} `json:"defense"`
+	SpecialTeams struct {
+		Rating *float64 `json:"rating"`
+	} `json:"specialTeams"`
+}
+
+// APINationalAveragesTeam is the synthetic team name /ratings/sp uses for its
+// league-wide averages row. It is not a team, will never resolve to one, and is
+// skipped by name so it does not sit in the unmatched-team warning every run.
+const APINationalAveragesTeam = "nationalAverages"
+
+// APITeamFPI is one team's Football Power Index rating from /ratings/fpi.
+type APITeamFPI struct {
+	Year        int      `json:"year"`
+	Team        string   `json:"team"`
+	Conference  string   `json:"conference"`
+	FPI         *float64 `json:"fpi"`
+	ResumeRanks struct {
+		StrengthOfRecord   *int `json:"strengthOfRecord"`
+		FPI                *int `json:"fpi"`
+		StrengthOfSchedule *int `json:"strengthOfSchedule"`
+	} `json:"resumeRanks"`
+	Efficiencies struct {
+		Overall      *float64 `json:"overall"`
+		Offense      *float64 `json:"offense"`
+		Defense      *float64 `json:"defense"`
+		SpecialTeams *float64 `json:"specialTeams"`
+	} `json:"efficiencies"`
+}
+
+// APITeamCore is one team's CORE rating from /ratings/core.
+//
+// Alone among the rating endpoints it says what it has seen, in ThroughWeek and
+// ModelVersion, which is why those two columns exist and are null for the others.
+type APITeamCore struct {
+	Year         int      `json:"year"`
+	Team         string   `json:"team"`
+	Conference   string   `json:"conference"`
+	Overall      *float64 `json:"overall"`
+	Offense      *float64 `json:"offense"`
+	Defense      *float64 `json:"defense"`
+	ThroughWeek  *int     `json:"throughWeek"`
+	ModelVersion string   `json:"modelVersion"`
+}
+
+// APIRecordSplit is one won-lost-tied split within APITeamRecords.
+type APIRecordSplit struct {
+	Games  int `json:"games"`
+	Wins   int `json:"wins"`
+	Losses int `json:"losses"`
+	Ties   int `json:"ties"`
+}
+
+// APITeamRecords is one team's season record from /records.
+//
+// The endpoint returns conference, neutral-site, regular-season and postseason
+// splits as well; only the three the page shows are decoded.
+type APITeamRecords struct {
+	Year         int            `json:"year"`
+	TeamID       int64          `json:"teamId"`
+	Team         string         `json:"team"`
+	Conference   string         `json:"conference"`
+	ExpectedWins *float64       `json:"expectedWins"`
+	Total        APIRecordSplit `json:"total"`
+	HomeGames    APIRecordSplit `json:"homeGames"`
+	AwayGames    APIRecordSplit `json:"awayGames"`
+}
+
+// APITeamATS is one team's against-the-spread record from /teams/ats.
+//
+// Like /records and unlike the rating endpoints, this supplies a teamId, so a
+// school rename cannot lose a row. Coverage is broader than the ratings too --
+// 254 rows for 2026 against 138 -- because it covers every team anyone has
+// posted a line on rather than every team in a division.
+type APITeamATS struct {
+	Year           int      `json:"year"`
+	TeamID         int64    `json:"teamId"`
+	Team           string   `json:"team"`
+	Conference     string   `json:"conference"`
+	Games          int      `json:"games"`
+	ATSWins        int      `json:"atsWins"`
+	ATSLosses      int      `json:"atsLosses"`
+	ATSPushes      int      `json:"atsPushes"`
+	AvgCoverMargin *float64 `json:"avgCoverMargin"`
+}
+
+// APIPregameWP is one game's pre-game win probability from
+// /metrics/wp/pregame.
+//
+// GameID is the provider's game id, matching Game.ExternalID, so this needs no
+// team resolution at all.
+type APIPregameWP struct {
+	Season             int      `json:"season"`
+	Week               int      `json:"week"`
+	SeasonType         string   `json:"seasonType"`
+	GameID             int64    `json:"gameId"`
+	HomeTeam           string   `json:"homeTeam"`
+	AwayTeam           string   `json:"awayTeam"`
+	Spread             *float64 `json:"spread"`
+	HomeWinProbability *float64 `json:"homeWinProbability"`
+}
+
+// APIAdvancedSide is one side's season efficiency within
+// APITeamAdvancedStats.
+//
+// The endpoint returns roughly forty numbers per side. Only the ones the page
+// shows are decoded, on the same principle as APITeamSP: an unused field is a
+// column somebody eventually feels obliged to render.
+//
+// Havoc is nested one level deeper, and PointsPerOpportunity sits beside a
+// totalOpportunies key whose spelling is the provider's and not a typo here --
+// it is not decoded, which is the only reason that does not matter.
+type APIAdvancedSide struct {
+	Plays                *int     `json:"plays"`
+	Drives               *int     `json:"drives"`
+	PPA                  *float64 `json:"ppa"`
+	SuccessRate          *float64 `json:"successRate"`
+	Explosiveness        *float64 `json:"explosiveness"`
+	LineYards            *float64 `json:"lineYards"`
+	PointsPerOpportunity *float64 `json:"pointsPerOpportunity"`
+	Havoc                struct {
+		Total *float64 `json:"total"`
+	} `json:"havoc"`
+}
+
+// APITeamAdvancedStats is one team's season efficiency from
+// /stats/season/advanced.
+//
+// FBS only, with or without a classification parameter -- the unfiltered call
+// returns the same 138 rows. It carries no teamId, so resolution is by name as
+// it is for the ratings.
+type APITeamAdvancedStats struct {
+	Season     int             `json:"season"`
+	Team       string          `json:"team"`
+	Conference string          `json:"conference"`
+	Offense    APIAdvancedSide `json:"offense"`
+	Defense    APIAdvancedSide `json:"defense"`
+}
+
+// APIGameWeather is one game's forecast from /games/weather.
+//
+// ID is the provider's game id, matching Game.ExternalID.
+//
+// GameIndoors is the field that matters most and is easiest to ignore: a domed
+// stadium returns a complete, plausible forecast for the weather outside the
+// roof, wind speed and all.
+type APIGameWeather struct {
+	ID                   int64     `json:"id"`
+	Season               int       `json:"season"`
+	Week                 int       `json:"week"`
+	SeasonType           string    `json:"seasonType"`
+	StartTime            time.Time `json:"startTime"`
+	GameIndoors          bool      `json:"gameIndoors"`
+	HomeTeam             string    `json:"homeTeam"`
+	AwayTeam             string    `json:"awayTeam"`
+	Venue                string    `json:"venue"`
+	Temperature          *float64  `json:"temperature"`
+	Humidity             *int      `json:"humidity"`
+	Precipitation        *float64  `json:"precipitation"`
+	Snowfall             *float64  `json:"snowfall"`
+	WindSpeed            *float64  `json:"windSpeed"`
+	WeatherCondition     *string   `json:"weatherCondition"`
+	WeatherConditionCode *int      `json:"weatherConditionCode"`
+}

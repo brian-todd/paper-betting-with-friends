@@ -37,8 +37,16 @@ type SyncService struct {
 	spreadOddsRepo    *repository.SpreadOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
 	rankingRepo       *repository.RankingRepository
-	betEvaluator      BetEvaluator
-	logger            *slog.Logger
+	teamRatingRepo    *repository.TeamRatingRepository
+	teamRecordRepo    *repository.TeamRecordRepository
+
+	teamATSRecordRepo     *repository.TeamATSRecordRepository
+	teamAdvancedStatsRepo *repository.TeamAdvancedStatsRepository
+	gamePregameWPRepo     *repository.GamePregameWinProbabilityRepository
+	gameForecastRepo      *repository.GameForecastRepository
+
+	betEvaluator BetEvaluator
+	logger       *slog.Logger
 }
 
 // NewSyncService creates a new SyncService.
@@ -57,6 +65,13 @@ func NewSyncService(client *Client, db *gorm.DB) *SyncService {
 		spreadOddsRepo:    repository.NewSpreadOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
 		rankingRepo:       repository.NewRankingRepository(db),
+		teamRatingRepo:    repository.NewTeamRatingRepository(db),
+		teamRecordRepo:    repository.NewTeamRecordRepository(db),
+
+		teamATSRecordRepo:     repository.NewTeamATSRecordRepository(db),
+		teamAdvancedStatsRepo: repository.NewTeamAdvancedStatsRepository(db),
+		gamePregameWPRepo:     repository.NewGamePregameWinProbabilityRepository(db),
+		gameForecastRepo:      repository.NewGameForecastRepository(db),
 	}
 }
 
@@ -396,6 +411,8 @@ func (s *SyncService) syncGames(ctx context.Context, year int, week *int, season
 			NeutralSite:    g.NeutralSite,
 			ConferenceGame: g.ConferenceGame,
 			Completed:      g.Completed,
+			HomePregameElo: g.HomePregameElo,
+			AwayPregameElo: g.AwayPregameElo,
 		}
 
 		if err := s.gameRepo.Upsert(game); err != nil {

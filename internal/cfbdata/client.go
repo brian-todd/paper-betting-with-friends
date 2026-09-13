@@ -151,3 +151,95 @@ func (c *Client) GetScoreboard(ctx context.Context, classification string) ([]AP
 	}
 	return games, nil
 }
+
+// GetSPRatings retrieves SP+ ratings for a season.
+func (c *Client) GetSPRatings(ctx context.Context, year int) ([]APITeamSP, error) {
+	var ratings []APITeamSP
+	if err := c.doRequest(ctx, fmt.Sprintf("/ratings/sp?year=%d", year), &ratings); err != nil {
+		return nil, fmt.Errorf("fetching sp+ ratings: %w", err)
+	}
+	return ratings, nil
+}
+
+// GetFPIRatings retrieves Football Power Index ratings for a season.
+func (c *Client) GetFPIRatings(ctx context.Context, year int) ([]APITeamFPI, error) {
+	var ratings []APITeamFPI
+	if err := c.doRequest(ctx, fmt.Sprintf("/ratings/fpi?year=%d", year), &ratings); err != nil {
+		return nil, fmt.Errorf("fetching fpi ratings: %w", err)
+	}
+	return ratings, nil
+}
+
+// GetCoreRatings retrieves CORE ratings for a season.
+func (c *Client) GetCoreRatings(ctx context.Context, year int) ([]APITeamCore, error) {
+	var ratings []APITeamCore
+	if err := c.doRequest(ctx, fmt.Sprintf("/ratings/core?year=%d", year), &ratings); err != nil {
+		return nil, fmt.Errorf("fetching core ratings: %w", err)
+	}
+	return ratings, nil
+}
+
+// GetRecords retrieves season win-loss records for every team.
+//
+// Unlike the rating endpoints, which cover FBS alone, this returns every
+// division -- so an FCS opponent has a record on the page even though it has no
+// rating.
+func (c *Client) GetRecords(ctx context.Context, year int) ([]APITeamRecords, error) {
+	var records []APITeamRecords
+	if err := c.doRequest(ctx, fmt.Sprintf("/records?year=%d", year), &records); err != nil {
+		return nil, fmt.Errorf("fetching records: %w", err)
+	}
+	return records, nil
+}
+
+// GetATSRecords retrieves against-the-spread records for a season.
+func (c *Client) GetATSRecords(ctx context.Context, year int) ([]APITeamATS, error) {
+	var records []APITeamATS
+	if err := c.doRequest(ctx, fmt.Sprintf("/teams/ats?year=%d", year), &records); err != nil {
+		return nil, fmt.Errorf("fetching ats records: %w", err)
+	}
+	return records, nil
+}
+
+// GetPregameWinProbabilities retrieves pre-game win probabilities for a season.
+//
+// No week parameter: the unfiltered call returns every week the provider has
+// published, which for 2026 was 351 rows spanning weeks 1 to 15. Asking week by
+// week would cost one request each and return less -- the far-future rows are
+// marquee games that already have a line, and they are exactly the ones worth
+// having early.
+func (c *Client) GetPregameWinProbabilities(ctx context.Context, year int) ([]APIPregameWP, error) {
+	var probabilities []APIPregameWP
+	if err := c.doRequest(ctx, fmt.Sprintf("/metrics/wp/pregame?year=%d", year), &probabilities); err != nil {
+		return nil, fmt.Errorf("fetching pregame win probabilities: %w", err)
+	}
+	return probabilities, nil
+}
+
+// GetAdvancedSeasonStats retrieves season efficiency stats for a season.
+func (c *Client) GetAdvancedSeasonStats(ctx context.Context, year int) ([]APITeamAdvancedStats, error) {
+	var stats []APITeamAdvancedStats
+	if err := c.doRequest(ctx, fmt.Sprintf("/stats/season/advanced?year=%d", year), &stats); err != nil {
+		return nil, fmt.Errorf("fetching advanced season stats: %w", err)
+	}
+	return stats, nil
+}
+
+// GetGameWeather retrieves kickoff forecasts for a season.
+//
+// No week parameter here either, and for a better reason: the provider only
+// publishes a forecast about a week out, so an unfiltered call returns the
+// current week and the next and nothing beyond. Weeks 5 and 8 came back empty
+// when probed in week 2. One request therefore gets everything that exists, and
+// asking for a specific future week would mostly return nothing.
+//
+// The response does grow as the season's played weeks accumulate -- a full 2025
+// season is 3,235 rows and 1.5 MB -- which is why the sync drops games that
+// have already kicked off rather than upserting the lot every day.
+func (c *Client) GetGameWeather(ctx context.Context, year int) ([]APIGameWeather, error) {
+	var weather []APIGameWeather
+	if err := c.doRequest(ctx, fmt.Sprintf("/games/weather?year=%d", year), &weather); err != nil {
+		return nil, fmt.Errorf("fetching game weather: %w", err)
+	}
+	return weather, nil
+}

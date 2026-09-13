@@ -372,6 +372,46 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			},
 		})
 
+		// Ratings, records, ATS and season efficiency for the game detail
+		// page's comparison panels. Daily is already generous: every source in
+		// it moves once a week, after Saturday, and the six requests a run make
+		// the cadence a rounding error against the monthly allowance.
+		//
+		// RunOnStart because a daily slot is longer than the gap between two
+		// deploys: NextDelay answers "time until tomorrow's 04:00" from every
+		// start, so without it a week of afternoon releases leaves every one of
+		// these tables empty with the schedule still reporting healthy.
+		sched.Add(scheduler.Job{
+			Name:  "cfb-team-stats",
+			Label: "Football team stats",
+			NextDelay: func(now time.Time) time.Duration {
+				return cfbdata.TeamStatsDelay(now, location)
+			},
+			RunOnStart: true,
+			Timeout:    syncRunTimeout,
+			Run: func(ctx context.Context) error {
+				return syncService.SyncTeamStats(ctx, syncService.GetCurrentSeasonYear())
+			},
+		})
+
+		// The same panels' per-game half: pre-game win probability and the
+		// kickoff forecast. Separate from the job above because an empty
+		// response means opposite things for the two -- see SyncGameContext --
+		// and because a reader of the admin page should be able to tell which
+		// of the two stopped working.
+		sched.Add(scheduler.Job{
+			Name:  "cfb-game-context",
+			Label: "Football game context",
+			NextDelay: func(now time.Time) time.Duration {
+				return cfbdata.GameContextDelay(now, location)
+			},
+			RunOnStart: true,
+			Timeout:    syncRunTimeout,
+			Run: func(ctx context.Context) error {
+				return syncService.SyncGameContext(ctx, syncService.GetCurrentSeasonYear())
+			},
+		})
+
 		// Teams and venues are synced by nothing else. The periodic job covers
 		// games and lines only, and syncGames skips any game whose teams it
 		// cannot find -- so on an unseeded database every sync reports success
