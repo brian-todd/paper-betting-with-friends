@@ -65,6 +65,10 @@ make seed-test-data      # test users, leagues, and a mix of bets
 `make help` lists every target. The checks CI runs are `make fmt-check`,
 `make fix-check`, `make vet`, `make test`, and `make vulncheck`.
 
+`make test` leaves the repository tests skipped, because they need a real
+PostgreSQL to run their queries against. `make test-db` starts one and runs
+them; CI always does.
+
 To run without Docker, point `DATABASE_URL` at your own PostgreSQL, then
 `make tools` and `make run`.
 

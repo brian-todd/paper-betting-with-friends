@@ -1,4 +1,9 @@
-.PHONY: help dev build run test clean migrate-up migrate-down migrate-create docker-up docker-down docker-logs seed seedcbb seed-test-data sync-calendar tools vendor-htmx fmt fmt-check fix-check vet vulncheck
+.PHONY: help dev build run test test-db test-db-create clean migrate-up migrate-down migrate-create docker-up docker-down docker-logs seed seedcbb seed-test-data sync-calendar tools vendor-htmx fmt fmt-check fix-check vet vulncheck
+
+# The database `make test-db` creates and points the suite at. Overridable so a
+# developer already running PostgreSQL elsewhere can use it instead.
+TEST_DB_NAME      ?= betting_tracker_test
+TEST_DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/$(TEST_DB_NAME)?sslmode=disable
 
 # Default target
 help:
@@ -7,6 +12,7 @@ help:
 	@echo "  make build          - Build the production binary"
 	@echo "  make run            - Run the server locally (requires local DB)"
 	@echo "  make test           - Run all tests"
+	@echo "  make test-db        - Run all tests against a real PostgreSQL database"
 	@echo "  make vet            - Run go vet"
 	@echo "  make fmt-check      - Verify gofmt formatting"
 	@echo "  make fix-check      - Verify go fix has no pending modernizations"
@@ -40,6 +46,24 @@ run:
 # Run tests
 test:
 	go test -v -race -cover ./...
+
+# Run tests against a real database.
+#
+# The repository suite needs PostgreSQL -- its queries are the thing under test
+# -- and skips when TEST_DATABASE_URL is unset so that a plain `make test` still
+# passes with nothing running. This is the local equivalent of what CI does.
+#
+# The database is a separate one from development's rather than the same server
+# with care taken. Tests roll their writes back, but reading real seeded seasons
+# is enough to make a test pass or fail on data it did not write.
+test-db: test-db-create
+	TEST_DATABASE_URL=$(TEST_DATABASE_URL) go test -race -cover ./...
+
+test-db-create:
+	docker compose up -d --wait db
+	@docker compose exec -T db psql -U postgres -tc \
+		"SELECT 1 FROM pg_database WHERE datname = '$(TEST_DB_NAME)'" | grep -q 1 || \
+		docker compose exec -T db psql -U postgres -c "CREATE DATABASE $(TEST_DB_NAME)"
 
 # Clean build artifacts
 clean:
