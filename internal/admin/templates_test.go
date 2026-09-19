@@ -206,6 +206,9 @@ func TestAdminSyncPageRenders(t *testing.T) {
 		Week:          9,
 		SeasonType:    models.SeasonTypeRegular,
 		WeekFound:     true,
+
+		ScoreboardLive:        true,
+		ScoreboardNextKickoff: now.Add(3 * time.Hour),
 	}
 
 	html := render(t, "admin_sync", map[string]any{"Jobs": jobs, "Health": health})
@@ -223,6 +226,39 @@ func TestAdminSyncPageRenders(t *testing.T) {
 	}
 	if !strings.Contains(html, "basketball sync is disabled") {
 		t.Error("a missing API key should be called out as disabling that sync")
+	}
+	if !strings.Contains(html, "polling every 5 minutes") {
+		t.Error("a live scoreboard should say so, since the next-run column alone cannot distinguish it from a stuck predicate")
+	}
+}
+
+// The scoreboard cadence is derived from the games table, and the failure that
+// pins it to the fast rate is silent -- the job stays green and only the bill
+// moves. These two rows are what makes it visible, so they are worth asserting
+// in both states rather than only in the one the happy path renders.
+func TestAdminSyncPageShowsAnIdleScoreboard(t *testing.T) {
+	health := SystemHealth{CFBConfigured: true, WeekFound: true}
+
+	html := render(t, "admin_sync", map[string]any{"Jobs": []scheduler.Status{}, "Health": health})
+
+	if !strings.Contains(html, "polling hourly") {
+		t.Error("an idle scoreboard should say it is polling hourly")
+	}
+	if !strings.Contains(html, "none scheduled") {
+		t.Error("no known kickoff should be reported as none scheduled, not as a zero time")
+	}
+}
+
+// Without a football API key the job is never registered, so reporting a
+// kickoff it will not act on is worse than reporting nothing.
+func TestAdminSyncPageOmitsScoreboardStateWithoutAKey(t *testing.T) {
+	html := render(t, "admin_sync", map[string]any{
+		"Jobs":   []scheduler.Status{},
+		"Health": SystemHealth{CFBConfigured: false},
+	})
+
+	if strings.Contains(html, "Next kickoff") {
+		t.Error("the scoreboard state should be omitted when the football sync is disabled")
 	}
 }
 

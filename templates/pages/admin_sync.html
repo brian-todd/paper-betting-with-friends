@@ -105,6 +105,24 @@
                 <strong>none resolved</strong> &mdash; the syncs will fall back to the calendar year
                 {{end}}
             </dd>
+            {{if .Health.CFBConfigured}}
+            <dt>Live scoreboard</dt>
+            <dd>
+                {{if .Health.ScoreboardLive}}
+                a game is being played &mdash; polling every 5 minutes
+                {{else}}
+                nothing being played &mdash; polling hourly
+                {{end}}
+            </dd>
+            <dt>Next kickoff</dt>
+            <dd>
+                {{if .Health.ScoreboardNextKickoff.IsZero}}
+                none scheduled
+                {{else}}
+                {{localTime .Health.ScoreboardNextKickoff "datetime"}}
+                {{end}}
+            </dd>
+            {{end}}
         </dl>
 
         <dl class="health-list">

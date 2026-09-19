@@ -347,9 +347,14 @@ requests a month and the football jobs are most of it:
 
 - `cfb-scoreboard` polls every 5 minutes while a game is being played and
   hourly the rest of the time, one request per division per run
-  (`cfbdata.ScoreboardDelay`). What decides which is `SyncService.ScoreboardState`,
-  which reads the games table — is anything live, and when is the next kickoff —
-  rather than asking whether the calendar says it is a season. It is scoped to
+  (`cfbdata.ScoreboardDelay`). What decides which is
+  `cfbdata.ResolveScoreboardState`, which reads the games table — is anything
+  live, and when is the next kickoff — rather than asking whether the calendar
+  says it is a season. Its worst failure is silent: anything that stops the
+  state resolving reads as live, which is permanent 5-minute polling on a job
+  that still looks healthy. So it logs the resolved state at debug, and the
+  admin sync page shows the same two facts through the same function — not a
+  second opinion that can drift from what the scheduler acted on. It is scoped to
   the divisions in `CFB_SCOREBOARD_CLASSIFICATIONS`, not to football as a whole:
   `/games` and `/teams` are fetched unfiltered, so the table holds every
   division CFBD returns, and their status is inferred from the clock, which
