@@ -139,10 +139,23 @@ func (s *SyncService) applyScoreboardGame(gameID uuid.UUID, g APIScoreboardGame)
 	// whose start time nothing corrects can go unwatched by the feed that would
 	// have corrected it.
 	//
-	// A game whose time is not yet set is skipped. The feed sends a placeholder
-	// instant for those, not an unknown, and storing it would put a real-looking
-	// kickoff on a game nobody has scheduled.
-	if !g.StartTimeTBD {
+	// Two kinds of absent time are skipped, and they are not the same kind. A
+	// startTimeTBD game has a placeholder instant -- midnight of the day the
+	// feed expects it on, not an unknown -- and storing that would put a
+	// real-looking kickoff on a game nobody has scheduled. A missing or null
+	// startDate is the zero time with the flag unset, so the flag does not
+	// catch it; writing year 1 would read as a kickoff long past, which closes
+	// betting and freezes every bet already placed until /games writes the row
+	// again. Neither is an error worth logging: the row is simply left alone
+	// for the feed that knows the answer.
+	//
+	// Note that only scheduled_at is corrected here. week_id is set from
+	// /games' own week number and never derived from the date, so a kickoff
+	// pushed across a week boundary would leave the game filed under the old
+	// week until /games rewrites both. The endpoint takes no week parameter and
+	// returns the current week, so that is a narrow case, but it is the reason
+	// this does not try to do more.
+	if !g.StartTimeTBD && !g.StartDate.IsZero() {
 		if err := s.gameRepo.UpdateScheduledAt(gameID, g.StartDate); err != nil {
 			s.logger.Error("failed to correct kickoff", "game", g.ID, "error", err)
 		}

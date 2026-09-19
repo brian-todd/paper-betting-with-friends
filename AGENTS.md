@@ -264,6 +264,14 @@ obvious guard would refuse exactly the case it exists for. Only a finished game
 has no kickoff left to move. The `scheduled_at <> ?` inequality is what keeps it
 from writing every game on every run.
 
+Two absences are skipped rather than written, and they are different things.
+`startTimeTBD` carries a *placeholder* instant — midnight of the expected day —
+so the flag is the only way to tell it from a real kickoff. A missing or null
+`startDate` is the zero time with that flag left false, so the flag does not
+catch it; year 1 reads as a kickoff long past, which closes betting and leaves
+every bet already placed neither editable nor cancellable until `/games`
+rewrites the row.
+
 `Upsert` still assigns `scheduled_at` unconditionally, so the two writers are
 asymmetric: a `/games` run holding a kickoff CFBD has not corrected yet writes
 the stale time back, and the scoreboard re-corrects it within five minutes. The
@@ -497,6 +505,7 @@ embedded copy read the same directory.
 - Assigning `status` or `finalized_at` unconditionally in a football upsert — two feeds write those rows and a plain assignment lets the slower one un-finish a settled game
 - Guarding `scheduled_at` in `GameRepository.Upsert` the way `status` is guarded — `/games` is the only feed for every division the scoreboard does not poll, and the guard would freeze their kickoffs permanently
 - Guarding a kickoff correction on `status = 'scheduled'` — `/games` infers `in_progress` from the old start time, so that is precisely the row that needs correcting
+- Writing a feed's start time without checking it is non-zero — an omitted or null `startDate` unmarshals to year 1, which reads as a kickoff long past and freezes every bet on the game
 - Treating a `GameLiveState` row as "this game is live" — it exists from before kickoff and keeps the last clock after the whistle; gate on `Game.Status`
 - Trusting stored week dates unchecked — filter on `models.Week.Plausible()` in *every* path that asks "which season/week is it now"
 - Calling `j.Run` directly, or starting any goroutine whose panic nothing recovers — one takes down the whole process
