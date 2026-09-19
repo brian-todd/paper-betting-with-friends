@@ -400,8 +400,8 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			Run:      syncService.SyncAllCalendars,
 		})
 
-		// Polls move once a week, not on the games-and-lines cadence, so this
-		// is a dedicated job rather than a step folded into that one.
+		// Polls move once a week, slower than either football feed, so this is
+		// a dedicated job rather than a step folded into one of them.
 		sched.Add(scheduler.Job{
 			Name:     "cfb-rankings",
 			Label:    "Football rankings",

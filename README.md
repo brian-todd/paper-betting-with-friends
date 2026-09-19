@@ -98,10 +98,21 @@ A book moves a number all week; a kickoff, a venue and an opponent move a
 handful of times a season. For the divisions the scoreboard covers nothing
 time-critical comes off `/games` any more — the score and the status come from
 the scoreboard, a moved kickoff is corrected within five minutes, and every
-money decision gates on `scheduled_at` rather than on a synced status. Outside
-those divisions `/games` is the only feed, so a bet there can sit unsettled for
-up to six hours; the remedy is adding the division to
-`CFB_SCOREBOARD_CLASSIFICATIONS`.
+money decision gates on `scheduled_at` rather than on a synced status.
+
+Outside those divisions `/games` is the only feed there is, and slowing it costs
+two things rather than one. A bet can sit unsettled for up to six hours after
+its game ends, because the score and the `completed` flag arrive only from
+`/games` — the `bet-settlement` sweep cannot help, since it reads the database
+and nothing has written the result yet. And `scheduled_at` itself can be six
+hours stale where it used to be at most one, which matters because it is what
+closes betting and what bounds a refund: a kickoff moved **later** closes
+betting early, and one moved **earlier** leaves a window in which a bet can
+still be placed on, or voided off, a game already being played.
+`UpdateScheduledAt` does not reach these games — the scoreboard is what calls
+it. Both are bounded by the six-hour interval, and the remedy for a division
+anyone actually bets is adding it to `CFB_SCOREBOARD_CLASSIFICATIONS`, which
+restores five-minute status, score and kickoff for it.
 
 **The cadence is a budget, not just a freshness setting.** CFBD meters us at
 30,000 calls a month, shared across every job below. Rough cost of each through

@@ -246,9 +246,11 @@ flapping, and both live in SQL so neither writer has to read before writing:
 - `GameRepository.Upsert` never regresses a `final` status, and `completed` is
   OR'd rather than assigned
 - `GameRepository.UpdateReportedStatus` is stricter still: `advancesFrom` lists
-  what each status may replace, so a game only ever moves forward. Cancelling a
-  bet is gated on `Game.Status` alone, so a status that could fall back to
-  `scheduled` would reopen the refund window on a game already being played
+  what each status may replace, so a game only ever moves forward. `cancellable`
+  reads the status as well as the kickoff — not instead of it, since PR 1 — so a
+  status that could fall back to `scheduled` would reopen the refund window on a
+  game whose stored kickoff is also wrong, which is exactly the delayed-game
+  case
 - `GameResultRepository.Upsert` keeps the first `finalized_at`, COALESCEs the
   line scores and excitement index so the feed that does not know a value cannot
   erase it, and refuses to let a *provisional* write overwrite the score of an
@@ -428,8 +430,13 @@ requests a month and the football jobs are most of it:
   ~120 a month. It shared the lines cadence until the two were split, which
   paid a 15-minute game-day rate for a feed that changes weekly. What made the
   split safe is that nothing time-critical comes off `/games` for the divisions
-  the scoreboard covers; outside them it is the only feed there is, so a bet
-  there can sit unsettled for up to six hours, and the remedy is
+  the scoreboard covers. Outside them it is the only feed there is, and two
+  things get worse by the same six hours: a bet can sit unsettled that long
+  after its game ends, and `scheduled_at` can be that stale where it used to be
+  at most an hour — which is a betting cutoff and a refund window, not just a
+  badge, since a kickoff moved earlier leaves a gap in which a bet can be placed
+  on or voided off a game already under way. `UpdateScheduledAt` cannot close it
+  there; only the scoreboard calls it. The remedy is
   `CFB_SCOREBOARD_CLASSIFICATIONS` rather than a faster rate. It carries no
   `RunOnStart` and no catch-up for a slot missed while the process was down —
   the obvious catch-up keys on the last *success*, which never advances while a
