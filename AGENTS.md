@@ -345,16 +345,31 @@ the stack goes to the log, where it is actually readable.
 Job cadence is a spending plan, not a freshness knob. CFBD meters us at 30,000
 requests a month and the football jobs are most of it:
 
-- `cfb-scoreboard` polls every 5 minutes in season and hourly out of it, one
-  request per division per run (`cfbdata.ScoreboardDelay`). "In season" is
-  `SyncService.InSeason`, which asks the same plausible-week query the rest of
-  the calendar logic does. Each extra division in
-  `CFB_SCOREBOARD_CLASSIFICATIONS` is another ~8,600 requests a month
+- `cfb-scoreboard` polls every 5 minutes while a game is being played and
+  hourly the rest of the time, one request per division per run
+  (`cfbdata.ScoreboardDelay`). What decides which is
+  `cfbdata.ResolveScoreboardState`, which reads the games table — is anything
+  live, and when is the next kickoff — rather than asking whether the calendar
+  says it is a season. Its worst failure is silent: anything that stops the
+  state resolving reads as live, which is permanent 5-minute polling on a job
+  that still looks healthy. So it logs the resolved state at debug, and the
+  admin sync page shows the same two facts through the same function — not a
+  second opinion that can drift from what the scheduler acted on. It is scoped to
+  the divisions in `CFB_SCOREBOARD_CLASSIFICATIONS`, not to football as a whole:
+  `/games` and `/teams` are fetched unfiltered, so the table holds every
+  division CFBD returns, and their status is inferred from the clock, which
+  reads `in_progress` for hours at a time. Each extra division is another
+  ~2,700 requests a month in the heart of the season, ~720 out of it
 - `cfb-games-and-lines` follows the football week — 15 minutes Thu–Sat, 30
   midweek, hourly overnight (`cfbdata.SyncDelay`) — at two requests a run
 
 `TestFootballCadenceStaysWithinMonthlyCallBudget` walks real months at the real
-schedules and fails if a change to either overruns the plan.
+schedules and fails if a change to either overruns the plan. It drives the
+scoreboard from a synthetic slate, because a cadence derived from the games
+table cannot be costed against a feed assumed live around the clock. That slate
+is calibrated against the real schedule — ~34 live hours a week against ~36
+measured — and a slate that is too thin is the one way this test passes while
+production overspends.
 
 A job can also be run on demand: `Trigger(name)` sends on a capacity-1 channel,
 and that buffer *is* the debounce — a second trigger while one is pending

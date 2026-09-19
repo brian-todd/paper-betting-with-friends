@@ -2,9 +2,11 @@ package admin
 
 import (
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
+	"github.com/brian/paper-betting-with-friends/internal/cfbdata"
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/brian/paper-betting-with-friends/internal/scheduler"
@@ -32,6 +34,19 @@ type SystemHealth struct {
 	Week       int
 	SeasonType models.SeasonType
 	WeekFound  bool
+
+	// ScoreboardLive and ScoreboardNextKickoff are the two facts cfb-scoreboard
+	// picks its cadence from: five minutes while a game is being played, hourly
+	// otherwise, brought forward to the next kickoff.
+	//
+	// They are here because that job's worst failure is silent. Anything that
+	// stops the state resolving reads as live, which is permanent five-minute
+	// polling -- a healthy-looking job, a full set of green ticks, and a bill
+	// that quietly doubles. The "next run" column alone cannot show it: four
+	// minutes is the correct answer during a slate and the wrong one at 3am on
+	// a Tuesday, and only this says which of the two you are looking at.
+	ScoreboardLive        bool
+	ScoreboardNextKickoff time.Time
 }
 
 // JobStatuses returns every registered job, including the internal ones that
@@ -102,6 +117,18 @@ func (s *Service) Health() (SystemHealth, error) {
 	// GetCurrentWeek already drops weeks whose span cannot be real, which is the
 	// rule every "what season is it" path has to apply.
 	health.Season, health.Week, health.SeasonType, health.WeekFound = s.games.GetCurrentWeek()
+
+	// Resolved through the same function the scheduler calls, and with the same
+	// configured divisions, so the page reports what the job acted on rather
+	// than a second opinion that can drift from it. Only meaningful when the
+	// football sync exists at all, which is what the API key decides.
+	if health.CFBConfigured {
+		state := cfbdata.ResolveScoreboardState(s.gameRepo, slog.Default(), time.Now(), s.cfg.CFBScoreboardClassifications)
+		health.ScoreboardLive = state.Active
+		if state.NextKickoff != nil {
+			health.ScoreboardNextKickoff = *state.NextKickoff
+		}
+	}
 
 	return health, nil
 }

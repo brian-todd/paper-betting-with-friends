@@ -93,22 +93,73 @@ func (s *SyncService) GetCurrentSeasonYear() int {
 	return now.Year()
 }
 
-// InSeason reports whether now falls inside a week of the stored calendar.
+// ScoreboardState resolves what the scoreboard schedule needs to know about
+// the games table: whether anything is being played, and when the next thing
+// kicks off.
+func (s *SyncService) ScoreboardState(now time.Time, classifications []string) ScoreboardState {
+	return ResolveScoreboardState(s.gameRepo, s.logger, now, classifications)
+}
+
+// ResolveScoreboardState answers the two questions the scoreboard cadence is
+// decided from.
 //
-// It is the schedule's notion of "the season is on", and it reads the same
-// filtered query GetCurrentSeasonYear does, so a week row with an impossible
-// span cannot make the scoreboard poll flat out through July.
+// It takes a repository rather than hanging off SyncService alone because the
+// admin page shows these same two facts, and it has no API client to build a
+// SyncService with. One implementation, so what the page reports is what the
+// scheduler acted on rather than a second opinion that can drift from it.
 //
-// A database error reads as in season. The cost of being wrong that way is a
-// few extra requests; the cost of being wrong the other way is a whole
-// Saturday of scores arriving an hour late.
-func (s *SyncService) InSeason(now time.Time) bool {
-	season, err := s.weekRepo.FindSeasonContainingDate(now)
+// classifications is the same list SyncScoreboard is given, and goes through
+// the same normalizeClassifications -- the predicate and the fetch must not
+// disagree about which divisions are in play. An unnormalized list would match
+// no team at all and pin the job to the idle rate through every slate of the
+// season.
+//
+// A database error reads as Active. It is the cheap side of the trade: a blip
+// mid-slate wastes a few requests, where the other answer drops live scores to
+// hourly on a Saturday. It is also the failure that hides best -- the job goes
+// on looking healthy and only the bill moves -- which is why both paths log
+// before returning it, and why the resolved state is on the admin page.
+func ResolveScoreboardState(gameRepo *repository.GameRepository, logger *slog.Logger, now time.Time, classifications []string) ScoreboardState {
+	classifications = normalizeClassifications(classifications)
+
+	active, err := gameRepo.HasActiveGames(classifications, now, maxGameDuration)
 	if err != nil {
-		s.logger.Error("failed to resolve season for scoreboard schedule", "error", err)
-		return true
+		logger.Error("failed to resolve active games for scoreboard schedule", "error", err)
+		return ScoreboardState{Active: true}
 	}
-	return season > 0
+
+	state := ScoreboardState{Active: active}
+
+	kickoff, err := gameRepo.NextKickoff(classifications, now)
+	switch {
+	case err == nil:
+		state.NextKickoff = &kickoff
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		// The offseason, and the gap between a week's last game and the next
+		// week's schedule arriving. Both wait at the idle rate.
+	default:
+		logger.Error("failed to resolve next kickoff for scoreboard schedule", "error", err)
+		return ScoreboardState{Active: true}
+	}
+
+	// The scheduler already logs the delay it was handed; this is the half that
+	// explains it. A five-minute cadence at 3am on a Tuesday is only visibly
+	// wrong next to the state it was derived from.
+	logger.Debug("resolved scoreboard schedule state",
+		"active", state.Active,
+		"next_kickoff", formatKickoff(state.NextKickoff),
+		"classifications", classifications)
+
+	return state
+}
+
+// formatKickoff renders a kickoff for a log line, since a nil *time.Time logs
+// as a bare <nil> that reads like a bug rather than "nothing is scheduled".
+func formatKickoff(t *time.Time) string {
+	if t == nil {
+		return "none"
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // SeedAll performs a full seed of all data for a given year, optionally filtered by week and season type.

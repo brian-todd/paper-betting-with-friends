@@ -219,35 +219,73 @@ func TestNextScoreboardSync(t *testing.T) {
 	at := func(day, hour, minute int) time.Time {
 		return time.Date(2026, time.September, day, hour, minute, 0, 0, eastern)
 	}
+	kickoff := func(day, hour, minute int) *time.Time {
+		k := at(day, hour, minute)
+		return &k
+	}
 
 	tests := []struct {
-		name     string
-		now      time.Time
-		inSeason bool
-		want     time.Time
+		name  string
+		state ScoreboardState
+		now   time.Time
+		want  time.Time
 	}{
-		// In season the rate is flat: five minutes, day and night, because that
-		// is what makes a live score on the page a live score.
-		{"saturday afternoon", at(5, 15, 31), true, at(5, 15, 35)},
-		{"saturday 3am", at(5, 3, 2), true, at(5, 3, 5)},
-		{"tuesday morning", at(8, 9, 0), true, at(8, 9, 5)},
-		{"lands on the grid, not on the offset", at(5, 15, 33), true, at(5, 15, 35)},
+		// While a game is on the rate is five minutes, day or night, because
+		// that is what makes a live score on the page a live score. What is
+		// next to kick off does not come into it.
+		{"live slate", ScoreboardState{Active: true}, at(5, 15, 31), at(5, 15, 35)},
+		{"live late", ScoreboardState{Active: true}, at(5, 23, 2), at(5, 23, 5)},
+		{"lands on the grid, not on the offset", ScoreboardState{Active: true}, at(5, 15, 33), at(5, 15, 35)},
+		{"rolls past midnight", ScoreboardState{Active: true}, at(5, 23, 58), at(6, 0, 0)},
 
-		// Out of season it is an hourly pulse. Nothing is played between the
-		// last bowl and next August.
-		{"july afternoon", at(5, 15, 31), false, at(5, 16, 0)},
-		{"july on the hour", at(5, 16, 0), false, at(5, 17, 0)},
+		// Idle, with a kickoff close enough to wake for: land on it exactly.
+		// The run that follows sees scheduled_at <= now, reads Active, and the
+		// live rate takes over -- so there is nothing to gain by waking sooner.
+		{"kickoff ten minutes out", ScoreboardState{NextKickoff: kickoff(5, 15, 41)}, at(5, 15, 31), at(5, 15, 41)},
+		{"kickoff on the grid point", ScoreboardState{NextKickoff: kickoff(5, 16, 0)}, at(5, 15, 31), at(5, 16, 0)},
 
-		// Midnight rolls into the next day rather than overflowing the minute.
-		{"rolls past midnight", at(5, 23, 58), true, at(6, 0, 0)},
+		// Further out than the idle cap and the cap wins. A kickoff days away
+		// is not a reason to sleep for days: the games table it came from can
+		// be wrong, and an hourly pulse bounds how long a stale scheduled_at
+		// can hide a game that is actually being played.
+		{"kickoff four hours out", ScoreboardState{NextKickoff: kickoff(5, 19, 30)}, at(5, 15, 31), at(5, 16, 0)},
+		{"kickoff three days out", ScoreboardState{NextKickoff: kickoff(8, 19, 30)}, at(5, 15, 31), at(5, 16, 0)},
+
+		// No kickoff at all is the offseason, and the gap at a week rollover
+		// before the next week's schedule has been synced. Same hourly pulse:
+		// nothing distinguishes "nothing is scheduled" from "nothing is
+		// scheduled that we know of".
+		{"no kickoff known", ScoreboardState{}, at(5, 15, 31), at(5, 16, 0)},
+		{"no kickoff known, on the hour", ScoreboardState{}, at(5, 16, 0), at(5, 17, 0)},
+
+		// Active beats a kickoff, and beats one already passed. A game in
+		// progress is the thing being polled for.
+		{"active with a later kickoff", ScoreboardState{Active: true, NextKickoff: kickoff(5, 19, 30)}, at(5, 15, 31), at(5, 15, 35)},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NextScoreboardSync(tt.now, eastern, tt.inSeason); !got.Equal(tt.want) {
-				t.Errorf("NextScoreboardSync(%v, inSeason=%v) = %v, want %v", tt.now, tt.inSeason, got, tt.want)
+			if got := NextScoreboardSync(tt.now, eastern, tt.state); !got.Equal(tt.want) {
+				t.Errorf("NextScoreboardSync(%v, %+v) = %v, want %v", tt.now, tt.state, got, tt.want)
 			}
 		})
+	}
+}
+
+// A kickoff is an absolute instant and loc is a wall-clock grid, so the two
+// arrive in different locations in production: scheduled_at comes back from
+// Postgres in UTC while the schedule is read in APP_TIMEZONE. Bringing the wake
+// forward has to compare them as instants.
+func TestNextScoreboardSyncComparesKickoffAcrossLocations(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	now := time.Date(2026, time.September, 5, 15, 31, 0, 0, eastern)
+	kickoff := now.Add(10 * time.Minute).UTC()
+
+	want := kickoff
+	got := NextScoreboardSync(now, eastern, ScoreboardState{NextKickoff: &kickoff})
+	if !got.Equal(want) {
+		t.Errorf("NextScoreboardSync with a UTC kickoff = %v, want %v", got, want)
 	}
 }
 
@@ -266,31 +304,92 @@ func TestScoreboardDelayIsAlwaysPositiveAcrossDST(t *testing.T) {
 	} {
 		for offset := range 48 * 60 {
 			now := start.Add(time.Duration(offset) * time.Minute)
-			for _, inSeason := range []bool{true, false} {
-				delay := ScoreboardDelay(now, eastern, inSeason)
+
+			// A kickoff an hour and a half out exercises the brought-forward
+			// branch through the transition too, where the wall clock and the
+			// elapsed time disagree by an hour.
+			kickoff := now.Add(90 * time.Minute)
+			for _, state := range []ScoreboardState{
+				{Active: true},
+				{},
+				{NextKickoff: &kickoff},
+			} {
+				delay := ScoreboardDelay(now, eastern, state)
 				if delay <= 0 {
-					t.Fatalf("ScoreboardDelay(%v, inSeason=%v) = %v, want positive", now, inSeason, delay)
+					t.Fatalf("ScoreboardDelay(%v, %+v) = %v, want positive", now, state, delay)
 				}
 				// The grid is wall-clock, so the step across the repeated hour
 				// on the fall-back day is genuinely an hour longer in absolute
 				// time. That is the intended behaviour; what is being checked
 				// is that it stops there rather than skipping a whole cycle.
-				if delay > scoreboardOffseasonInterval+time.Hour {
-					t.Fatalf("ScoreboardDelay(%v, inSeason=%v) = %v, longer than a cadence stretched by the DST fall-back", now, inSeason, delay)
+				if delay > scoreboardIdleInterval+time.Hour {
+					t.Fatalf("ScoreboardDelay(%v, %+v) = %v, longer than a cadence stretched by the DST fall-back", now, state, delay)
 				}
 			}
 		}
 	}
 }
 
-// The whole football sync now spends against a 30,000-request monthly
-// allowance, and the scoreboard is most of it: a five-minute cadence is ~8,600
-// calls per division. This walks real months at the real schedules so that
-// raising a rate, or adding a division, cannot quietly overrun the plan.
+// slateKickoffs builds a representative week of a real football season for
+// every week touching [start, end), in loc.
 //
-// The cap leaves ~6,000 under the allowance for the calendar job (~800 a month,
+// The scoreboard cadence is derived from the games table, so a month "in
+// season" is no longer the worst case the budget has to survive. A month of
+// games is, and this is what one looks like.
+//
+// The shape is calibrated against the real 2026 FBS schedule rather than
+// guessed: weeknight games Tuesday through Friday, and a Saturday running from
+// a noon kickoff to a 22:30 one. That is ~34 hours a week with a game in
+// progress, against ~36 measured on the real table. An earlier version of this
+// listed Thursday, Friday and four Saturday games, which is ~22 hours -- it
+// would have passed while production spent a fifth more than it modelled.
+//
+// The midnight Saturday entry is not a game. CFBD reports a kickoff time it
+// does not know yet as startTimeTBD with a midnight timestamp, and that field
+// is parsed and dropped rather than stored, so those games sit at midnight in
+// the table and read as being played until the window clears them. It is worth
+// carrying here because it is a real cost today (~140-340 calls a month) and
+// the budget should count what the code actually does.
+func slateKickoffs(start, end time.Time, loc *time.Location) []time.Time {
+	type kickoff struct{ hour, minute int }
+	byWeekday := map[time.Weekday][]kickoff{
+		time.Tuesday:   {{19, 30}},
+		time.Wednesday: {{19, 30}},
+		time.Thursday:  {{19, 30}},
+		time.Friday:    {{19, 30}},
+		time.Saturday:  {{0, 0}, {12, 0}, {15, 30}, {19, 0}, {22, 30}},
+	}
+
+	var kickoffs []time.Time
+	// A week either side of the month: a Saturday night game before the 1st is
+	// still being played on it, and a kickoff after the last day is still what
+	// the schedule on that day is waiting for.
+	for day := start.AddDate(0, 0, -7); day.Before(end.AddDate(0, 0, 7)); day = day.AddDate(0, 0, 1) {
+		for _, k := range byWeekday[day.Weekday()] {
+			kickoffs = append(kickoffs,
+				time.Date(day.Year(), day.Month(), day.Day(), k.hour, k.minute, 0, 0, loc))
+		}
+	}
+	return kickoffs
+}
+
+// The whole football sync spends against a 30,000-request monthly allowance,
+// and the scoreboard is most of it. This walks real months at the real
+// schedules so that raising a rate, or adding a division, cannot quietly
+// overrun the plan.
+//
+// The scoreboard is now counted against a synthetic slate rather than a feed
+// polled around the clock, because that is what its cadence reads: five
+// minutes while a game is being played, hourly otherwise. Counting it as
+// permanently live would not be a conservative estimate of the new schedule --
+// it would be an estimate of the old one, and would pass whatever this change
+// did to the new.
+//
+// The cap leaves the rest of the allowance for the calendar job (~800 a month,
 // since each run walks every season since 2002), the rankings job (~120) and
-// the occasional manual seed, none of which are on a fast cadence.
+// the occasional manual seed, none of which are on a fast cadence. It is set
+// close to the projection on purpose: a cap with an order of magnitude of slack
+// passes whatever regression it exists to catch.
 //
 // The daily team stats job is counted here rather than left to the headroom,
 // because it is the one whose request count per run could grow: it is four
@@ -313,18 +412,25 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		gameContextCallsPerRun = 2
 
 		// Deploys in a month, as a worst case rather than an observed rate.
-		// Both daily jobs carry scheduler.RunOnStart, so each restart buys one
-		// extra run of each on top of the schedule -- the point of the flag,
-		// and a cost the plan should carry rather than discover. Two a working
-		// day is a busier release cadence than this project has ever had.
+		// Both daily jobs and the scoreboard carry scheduler.RunOnStart, so
+		// each restart buys one extra run of each on top of the schedule --
+		// the point of the flag, and a cost the plan should carry rather than
+		// discover. Two a working day is a busier release cadence than this
+		// project has ever had.
 		restartsPerMonth = 40
 
-		monthlyCallsCap = 24000
+		monthlyCallsCap = 12000
 
 		// The budget is checked at the widest division list an operator is
 		// likely to configure, not at the FBS-only default -- the default
 		// staying affordable says nothing about whether the knob is safe.
 		scoreboardDivisions = 2
+
+		// How long a game is presumed to hold the feed. Shorter than
+		// maxGameDuration, which is the stuck-row bound rather than a game
+		// length: a real game ends, the scoreboard reports it final within five
+		// minutes, and the predicate stops matching it.
+		gameDuration = 4 * time.Hour
 	)
 
 	eastern := mustLoad(t, "America/New_York")
@@ -344,10 +450,26 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 			start := time.Date(year, month, 1, 0, 0, 0, 0, eastern)
 			end := start.AddDate(0, 1, 0)
 
-			// In season the whole month through, which is the worst case: the
-			// offseason rate is twelve times cheaper.
+			// Every month is a football month here, which no year has. The
+			// point is the cost of a busy one, and a September that fits is a
+			// February that fits several times over.
+			kickoffs := slateKickoffs(start, end, eastern)
+			stateAt := func(now time.Time) ScoreboardState {
+				var state ScoreboardState
+				for i, kickoff := range kickoffs {
+					if !now.Before(kickoff) && now.Before(kickoff.Add(gameDuration)) {
+						state.Active = true
+					}
+					if kickoff.After(now) {
+						state.NextKickoff = &kickoffs[i]
+						break
+					}
+				}
+				return state
+			}
+
 			scoreboardRuns := countRuns(start, end, func(now time.Time) time.Time {
-				return NextScoreboardSync(now, eastern, true)
+				return NextScoreboardSync(now, eastern, stateAt(now))
 			})
 			syncRuns := countRuns(start, end, func(now time.Time) time.Time {
 				return NextSync(now, eastern)
@@ -359,10 +481,14 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 				return NextGameContextSync(now, eastern)
 			})
 
-			// A startup run does not replace the scheduled one: both delays
-			// target a wall-clock hour, so the job still fires at its usual
-			// time afterwards and the restart runs are purely additive.
-			restartCalls := restartsPerMonth * (teamStatsCallsPerRun + gameContextCallsPerRun)
+			// A startup run does not replace the scheduled one: every one of
+			// these delays targets a wall-clock grid point, so the job still
+			// fires at its usual time afterwards and the restart runs are
+			// purely additive. The scoreboard is in here because a start
+			// against an unpopulated games table would otherwise idle for up
+			// to an hour before taking a live reading.
+			restartCalls := restartsPerMonth *
+				(teamStatsCallsPerRun + gameContextCallsPerRun + scoreboardDivisions)
 
 			calls := scoreboardRuns*scoreboardDivisions +
 				syncRuns*gamesAndLinesCallsPerRun +
@@ -493,5 +619,51 @@ func TestNextGameContextSyncStaggersBehindTeamStats(t *testing.T) {
 
 	if teamStatsHour == gameContextHour {
 		t.Errorf("the two daily jobs both target hour %d; the stagger is gone", teamStatsHour)
+	}
+}
+
+// The configured division list stopped being only a fetch parameter when the
+// cadence started matching it against teams.classification. A list that does
+// not match the column does not degrade the schedule, it freezes it: nothing
+// reads as live, the scoreboard polls hourly through every slate, and every
+// run still reports success.
+func TestNormalizeClassifications(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"empty falls back to the default", nil, []string{"fbs"}},
+		{"empty slice falls back to the default", []string{}, []string{"fbs"}},
+		{"already normal is left alone", []string{"fbs", "fcs"}, []string{"fbs", "fcs"}},
+
+		// The column is stored lowercase, as CFBD reports it.
+		{"upper case is folded", []string{"FBS"}, []string{"fbs"}},
+		{"mixed case is folded", []string{"Fbs", "FCS"}, []string{"fbs", "fcs"}},
+
+		// getEnvList trims already, but it is the only caller that does, and
+		// this is the function the invariant belongs to.
+		{"whitespace is trimmed", []string{" fbs ", "fcs "}, []string{"fbs", "fcs"}},
+
+		// A duplicate would poll the same division twice a run and pay for it.
+		{"duplicates are dropped", []string{"fbs", "FBS", "fcs"}, []string{"fbs", "fcs"}},
+
+		// A list of nothing but blanks is a misconfiguration, and the default
+		// is a better answer than a predicate matching no team at all.
+		{"blanks alone fall back to the default", []string{"", "  "}, []string{"fbs"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeClassifications(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("normalizeClassifications(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("normalizeClassifications(%q) = %q, want %q", tt.in, got, tt.want)
+				}
+			}
+		})
 	}
 }
