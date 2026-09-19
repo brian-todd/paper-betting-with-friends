@@ -128,6 +128,26 @@ func (s *SyncService) SyncScoreboard(ctx context.Context, classifications []stri
 // applyScoreboardGame writes one scoreboard row across the three places its
 // parts belong: the game's status, the score, and the live state.
 func (s *SyncService) applyScoreboardGame(gameID uuid.UUID, g APIScoreboardGame) error {
+	// A kickoff that has moved is corrected first, and a failure to do it is
+	// logged rather than returned: the status, the score and the clock below are
+	// what this sync exists for, and losing a run of them over a start time
+	// would be the worse trade.
+	//
+	// This matters more since the scoreboard started scheduling itself off
+	// scheduled_at. A stale kickoff there is not only a wrong card and a
+	// misplaced betting cutoff -- it decides when the job next polls, so a game
+	// whose start time nothing corrects can go unwatched by the feed that would
+	// have corrected it.
+	//
+	// A game whose time is not yet set is skipped. The feed sends a placeholder
+	// instant for those, not an unknown, and storing it would put a real-looking
+	// kickoff on a game nobody has scheduled.
+	if !g.StartTimeTBD {
+		if err := s.gameRepo.UpdateScheduledAt(gameID, g.StartDate); err != nil {
+			s.logger.Error("failed to correct kickoff", "game", g.ID, "error", err)
+		}
+	}
+
 	status, completed, ok := scoreboardStatus(g.Status)
 	if !ok {
 		// An unrecognised status is a feed change, not a game. Leaving the
