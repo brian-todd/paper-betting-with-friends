@@ -40,23 +40,48 @@ const (
 
 // Scoreboard cadence.
 //
-// The scoreboard is the live feed — the clock, the period, the score as it
-// moves — so it is polled far harder than games and lines, which exist to pick
-// up a schedule change and a line move. One call per division per run is what
-// makes even the fast rate affordable: five minutes around the clock is ~8,600
-// requests a month against an allowance of 30,000, with every other sync
-// spending well under 6,000 between them.
+// The scoreboard is the live feed -- the clock, the period, the score as it
+// moves -- so while a game is being played it is polled far harder than games
+// and lines, which exist to pick up a schedule change and a line move.
 //
-// Out of season it drops to a pulse. Nothing is played between the last bowl
-// and next August, and the endpoint costs the same to ask.
+// The rest of the time it drops to a pulse. A five-minute poll around the clock
+// is ~8,600 requests a month per division against an allowance of 30,000, and
+// almost all of it buys nothing: a Tuesday in October has no football being
+// played, and neither does 9am on a Saturday. Polling only while there is
+// something on the feed costs ~2,700 in October and ~720 in June instead. What decides the rate is
+// therefore whether a game is on, not whether the calendar says it is a season
+// -- see ScoreboardState.
 const (
-	// scoreboardInterval is the in-season rate.
-	scoreboardInterval = 5 * time.Minute
+	// scoreboardLiveInterval is the rate while a game is being played.
+	scoreboardLiveInterval = 5 * time.Minute
 
-	// scoreboardOffseasonInterval applies when no week of the calendar contains
-	// today, so nothing is being played and nothing can be.
-	scoreboardOffseasonInterval = time.Hour
+	// scoreboardIdleInterval is the rate while none is.
+	//
+	// It caps the wait even when the next kickoff is days away, because the
+	// games table can be wrong -- a game added, or moved -- and this schedule is
+	// derived from it. An hourly floor costs ~720 calls a month and bounds how
+	// long a wrong scheduled_at can hide a live game.
+	scoreboardIdleInterval = time.Hour
+
+	// maxGameDuration is how long after kickoff a game is still presumed to be
+	// being played. The longest live game observed over a week of samples was
+	// ~5h15m.
+	maxGameDuration = 6 * time.Hour
 )
+
+// ScoreboardState is what the schedule needs to know about the games table.
+//
+// The scoreboard covers the current CFB week only, so at a week rollover it
+// holds no future kickoff at all and cannot schedule itself from its own
+// contents. These facts come from the database, which spans the whole season.
+type ScoreboardState struct {
+	// Active reports a game that is being played, or that kicked off recently
+	// enough to still be.
+	Active bool
+
+	// NextKickoff is the earliest future kickoff, nil when none is known.
+	NextKickoff *time.Time
+}
 
 // NextSync returns the next instant the football sync should run after now.
 //
@@ -82,25 +107,41 @@ func NextSync(now time.Time, loc *time.Location) time.Time {
 // NextScoreboardSync returns the next instant the live scoreboard sync should
 // run after now.
 //
-// inSeason is whether the week calendar places now inside a season. The caller
-// resolves it, because answering it means reading the database and the schedule
-// arithmetic here stays testable without one.
-func NextScoreboardSync(now time.Time, loc *time.Location, inSeason bool) time.Time {
+// state is what the games table says is being played and what is next to kick
+// off. The caller resolves it, because answering it means reading the database
+// and the schedule arithmetic here stays testable without one.
+//
+// There is deliberately no margin before a kickoff. Waking early buys nothing
+// -- there is no score before kickoff -- and the wake lands *on* the kickoff,
+// at which point scheduled_at <= now makes the next state Active and the live
+// rate takes over.
+func NextScoreboardSync(now time.Time, loc *time.Location, state ScoreboardState) time.Time {
 	if loc == nil {
 		loc = time.UTC
 	}
 
-	interval := scoreboardOffseasonInterval
-	if inSeason {
-		interval = scoreboardInterval
+	t := now.In(loc)
+	if state.Active {
+		return nextOnGrid(t, loc, scoreboardLiveInterval)
 	}
-	return nextOnGrid(now.In(loc), loc, interval)
+
+	// The idle wait stays on the wall-clock grid rather than being computed as
+	// now.Add(interval), for the reason given on NextSync: a restart must not
+	// shift the whole schedule onto an arbitrary offset. A kickoff sooner than
+	// the next grid point brings the run forward to it.
+	next := nextOnGrid(t, loc, scoreboardIdleInterval)
+	if state.NextKickoff != nil {
+		if kickoff := state.NextKickoff.In(loc); kickoff.After(t) && kickoff.Before(next) {
+			return kickoff
+		}
+	}
+	return next
 }
 
 // ScoreboardDelay returns how long to wait after now before the next scoreboard
 // sync.
-func ScoreboardDelay(now time.Time, loc *time.Location, inSeason bool) time.Duration {
-	if delay := NextScoreboardSync(now, loc, inSeason).Sub(now); delay > minDelay {
+func ScoreboardDelay(now time.Time, loc *time.Location, state ScoreboardState) time.Duration {
+	if delay := NextScoreboardSync(now, loc, state).Sub(now); delay > minDelay {
 		return delay
 	}
 	return minDelay

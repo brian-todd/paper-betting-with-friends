@@ -93,22 +93,45 @@ func (s *SyncService) GetCurrentSeasonYear() int {
 	return now.Year()
 }
 
-// InSeason reports whether now falls inside a week of the stored calendar.
+// ScoreboardState resolves what the scoreboard schedule needs to know about
+// the games table: whether anything is being played, and when the next thing
+// kicks off.
 //
-// It is the schedule's notion of "the season is on", and it reads the same
-// filtered query GetCurrentSeasonYear does, so a week row with an impossible
-// span cannot make the scoreboard poll flat out through July.
+// classifications is the same list SyncScoreboard is given, and defaults the
+// same way -- the predicate and the fetch must not disagree about which
+// divisions are in play. An empty slice left undefaulted here would match no
+// team at all and pin the job to the idle rate through every slate of the
+// season.
 //
-// A database error reads as in season. The cost of being wrong that way is a
-// few extra requests; the cost of being wrong the other way is a whole
-// Saturday of scores arriving an hour late.
-func (s *SyncService) InSeason(now time.Time) bool {
-	season, err := s.weekRepo.FindSeasonContainingDate(now)
-	if err != nil {
-		s.logger.Error("failed to resolve season for scoreboard schedule", "error", err)
-		return true
+// A database error reads as Active. It is the cheap side of the trade: a blip
+// mid-slate wastes a few requests, where the other answer drops live scores to
+// hourly on a Saturday.
+func (s *SyncService) ScoreboardState(now time.Time, classifications []string) ScoreboardState {
+	if len(classifications) == 0 {
+		classifications = DefaultScoreboardClassifications
 	}
-	return season > 0
+
+	active, err := s.gameRepo.HasActiveGames(classifications, now, maxGameDuration)
+	if err != nil {
+		s.logger.Error("failed to resolve active games for scoreboard schedule", "error", err)
+		return ScoreboardState{Active: true}
+	}
+
+	state := ScoreboardState{Active: active}
+
+	kickoff, err := s.gameRepo.NextKickoff(classifications, now)
+	switch {
+	case err == nil:
+		state.NextKickoff = &kickoff
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		// The offseason, and the gap between a week's last game and the next
+		// week's schedule arriving. Both wait at the idle rate.
+	default:
+		s.logger.Error("failed to resolve next kickoff for scoreboard schedule", "error", err)
+		return ScoreboardState{Active: true}
+	}
+
+	return state
 }
 
 // SeedAll performs a full seed of all data for a given year, optionally filtered by week and season type.

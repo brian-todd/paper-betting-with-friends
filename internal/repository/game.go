@@ -479,6 +479,75 @@ func (r *GameRepository) UpdateReportedStatus(gameID uuid.UUID, status models.Ga
 		}).Error
 }
 
+// scoreboardScoped narrows a query to the football games the scoreboard sync
+// actually polls.
+//
+// Scoping by sport alone is not enough, and not merely as a precaution: GetGames
+// asks /games for a whole year with no division filter and /teams is unfiltered
+// too, so the table holds every division CFBD returns while the scoreboard polls
+// FBS. A predicate over all of them would be driven by thousands of games the
+// feed will never report -- and since their status is inferred from the clock by
+// /games, they read in_progress for hours at a time, which would pin the live
+// rate on permanently.
+//
+// classification lives on Team, not Game, so this is a join. The home side alone
+// is enough: the feed returns a cross-division game under both divisions, so the
+// home team's classification is never the only one that would have matched.
+//
+// The statuses excluded are the terminal ones. A game that is over, or that will
+// not be played, neither is being played now nor will kick off later.
+func scoreboardScoped(db *gorm.DB, classifications []string) *gorm.DB {
+	return db.Model(&models.Game{}).
+		Joins("JOIN teams ON teams.id = games.home_team_id").
+		Where("games.sport = ?", models.SportFootball).
+		Where("teams.classification IN ?", classifications).
+		Where("games.status NOT IN ?", []models.GameStatus{
+			models.GameStatusFinal,
+			models.GameStatusCancelled,
+			models.GameStatusPostponed,
+		})
+}
+
+// HasActiveGames reports whether a game in one of the given classifications
+// kicked off within the last window and has not finished.
+//
+// The window is what keeps one stuck row from silently reverting the scoreboard
+// to permanent five-minute polling. With the division scoping in place a game
+// only gets stuck unfinished if the feed stops covering it before reporting it
+// complete -- a week rollover mid-game, or a run of failed syncs -- so this is
+// insurance rather than load-bearing. It is worth keeping for the asymmetry:
+// nothing would alert on the failure, because the job would look healthy and
+// only the bill would move.
+func (r *GameRepository) HasActiveGames(classifications []string, now time.Time, window time.Duration) (bool, error) {
+	var count int64
+	err := scoreboardScoped(r.db, classifications).
+		Where("games.scheduled_at <= ? AND games.scheduled_at > ?", now, now.Add(-window)).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// NextKickoff returns the earliest kickoff after the given instant among games
+// in the given classifications, or gorm.ErrRecordNotFound when there is none.
+func (r *GameRepository) NextKickoff(classifications []string, after time.Time) (time.Time, error) {
+	var kickoff time.Time
+	err := scoreboardScoped(r.db, classifications).
+		Select("games.scheduled_at").
+		Where("games.scheduled_at > ?", after).
+		Order("games.scheduled_at ASC").
+		Limit(1).
+		Scan(&kickoff).Error
+	if err != nil {
+		return time.Time{}, err
+	}
+	if kickoff.IsZero() {
+		return time.Time{}, gorm.ErrRecordNotFound
+	}
+	return kickoff, nil
+}
+
 // FindByDateRangeAndSport retrieves all games for a sport within a date range.
 func (r *GameRepository) FindByDateRangeAndSport(sport string, start, end time.Time) ([]models.Game, error) {
 	var games []models.Game

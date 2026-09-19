@@ -17,9 +17,13 @@ import (
 // nothing else is configured.
 //
 // FBS only, because the endpoint takes one division per call and the call count
-// is the monthly bill: at a five-minute cadence each extra division costs
-// another ~8,600 requests a month. FBS is also the only division the feed
-// carries betting lines for, and the games grid filters to it by default.
+// is the monthly bill: each extra division costs another ~2,700 requests a
+// month in the heart of the season. FBS is also the only division the feed carries betting lines for, and
+// the games grid filters to it by default.
+//
+// The list is load-bearing beyond the fetch: ScoreboardState scopes the games
+// it schedules against to these same divisions, so the two must be given the
+// same value.
 var DefaultScoreboardClassifications = []string{"fbs"}
 
 // SyncScoreboard refreshes the live state of the current week's games.

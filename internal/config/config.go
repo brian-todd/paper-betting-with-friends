@@ -46,9 +46,9 @@ type Config struct {
 
 	// CFBScoreboardClassifications is the divisions the live scoreboard sync
 	// polls. The endpoint takes one division per call, so each entry is another
-	// request every five minutes -- roughly 8,600 a month against an allowance
-	// of 30,000 -- which is why adding one is a deliberate act rather than a
-	// default.
+	// request every run -- roughly 2,700 a month in the heart of the season
+	// against an allowance of 30,000 -- which is why adding one is a deliberate
+	// act rather than a default.
 	//
 	// Empty means the sync's own default, which is FBS alone. The default lives
 	// there rather than here so this package stays free of any knowledge of

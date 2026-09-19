@@ -337,15 +337,21 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			},
 		})
 
-		// The live feed. It is polled far harder than games and lines because it
-		// is the only thing that reports a score while a game is being played,
-		// and it costs one request a run to do it -- see cfbdata.ScoreboardDelay
-		// for the arithmetic behind the cadence.
+		// The live feed. While a game is being played it is polled far harder
+		// than games and lines, because it is the only thing that reports a
+		// score as it moves; the rest of the time it drops to an hourly pulse.
+		// What decides which is the games table, not the calendar -- see
+		// cfbdata.ScoreboardState.
+		//
+		// The state is resolved from the same classifications Run fetches, so
+		// the predicate and the fetch cannot disagree about which divisions are
+		// in play.
 		sched.Add(scheduler.Job{
 			Name:  "cfb-scoreboard",
 			Label: "Football live scores",
 			NextDelay: func(now time.Time) time.Duration {
-				return cfbdata.ScoreboardDelay(now, location, syncService.InSeason(now))
+				return cfbdata.ScoreboardDelay(now, location,
+					syncService.ScoreboardState(now, cfg.CFBScoreboardClassifications))
 			},
 			Timeout: scoreboardRunTimeout,
 			Run: func(ctx context.Context) error {

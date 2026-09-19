@@ -89,30 +89,30 @@ measured from midnight, so a redeploy cannot shift the schedule onto an
 arbitrary offset. The shape lives in `cfbdata.NextSync`.
 
 **The cadence is a budget, not just a freshness setting.** CFBD meters us at
-30,000 calls a month, shared across every job below. Rough in-season cost of
-each, at default configuration (FBS-only scoreboard, `CBB_SYNC_INTERVAL_MINS`
-unset):
+30,000 calls a month, shared across every job below. Rough cost of each through
+a month of the season, at default configuration (FBS-only scoreboard,
+`CBB_SYNC_INTERVAL_MINS` unset):
 
 | Job | Cadence | Calls/run | ~Calls/month |
 | --- | --- | --- | --- |
 | `cfb-games-and-lines` | table above | 2 (`/games` + `/lines`) | ~3,550 |
-| `cfb-scoreboard` | 5 min in-season, hourly off-season, one call per division | 1 | ~8,640 |
+| `cfb-scoreboard` | 5 min while a game is live, hourly otherwise, one call per division | 1 | ~2,700 |
 | `cfb-calendar` | daily, loops years until the API returns empty | ~25 | ~750 |
 | `cfb-rankings` | every 6 hours | 1 | ~120 |
 | `cbb-games-and-lines` | flat `CBB_SYNC_INTERVAL_MINS` (default 15), no seasonal throttle | 2 (`/games` + `/lines`) | ~5,760 |
 | `bet-settlement` | every 5 minutes | 0 — database only | 0 |
-| **Total** | | | **~18,800 / 30,000** |
+| **Total** | | | **~12,900 / 30,000** |
 
-That leaves roughly a third of the budget as headroom. Two things to watch if
-this changes:
+That leaves roughly two thirds of the budget as headroom. Two things to watch
+if this changes:
 
 - `TestFootballCadenceStaysWithinMonthlyCallBudget` (`internal/cfbdata`) only
-  covers the two football jobs, capped at 24,000 rather than the real 30,000,
-  to leave room for calendar, rankings, and basketball. It's tested against
+  covers the football jobs, capped at 12,000 rather than the real 30,000, to
+  leave room for calendar, rankings, and basketball. It's tested against
   `CFB_SCOREBOARD_CLASSIFICATIONS` set to two divisions (the widest an operator
-  would plausibly configure), which alone would consume nearly all of that
-  24,000 — so adding a second division is not free, and there is no test
-  guarding the combined total across both sports.
+  would plausibly configure) and against a month that is football all the way
+  through, which no year is — so the cap is close to the projection on purpose,
+  and there is no test guarding the combined total across both sports.
 - Unlike football, `cbb-games-and-lines` has no seasonal throttle: it polls
   flat year-round, including the CBB offseason (spring/summer), so a chunk of
   its ~5,760/month is spent returning near-empty results outside
