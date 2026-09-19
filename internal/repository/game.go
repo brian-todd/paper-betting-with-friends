@@ -479,6 +479,41 @@ func (r *GameRepository) UpdateReportedStatus(gameID uuid.UUID, status models.Ga
 		}).Error
 }
 
+// UpdateScheduledAt corrects a game's kickoff from a feed that reports one.
+//
+// Targeted like UpdateReportedStatus, and for the same reason: the scoreboard
+// knows a game's start time and nothing else about it -- no week, no venue, no
+// team rows -- so writing a whole game row from it would blank the fields it
+// never saw.
+//
+// The guard is "not final", not "still scheduled", and the obvious-looking
+// version breaks the one case this exists for. /games does not report a status,
+// it infers one from the start time it last saw, so a game pushed from 19:00 to
+// 20:00 is already stored as in_progress by 19:06 -- and a scheduled-only guard
+// would refuse exactly the correction that fixes it. Only a finished game has
+// no kickoff left to move.
+//
+// The inequality on scheduled_at is what keeps this from writing every game on
+// every scoreboard run, five minutes apart through a whole slate.
+//
+// This does not close the asymmetry with Upsert, which assigns scheduled_at
+// unconditionally: a /games run still holding a kickoff CFBD has not yet
+// corrected will write the stale time back, and the scoreboard will re-correct
+// it within five minutes. The value flaps for one interval and converges on the
+// fresher feed. Guarding scheduled_at in Upsert to "fix" that would freeze the
+// kickoffs of every division the scoreboard does not poll, where /games is the
+// only writer there is.
+func (r *GameRepository) UpdateScheduledAt(gameID uuid.UUID, at time.Time) error {
+	return r.db.Model(&models.Game{}).
+		Where("id = ?", gameID).
+		Where("status <> ?", models.GameStatusFinal).
+		Where("scheduled_at <> ?", at).
+		Updates(map[string]any{
+			"scheduled_at": at,
+			"updated_at":   time.Now(),
+		}).Error
+}
+
 // scoreboardScoped narrows a query to the football games the scoreboard sync
 // actually polls.
 //
