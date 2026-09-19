@@ -176,17 +176,17 @@ func TestNextSyncAlwaysLandsOnItsOwnGrid(t *testing.T) {
 	}
 }
 
-// The cadence is a spending plan, not just a freshness setting, so the
-// arithmetic behind it is worth pinning down: walking real calendar months at
-// the real schedule keeps a future tweak to the intervals from quietly
-// overrunning CFBD's monthly allowance.
+// The lines cadence on its own, which the football-wide budget test below
+// counts but does not isolate. This is the schedule most likely to be reached
+// for -- it is the one with a game-day rate -- so it is worth a cap close
+// enough to the real number to notice a change.
 //
-// The cap leaves room underneath the 5,000 limit for the calendar job and the
-// occasional manual seed.
+// One call a run since /games moved to its own job. The worst month is January
+// at 1,865 runs.
 func TestSyncCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 	const (
-		callsPerRun     = 2
-		monthlyCallsCap = 4000
+		callsPerRun     = 1
+		monthlyCallsCap = 2200
 	)
 
 	eastern := mustLoad(t, "America/New_York")
@@ -492,6 +492,17 @@ func slateKickoffs(start, end time.Time, loc *time.Location) []time.Time {
 // schedules so that raising a rate, or adding a division, cannot quietly
 // overrun the plan.
 //
+// Three jobs on three schedules since the split: lines on the football week,
+// the schedule on its six-hour grid, and the scoreboard on whatever the games
+// table says is being played, counted separately because they are now three
+// independent rates to get wrong.
+//
+// Note what this does not catch. Putting /games back on the lines cadence
+// costs ~1,740 calls a month, which still fits under the cap -- the cap is
+// sized for the scoreboard, which dominates the sum, and a change of that size
+// hides inside it. TestNextGamesSyncRunsFourTimesADay is what pins the
+// schedule feed's own rate.
+//
 // The scoreboard is now counted against a synthetic slate rather than a feed
 // polled around the clock, because that is what its cadence reads: five
 // minutes while a game is being played, hourly otherwise. Counting it as
@@ -515,7 +526,10 @@ func slateKickoffs(start, end time.Time, loc *time.Location) []time.Time {
 // that grows with the request count of whatever those jobs fetch.
 func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 	const (
-		gamesAndLinesCallsPerRun = 2
+		// One each, since the split. They were two calls on one schedule, and
+		// /games was paying the line's rate to pick up a weekly change.
+		linesCallsPerRun = 1
+		gamesCallsPerRun = 1
 
 		// Three ratings, records, ATS and season efficiency.
 		teamStatsCallsPerRun = 6
@@ -533,7 +547,13 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		// project has ever had.
 		restartsPerMonth = 40
 
-		monthlyCallsCap = 12000
+		// The worst month measured here is January at ~7,730: 2,545 scoreboard
+		// runs at two divisions, 1,865 lines, 123 games, the two daily jobs and
+		// 400 restart calls. The cap is ~1.3x that, which is a real margin
+		// only because the scoreboard came down first -- while it was ~8,900 a
+		// division, a 1.5x rule would have set the cap above the whole 30,000
+		// allowance, which is to say it would not have been a test.
+		monthlyCallsCap = 10000
 
 		// The budget is checked at the widest division list an operator is
 		// likely to configure, not at the FBS-only default -- the default
@@ -585,8 +605,11 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 			scoreboardRuns := countRuns(start, end, func(now time.Time) time.Time {
 				return NextScoreboardSync(now, eastern, stateAt(now))
 			})
-			syncRuns := countRuns(start, end, func(now time.Time) time.Time {
+			linesRuns := countRuns(start, end, func(now time.Time) time.Time {
 				return NextSync(now, eastern)
+			})
+			gamesRuns := countRuns(start, end, func(now time.Time) time.Time {
+				return NextGamesSync(now, eastern)
 			})
 			teamStatsRuns := countRuns(start, end, func(now time.Time) time.Time {
 				return NextTeamStatsSync(now, eastern)
@@ -605,13 +628,14 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 				(teamStatsCallsPerRun + gameContextCallsPerRun + scoreboardDivisions)
 
 			calls := scoreboardRuns*scoreboardDivisions +
-				syncRuns*gamesAndLinesCallsPerRun +
+				linesRuns*linesCallsPerRun +
+				gamesRuns*gamesCallsPerRun +
 				teamStatsRuns*teamStatsCallsPerRun +
 				gameContextRuns*gameContextCallsPerRun +
 				restartCalls
 			if calls > monthlyCallsCap {
-				t.Errorf("%d-%02d: %d scoreboard, %d games, %d team-stats and %d game-context runs plus %d restarts = %d calls, over the %d budget",
-					year, month, scoreboardRuns, syncRuns, teamStatsRuns, gameContextRuns, restartsPerMonth, calls, monthlyCallsCap)
+				t.Errorf("%d-%02d: %d scoreboard, %d lines, %d games, %d team-stats and %d game-context runs plus %d restarts = %d calls, over the %d budget",
+					year, month, scoreboardRuns, linesRuns, gamesRuns, teamStatsRuns, gameContextRuns, restartsPerMonth, calls, monthlyCallsCap)
 			}
 		}
 	}
