@@ -353,7 +353,14 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 				return cfbdata.ScoreboardDelay(now, location,
 					syncService.ScoreboardState(now, cfg.CFBScoreboardClassifications))
 			},
-			Timeout: scoreboardRunTimeout,
+			// The cadence is derived from the games table now, so a deploy
+			// landing mid-slate partway through an idle hour would wait up to
+			// an hour for its first live reading, where the old schedule
+			// polled fast on startup regardless. One call a deploy per
+			// division buys that back. It does not rescue an unpopulated
+			// table: SyncScoreboard only updates games it can already find.
+			RunOnStart: true,
+			Timeout:    scoreboardRunTimeout,
 			Run: func(ctx context.Context) error {
 				return syncService.SyncScoreboard(ctx, cfg.CFBScoreboardClassifications)
 			},

@@ -26,6 +26,39 @@ import (
 // same value.
 var DefaultScoreboardClassifications = []string{"fbs"}
 
+// normalizeClassifications applies the default and folds case.
+//
+// Case matters more than it looks. The configured list is not only what gets
+// fetched any more -- ResolveScoreboardState matches it against
+// teams.classification to decide the polling rate, and that column is stored
+// lowercase as CFBD reports it. CFB_SCOREBOARD_CLASSIFICATIONS=FBS would
+// therefore fetch the right division while matching no team at all, which is
+// not a degraded cadence but a stuck one: nothing ever reads as live, the
+// scoreboard polls hourly through every slate of the season, and the job
+// reports success the whole way. Folding it here rather than in config keeps
+// that package free of any knowledge of how the feed divides the sport, which
+// is why the default lives here too.
+func normalizeClassifications(classifications []string) []string {
+	if len(classifications) == 0 {
+		return DefaultScoreboardClassifications
+	}
+
+	out := make([]string, 0, len(classifications))
+	seen := make(map[string]bool, len(classifications))
+	for _, c := range classifications {
+		c = strings.ToLower(strings.TrimSpace(c))
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	if len(out) == 0 {
+		return DefaultScoreboardClassifications
+	}
+	return out
+}
+
 // SyncScoreboard refreshes the live state of the current week's games.
 //
 // It is the only source of a real football game status. /games reports whether
@@ -41,9 +74,7 @@ var DefaultScoreboardClassifications = []string{"fbs"}
 // The odds on this feed are ignored for a related reason: they name no
 // sportsbook, and the odds tables are keyed by one.
 func (s *SyncService) SyncScoreboard(ctx context.Context, classifications []string) error {
-	if len(classifications) == 0 {
-		classifications = DefaultScoreboardClassifications
-	}
+	classifications = normalizeClassifications(classifications)
 
 	s.logger.Info("syncing scoreboard", "classifications", classifications)
 

@@ -491,8 +491,13 @@ func (r *GameRepository) UpdateReportedStatus(gameID uuid.UUID, status models.Ga
 // rate on permanently.
 //
 // classification lives on Team, not Game, so this is a join. The home side alone
-// is enough: the feed returns a cross-division game under both divisions, so the
-// home team's classification is never the only one that would have matched.
+// is enough because the division ladder only ever runs one way: the higher
+// division hosts. The 2026 schedule has 127 FBS-hosting-FCS games, 46 FCS
+// hosting DII and 3 DII hosting DIII, and none in the other direction -- so for
+// any game involving a polled division, the home team is in it. Polling a lower
+// division *without* the one above it would miss that division's road games,
+// which is a configuration nobody runs and the cost of getting it wrong is a
+// slate polled hourly.
 //
 // The statuses excluded are the terminal ones. A game that is over, or that will
 // not be played, neither is being played now nor will kick off later.

@@ -108,10 +108,11 @@ func (s *SyncService) ScoreboardState(now time.Time, classifications []string) S
 // SyncService with. One implementation, so what the page reports is what the
 // scheduler acted on rather than a second opinion that can drift from it.
 //
-// classifications is the same list SyncScoreboard is given, and defaults the
-// same way -- the predicate and the fetch must not disagree about which
-// divisions are in play. An empty slice left undefaulted would match no team at
-// all and pin the job to the idle rate through every slate of the season.
+// classifications is the same list SyncScoreboard is given, and goes through
+// the same normalizeClassifications -- the predicate and the fetch must not
+// disagree about which divisions are in play. An unnormalized list would match
+// no team at all and pin the job to the idle rate through every slate of the
+// season.
 //
 // A database error reads as Active. It is the cheap side of the trade: a blip
 // mid-slate wastes a few requests, where the other answer drops live scores to
@@ -119,9 +120,7 @@ func (s *SyncService) ScoreboardState(now time.Time, classifications []string) S
 // on looking healthy and only the bill moves -- which is why both paths log
 // before returning it, and why the resolved state is on the admin page.
 func ResolveScoreboardState(gameRepo *repository.GameRepository, logger *slog.Logger, now time.Time, classifications []string) ScoreboardState {
-	if len(classifications) == 0 {
-		classifications = DefaultScoreboardClassifications
-	}
+	classifications = normalizeClassifications(classifications)
 
 	active, err := gameRepo.HasActiveGames(classifications, now, maxGameDuration)
 	if err != nil {

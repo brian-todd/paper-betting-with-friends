@@ -412,10 +412,11 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		gameContextCallsPerRun = 2
 
 		// Deploys in a month, as a worst case rather than an observed rate.
-		// Both daily jobs carry scheduler.RunOnStart, so each restart buys one
-		// extra run of each on top of the schedule -- the point of the flag,
-		// and a cost the plan should carry rather than discover. Two a working
-		// day is a busier release cadence than this project has ever had.
+		// Both daily jobs and the scoreboard carry scheduler.RunOnStart, so
+		// each restart buys one extra run of each on top of the schedule --
+		// the point of the flag, and a cost the plan should carry rather than
+		// discover. Two a working day is a busier release cadence than this
+		// project has ever had.
 		restartsPerMonth = 40
 
 		monthlyCallsCap = 12000
@@ -480,10 +481,14 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 				return NextGameContextSync(now, eastern)
 			})
 
-			// A startup run does not replace the scheduled one: both delays
-			// target a wall-clock hour, so the job still fires at its usual
-			// time afterwards and the restart runs are purely additive.
-			restartCalls := restartsPerMonth * (teamStatsCallsPerRun + gameContextCallsPerRun)
+			// A startup run does not replace the scheduled one: every one of
+			// these delays targets a wall-clock grid point, so the job still
+			// fires at its usual time afterwards and the restart runs are
+			// purely additive. The scoreboard is in here because a start
+			// against an unpopulated games table would otherwise idle for up
+			// to an hour before taking a live reading.
+			restartCalls := restartsPerMonth *
+				(teamStatsCallsPerRun + gameContextCallsPerRun + scoreboardDivisions)
 
 			calls := scoreboardRuns*scoreboardDivisions +
 				syncRuns*gamesAndLinesCallsPerRun +
@@ -614,5 +619,51 @@ func TestNextGameContextSyncStaggersBehindTeamStats(t *testing.T) {
 
 	if teamStatsHour == gameContextHour {
 		t.Errorf("the two daily jobs both target hour %d; the stagger is gone", teamStatsHour)
+	}
+}
+
+// The configured division list stopped being only a fetch parameter when the
+// cadence started matching it against teams.classification. A list that does
+// not match the column does not degrade the schedule, it freezes it: nothing
+// reads as live, the scoreboard polls hourly through every slate, and every
+// run still reports success.
+func TestNormalizeClassifications(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"empty falls back to the default", nil, []string{"fbs"}},
+		{"empty slice falls back to the default", []string{}, []string{"fbs"}},
+		{"already normal is left alone", []string{"fbs", "fcs"}, []string{"fbs", "fcs"}},
+
+		// The column is stored lowercase, as CFBD reports it.
+		{"upper case is folded", []string{"FBS"}, []string{"fbs"}},
+		{"mixed case is folded", []string{"Fbs", "FCS"}, []string{"fbs", "fcs"}},
+
+		// getEnvList trims already, but it is the only caller that does, and
+		// this is the function the invariant belongs to.
+		{"whitespace is trimmed", []string{" fbs ", "fcs "}, []string{"fbs", "fcs"}},
+
+		// A duplicate would poll the same division twice a run and pay for it.
+		{"duplicates are dropped", []string{"fbs", "FBS", "fcs"}, []string{"fbs", "fcs"}},
+
+		// A list of nothing but blanks is a misconfiguration, and the default
+		// is a better answer than a predicate matching no team at all.
+		{"blanks alone fall back to the default", []string{"", "  "}, []string{"fbs"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeClassifications(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("normalizeClassifications(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("normalizeClassifications(%q) = %q, want %q", tt.in, got, tt.want)
+				}
+			}
+		})
 	}
 }
