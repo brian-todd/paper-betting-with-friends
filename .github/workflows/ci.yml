@@ -16,6 +16,26 @@ jobs:
   build:
     name: Build & Test
     runs-on: ubuntu-latest
+
+    # The repository tests run their queries against a real PostgreSQL, because
+    # the failures worth catching there are SQL-level and a mock answers a
+    # different dialect. The database is empty and every test rolls back, so
+    # nothing carries between runs.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: betting_tracker_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +60,12 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Actions sets CI, which testdb.Open reads: with no database configured
+      # these tests skip locally but fail here, so a variable renamed out from
+      # under them cannot quietly turn the suite green.
       - name: Test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/betting_tracker_test?sslmode=disable
         run: go test -race -cover ./...
 
   vulncheck:

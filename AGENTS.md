@@ -4,6 +4,8 @@
 
 - `make dev` — Docker Compose with Air hot reload
 - `make test` — run all tests (`go test -v -race -cover ./...`)
+- `make test-db` — the same, against a real PostgreSQL. The repository
+  tests skip without it; see Testing
 - `go test -v -race ./internal/bets/...` — run tests for one package
 - `make fmt` — format code
 - `make fmt-check` / `make fix-check` / `make vet` / `make vulncheck` — the
@@ -314,6 +316,35 @@ a game ends, so the live strip gates on `Game.Status`, not on the row.
 - Table-driven tests with `t.Run()` subtests
 - Use `testing.T`, `httptest.NewRequest`, `httptest.NewRecorder` — no mocking framework
 - Decimal test values: `decimal.RequireFromString("150")`
+
+Repository tests run against a real PostgreSQL, via `internal/testdb`. The
+queries *are* the thing under test there, and their failure mode is quiet — a
+join that drops rows or a predicate that matches nothing returns an empty result
+and no error, which is indistinguishable from having nothing to match. A mock
+cannot reach that and an in-memory engine answers a different dialect.
+
+`testdb.Open(t)` hands back a `*gorm.DB` inside a transaction that is rolled
+back when the test ends, so fixtures cannot outlive a run — which matters
+because a developer's database holds real seeded seasons. `InsertTeam`,
+`InsertVenue` and `InsertGame` fill in everything a test did not set.
+
+Run them with `make test-db`, which starts the compose database and creates
+`betting_tracker_test` beside the development one. Without `TEST_DATABASE_URL`
+they **skip** locally so a plain `make test` still passes with nothing running,
+and **fail** when `CI` is set, so renaming the variable out from under them
+cannot turn the suite green by accident.
+
+The database must be **empty**, and `Open` fails with a sentence saying so if
+it is not. These queries are aggregates over whole tables, and a transaction
+still reads the committed rows around it, so pointing them at a development
+database would have them answering from real seeded seasons — passing or
+failing on rows no test wrote. That is checked rather than conventional on
+purpose: the alternative, dating every fixture past the real data, holds only
+until someone writes a test without knowing about it.
+
+Compare timestamps with `Equal`, not `==`: the column keeps microseconds and
+the driver returns `Local`, so neither the monotonic reading nor the location
+survives the round trip.
 
 ### Logging
 
