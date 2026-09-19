@@ -1,6 +1,7 @@
 package bets
 
 import (
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -272,6 +273,75 @@ func TestEditable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := editable(tt.status, tt.game, now); got != tt.want {
 				t.Errorf("editable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCancellable(t *testing.T) {
+	now := time.Date(2026, 8, 28, 20, 0, 0, 0, time.UTC)
+	game := func(status models.GameStatus, offset time.Duration) *models.Game {
+		return &models.Game{Sport: models.SportFootball, Status: status, ScheduledAt: now.Add(offset)}
+	}
+
+	tests := []struct {
+		name string
+		game *models.Game
+		want error
+	}{
+		{"scheduled before kickoff", game(models.GameStatusScheduled, time.Hour), nil},
+
+		// The bug this helper exists for. Status only advances when the sync
+		// runs, so a game that has kicked off still reads "scheduled" until it
+		// does -- most of an hour, at the overnight cadence.
+		{"scheduled but kickoff passed", game(models.GameStatusScheduled, -time.Hour), ErrGameStarted},
+		{"scheduled exactly at kickoff", game(models.GameStatusScheduled, 0), ErrGameStarted},
+
+		{"in progress", game(models.GameStatusInProgress, -time.Hour), ErrGameStarted},
+		{"final", game(models.GameStatusFinal, -4*time.Hour), ErrGameStarted},
+
+		// A feed has called the game final while scheduled_at still reads in
+		// the future. The kickoff gate alone would allow a refund here.
+		{"final before its own kickoff", game(models.GameStatusFinal, time.Hour), ErrGameStarted},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cancellable(tt.game, now); !errors.Is(got, tt.want) {
+				t.Errorf("cancellable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// A postponed or cancelled game must stay refundable past its original tip-off.
+// That moment is exactly when the stake should come back, and the kickoff gate
+// alone would take it away permanently.
+//
+// Basketball, deliberately: no football path writes either status -- advancesFrom
+// says as much -- so cbbdata.mapGameStatus is the only writer, and Cancel*Bet is
+// sport-agnostic. A football-only test would pass while leaving the case broken.
+func TestCancellablePostponedBasketballGame(t *testing.T) {
+	now := time.Date(2026, 1, 14, 2, 0, 0, 0, time.UTC)
+	tipoff := now.Add(-3 * time.Hour)
+
+	tests := []struct {
+		name   string
+		status models.GameStatus
+	}{
+		{"postponed", models.GameStatusPostponed},
+		{"cancelled", models.GameStatusCancelled},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			game := &models.Game{
+				Sport:       models.SportBasketball,
+				Status:      tt.status,
+				ScheduledAt: tipoff,
+			}
+			if err := cancellable(game, now); err != nil {
+				t.Errorf("cancellable() = %v, want nil", err)
 			}
 		})
 	}
