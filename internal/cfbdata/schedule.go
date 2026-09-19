@@ -2,19 +2,21 @@ package cfbdata
 
 import "time"
 
-// Sync cadence.
+// Lines cadence.
 //
-// CFBD's free tier allows 5,000 calls a month and each sync run spends two of
-// them (/games and /lines), so the schedule is a budget, not just a freshness
-// knob. A flat 15-minute poll costs ~5,760 calls a month on its own — over the
-// whole allowance before the calendar job takes its share.
+// This is the schedule /lines runs on, and it used to carry /games with it.
+// CFBD meters us monthly, so the shape is a budget rather than just a freshness
+// knob: a flat 15-minute poll costs ~5,760 calls a month on its own, and that
+// is for one endpoint.
 //
 // The cadence follows the football week instead: fast on the days games are
-// played, slower midweek, and hourly overnight when nothing is kicking off and
-// no book is moving a number.
+// played, slower midweek, and hourly overnight when no book is moving a number.
+//
+// A line is the one football feed that genuinely earns a fast rate all week --
+// see gamesInterval for what happens to the half that does not.
 const (
-	// gameDayInterval applies Thursday through Saturday, when kickoffs are
-	// dense enough that a stale score is noticeable on the page.
+	// gameDayInterval applies Thursday through Saturday, when the books move
+	// fastest and a number is shortest-lived.
 	gameDayInterval = 15 * time.Minute
 
 	// offDayInterval applies the rest of the week, where the only thing moving
@@ -83,7 +85,8 @@ type ScoreboardState struct {
 	NextKickoff *time.Time
 }
 
-// NextSync returns the next instant the football sync should run after now.
+// NextSync returns the next instant the football lines sync should run after
+// now.
 //
 // Runs sit on a wall-clock grid measured from midnight rather than from
 // whenever the process last started, so "the :15 sync" means the same thing
@@ -178,7 +181,7 @@ func nextOnGrid(t time.Time, loc *time.Location, interval time.Duration) time.Ti
 	}
 }
 
-// SyncDelay returns how long to wait after now before the next football sync.
+// SyncDelay returns how long to wait after now before the next lines sync.
 func SyncDelay(now time.Time, loc *time.Location) time.Duration {
 	if delay := NextSync(now, loc).Sub(now); delay > minDelay {
 		return delay
@@ -206,6 +209,66 @@ func intervalAt(t time.Time) time.Duration {
 	default:
 		return offDayInterval
 	}
+}
+
+// Schedule cadence.
+//
+// /games is fetched on its own schedule, and far slower than /lines, because
+// the two feeds change at completely different rates. A book moves a number all
+// week; a game's kickoff, venue and opponents move a handful of times a season.
+// Sharing one cadence meant paying the live rate for both.
+//
+// What made that safe to separate is that nothing time-critical is read off
+// /games any more for the divisions the scoreboard covers: the score, the
+// status and the clock come from the scoreboard, a moved kickoff is corrected
+// by UpdateScheduledAt within five minutes, and every money decision gates on
+// scheduled_at rather than on a synced status.
+const (
+	// gamesInterval is how often the schedule itself is refetched.
+	//
+	// Six hours rather than daily because /games is also the only feed for the
+	// divisions the scoreboard does not poll, where it still writes the score
+	// and the completed flag -- so this interval is a ceiling on how long a bet
+	// outside those divisions can sit unsettled after its game ends. Six hours
+	// means a game finishing at any hour still settles the same day. The
+	// remedy for a division anyone actually bets is
+	// CFB_SCOREBOARD_CLASSIFICATIONS, not a faster rate here.
+	//
+	// The phase is arbitrary: nothing has to land before anything else.
+	gamesInterval = 6 * time.Hour
+)
+
+// NextGamesSync returns the next instant the football schedule sync should run
+// after now.
+//
+// One flat interval on the same wall-clock grid the other jobs use, so a
+// redeploy cannot shift it onto an arbitrary offset. nextOnGrid's note about
+// cadence-change points falling on the grid is about intervalAt; there is no
+// transition here to step over.
+func NextGamesSync(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	t := now.In(loc)
+	return nextOnGrid(t, loc, gamesInterval)
+}
+
+// GamesDelay returns how long to wait after now before the next schedule sync.
+//
+// Deliberately no catch-up for a slot missed while the process was down, and
+// no RunOnStart. Six hours of a stale schedule is the staleness the split
+// argues is acceptable, a fresh database is filled by a seed rather than by
+// this job, and the obvious version -- key the catch-up on the last success --
+// is actively harmful: a run that keeps failing never advances the timestamp
+// that would call the catch-up off, so a /games endpoint returning 502s gets
+// retried every minute forever. If a missed slot ever does prove to matter,
+// key it on the last attempt.
+func GamesDelay(now time.Time, loc *time.Location) time.Duration {
+	if delay := NextGamesSync(now, loc).Sub(now); delay > minDelay {
+		return delay
+	}
+	return minDelay
 }
 
 // Daily pre-game context cadence.

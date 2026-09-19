@@ -330,6 +330,120 @@ func TestScoreboardDelayIsAlwaysPositiveAcrossDST(t *testing.T) {
 	}
 }
 
+// The schedule feed runs four times a day on the wall-clock grid: midnight,
+// 6am, noon and 6pm local.
+func TestNextGamesSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	at := func(day, hour, minute int) time.Time {
+		return time.Date(2026, time.September, day, hour, minute, 0, 0, eastern)
+	}
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"early morning waits for 6am", at(10, 3, 20), at(10, 6, 0)},
+		{"mid-morning waits for noon", at(10, 9, 45), at(10, 12, 0)},
+		{"afternoon waits for 6pm", at(10, 14, 0), at(10, 18, 0)},
+		{"evening rolls into tomorrow", at(10, 22, 30), at(11, 0, 0)},
+
+		// A grid point is not a zero delay. Returning now would have the
+		// scheduler fire again immediately against a metered endpoint.
+		{"exactly on a slot moves to the next", at(10, 12, 0), at(10, 18, 0)},
+
+		// Saturday is not special here, which is the whole point of the split:
+		// a game-day rate belongs to the feed that reports a game.
+		{"saturday afternoon is paced like any other day", at(12, 15, 31), at(12, 18, 0)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NextGamesSync(tc.now, eastern); !got.Equal(tc.want) {
+				t.Errorf("NextGamesSync(%s) = %s, want %s",
+					tc.now.Format(time.RFC1123), got.Format(time.RFC1123), tc.want.Format(time.RFC1123))
+			}
+		})
+	}
+}
+
+// Six hours is not a divisor of a day's UTC offset anywhere that keeps one, so
+// reading the grid in the wrong zone does not merely relabel the slots -- it
+// moves them. Eastern noon is 16:00 UTC, which is not on the UTC grid at all.
+func TestNextGamesSyncIsReadInTheConfiguredZone(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	now := time.Date(2026, time.September, 10, 13, 0, 0, 0, eastern)
+
+	if got, want := GamesDelay(now, eastern), 5*time.Hour; got != want {
+		t.Errorf("eastern: GamesDelay = %v, want %v (1pm waits for 6pm local)", got, want)
+	}
+	// The same instant is 17:00 UTC, an hour short of the 18:00 UTC slot.
+	if got, want := GamesDelay(now, time.UTC), time.Hour; got != want {
+		t.Errorf("utc: GamesDelay = %v, want %v", got, want)
+	}
+}
+
+func TestGamesDelayDefaultsToUTCWhenLocationIsNil(t *testing.T) {
+	now := time.Date(2026, time.September, 10, 13, 0, 0, 0, time.UTC)
+	if got, want := GamesDelay(now, nil), 5*time.Hour; got != want {
+		t.Errorf("GamesDelay(nil location) = %v, want %v", got, want)
+	}
+}
+
+// Same hazard as the other two grids, and it has to be checked on this one
+// too: during the repeated hour of a fall-back, the next grid point by wall
+// clock is in the past, which the scheduler would read as a negative delay and
+// poll flat out until the hour cleared.
+func TestGamesDelayIsAlwaysPositiveAcrossDST(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	for _, start := range []time.Time{
+		time.Date(2026, time.March, 7, 0, 0, 0, 0, eastern),
+		time.Date(2026, time.November, 1, 0, 0, 0, 0, eastern),
+	} {
+		for offset := range 48 * 60 {
+			now := start.Add(time.Duration(offset) * time.Minute)
+
+			delay := GamesDelay(now, eastern)
+			if delay <= 0 {
+				t.Fatalf("GamesDelay(%v) = %v, want positive", now, delay)
+			}
+			// The grid is wall-clock, so the step across the repeated hour is
+			// genuinely an hour longer in absolute time. What is checked is
+			// that it stops there rather than skipping a whole cycle.
+			if delay > gamesInterval+time.Hour {
+				t.Fatalf("GamesDelay(%v) = %v, longer than a cadence stretched by the DST fall-back", now, delay)
+			}
+		}
+	}
+}
+
+// The schedule sync lands four times a day, every day, whatever the week looks
+// like -- which is what makes it ~120 calls a month instead of ~1,750.
+func TestNextGamesSyncRunsFourTimesADay(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	// A minute past midnight rather than on it, so the window holds exactly
+	// seven of each slot: starting on a grid point skips that day's midnight
+	// run, which would make the count 27 and read like a bug in the cadence.
+	start := time.Date(2026, time.September, 1, 0, 1, 0, 0, eastern)
+	end := start.AddDate(0, 0, 7)
+
+	runs := 0
+	for now := start; ; runs++ {
+		now = NextGamesSync(now, eastern)
+		if !now.Before(end) {
+			break
+		}
+	}
+
+	if want := 4 * 7; runs != want {
+		t.Errorf("a week of schedule syncs = %d runs, want %d", runs, want)
+	}
+}
+
 // slateKickoffs builds a representative week of a real football season for
 // every week touching [start, end), in loc.
 //
