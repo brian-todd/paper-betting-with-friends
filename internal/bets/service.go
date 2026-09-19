@@ -338,6 +338,36 @@ func (s *Service) CreateOverUnderBet(input CreateOverUnderBetInput) (*models.Ove
 	return bet, nil
 }
 
+// cancellable reports whether a bet on game may still be voided for a refund.
+//
+// The kickoff gate reads ScheduledAt rather than Game.Status, matching
+// authorizeEdit and editable: status only advances when the sync runs, and
+// between kickoff and the next run it still says "scheduled" -- close enough
+// for a badge, not for deciding whether someone may still take their stake
+// back off a game being played. The football sync is hourly overnight, so that
+// window is already most of an hour, and relaxing the /games cadence widens it.
+func cancellable(game *models.Game, now time.Time) error {
+	// A game that will not be played is the one case where a passed kickoff
+	// must not block a refund -- that is precisely when the stake should come
+	// back. No football path writes either status, but the basketball sync does
+	// (cbbdata.mapGameStatus) and this is sport-agnostic.
+	if game.Status == models.GameStatusPostponed || game.Status == models.GameStatusCancelled {
+		return nil
+	}
+
+	// Both gates, not one in place of the other. Status is the half that goes
+	// stale, so it cannot be trusted alone. But it is not wrong when it is set,
+	// and it catches what kickoff misses: a feed that has called a game final
+	// while scheduled_at still reads in the future.
+	if game.Status == models.GameStatusInProgress || game.Status == models.GameStatusFinal {
+		return ErrGameStarted
+	}
+	if !game.ScheduledAt.After(now) {
+		return ErrGameStarted
+	}
+	return nil
+}
+
 // CancelSpreadBet cancels a pending spread bet.
 func (s *Service) CancelSpreadBet(betID, userID uuid.UUID) error {
 	bet, err := s.spreadBetRepo.FindByID(betID)
@@ -356,13 +386,12 @@ func (s *Service) CancelSpreadBet(betID, userID uuid.UUID) error {
 		return ErrBetNotPending
 	}
 
-	// Check if game has started.
 	game, err := s.gameRepo.FindByID(bet.GameID)
 	if err != nil {
 		return err
 	}
-	if game.Status == models.GameStatusInProgress || game.Status == models.GameStatusFinal {
-		return ErrGameStarted
+	if err := cancellable(game, time.Now()); err != nil {
+		return err
 	}
 
 	bet.Status = models.BetStatusVoid
@@ -394,13 +423,12 @@ func (s *Service) CancelMoneyLineBet(betID, userID uuid.UUID) error {
 		return ErrBetNotPending
 	}
 
-	// Check if game has started.
 	game, err := s.gameRepo.FindByID(bet.GameID)
 	if err != nil {
 		return err
 	}
-	if game.Status == models.GameStatusInProgress || game.Status == models.GameStatusFinal {
-		return ErrGameStarted
+	if err := cancellable(game, time.Now()); err != nil {
+		return err
 	}
 
 	bet.Status = models.BetStatusVoid
@@ -432,13 +460,12 @@ func (s *Service) CancelOverUnderBet(betID, userID uuid.UUID) error {
 		return ErrBetNotPending
 	}
 
-	// Check if game has started.
 	game, err := s.gameRepo.FindByID(bet.GameID)
 	if err != nil {
 		return err
 	}
-	if game.Status == models.GameStatusInProgress || game.Status == models.GameStatusFinal {
-		return ErrGameStarted
+	if err := cancellable(game, time.Now()); err != nil {
+		return err
 	}
 
 	bet.Status = models.BetStatusVoid
