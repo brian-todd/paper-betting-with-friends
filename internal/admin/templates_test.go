@@ -192,7 +192,7 @@ func TestAdminBetsPageRenders(t *testing.T) {
 func TestAdminSyncPageRenders(t *testing.T) {
 	now := time.Now()
 	jobs := []scheduler.Status{
-		{Name: "cfb-games-and-lines", Label: "Football", LastRun: now, LastSuccess: now, NextRun: now.Add(time.Hour)},
+		{Name: "cfb-lines", Label: "Football lines", LastRun: now, LastSuccess: now, NextRun: now.Add(time.Hour)},
 		{Name: "cfb-calendar", LastRun: now, LastError: "upstream is down"},
 		{Name: "cbb-games-and-lines", Label: "Basketball", Running: true},
 	}
