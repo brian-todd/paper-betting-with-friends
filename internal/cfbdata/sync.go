@@ -179,7 +179,7 @@ func (s *SyncService) SeedAll(ctx context.Context, year int, week *int, seasonTy
 		return fmt.Errorf("syncing calendar: %w", err)
 	}
 
-	if err := s.syncGames(ctx, year, week, seasonType); err != nil {
+	if err := s.SyncGames(ctx, year, week, seasonType); err != nil {
 		return fmt.Errorf("syncing games: %w", err)
 	}
 
@@ -187,27 +187,11 @@ func (s *SyncService) SeedAll(ctx context.Context, year int, week *int, seasonTy
 		return fmt.Errorf("syncing rankings: %w", err)
 	}
 
-	if err := s.syncLines(ctx, year, week, seasonType); err != nil {
+	if err := s.SyncLines(ctx, year, week, seasonType); err != nil {
 		return fmt.Errorf("syncing lines: %w", err)
 	}
 
 	s.logger.Info("full seed completed", syncScope(year, week, seasonType)...)
-	return nil
-}
-
-// SyncGamesAndLines performs an incremental sync of games and lines.
-func (s *SyncService) SyncGamesAndLines(ctx context.Context, year int, week *int, seasonType *string) error {
-	s.logger.Info("starting incremental sync", syncScope(year, week, seasonType)...)
-
-	if err := s.syncGames(ctx, year, week, seasonType); err != nil {
-		return fmt.Errorf("syncing games: %w", err)
-	}
-
-	if err := s.syncLines(ctx, year, week, seasonType); err != nil {
-		return fmt.Errorf("syncing lines: %w", err)
-	}
-
-	s.logger.Info("incremental sync completed", syncScope(year, week, seasonType)...)
 	return nil
 }
 
@@ -389,7 +373,14 @@ func (s *SyncService) syncCalendar(ctx context.Context, year int) error {
 	return nil
 }
 
-func (s *SyncService) syncGames(ctx context.Context, year int, week *int, seasonType *string) error {
+// SyncGames fetches the schedule and writes it: kickoffs, venues, opponents,
+// and -- for every division the scoreboard does not poll -- the score and the
+// completed flag, which is why this is also where bets get evaluated.
+//
+// Exported because it is a scheduled job of its own. It ran on the lines
+// cadence until the two were split; see gamesInterval for why that was paying
+// a live rate for a weekly feed.
+func (s *SyncService) SyncGames(ctx context.Context, year int, week *int, seasonType *string) error {
 	s.logger.Info("syncing games", syncScope(year, week, seasonType)...)
 
 	games, err := s.client.GetGames(ctx, year, week, seasonType)
@@ -530,7 +521,7 @@ func (s *SyncService) syncRankings(ctx context.Context, year int, week *int, sea
 
 		dbWeek, err := s.weekRepo.FindBySeasonNumberAndType(w.Season, w.Week, rankingSeasonType)
 		if err != nil {
-			// See syncGames: a missing week is data, anything else is the
+			// See SyncGames: a missing week is data, anything else is the
 			// database, and swallowing the latter empties the whole run.
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("looking up week %d/%d: %w", w.Season, w.Week, err)
@@ -639,7 +630,12 @@ func gameResultFrom(gameID uuid.UUID, g APIGame, now time.Time) *models.GameResu
 	}
 }
 
-func (s *SyncService) syncLines(ctx context.Context, year int, week *int, seasonType *string) error {
+// SyncLines fetches the betting lines and writes them.
+//
+// Exported for the same reason as SyncGames, and it keeps the cadence the two
+// used to share -- a book moves a number all week, which is the half of that
+// schedule that was always earning it.
+func (s *SyncService) SyncLines(ctx context.Context, year int, week *int, seasonType *string) error {
 	s.logger.Info("syncing lines", syncScope(year, week, seasonType)...)
 
 	lines, err := s.client.GetLines(ctx, year, week, seasonType)

@@ -321,19 +321,46 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 		syncService := cfbdata.NewSyncService(cfbdata.NewClient(cfg.CFBDataAPIKey), db)
 		syncService.SetBetEvaluator(evaluator)
 
-		// The football feed is polled on a cadence that tracks the week rather
-		// than a fixed interval, because CFBD meters us monthly and a flat poll
-		// spends the whole allowance on Tuesday mornings. SYNC_INTERVAL_MINS no
-		// longer applies to this job.
+		// Lines are polled on a cadence that tracks the week rather than a
+		// fixed interval, because CFBD meters us monthly and a flat poll spends
+		// the whole allowance on Tuesday mornings. SYNC_INTERVAL_MINS no longer
+		// applies to this job.
 		sched.Add(scheduler.Job{
-			Name:  "cfb-games-and-lines",
-			Label: "Football",
+			Name:  "cfb-lines",
+			Label: "Football lines",
 			NextDelay: func(now time.Time) time.Duration {
 				return cfbdata.SyncDelay(now, location)
 			},
 			Timeout: syncRunTimeout,
 			Run: func(ctx context.Context) error {
-				return syncService.SyncGamesAndLines(ctx, syncService.GetCurrentSeasonYear(), nil, nil)
+				return syncService.SyncLines(ctx, syncService.GetCurrentSeasonYear(), nil, nil)
+			},
+		})
+
+		// The schedule used to ride the lines cadence, at 15 minutes on a game
+		// day, to pick up a change that happens weekly. It runs four times a
+		// day now. What made that safe is that nothing time-critical is read
+		// off /games for the divisions the scoreboard covers: the score and the
+		// status come from the scoreboard, a moved kickoff is corrected within
+		// five minutes by UpdateScheduledAt, and every money decision gates on
+		// scheduled_at rather than on a synced status.
+		//
+		// Outside those divisions /games is still the only feed, so a bet there
+		// can now sit unsettled for up to six hours. Accepted deliberately; the
+		// remedy is CFB_SCOREBOARD_CLASSIFICATIONS, which the scoreboard's own
+		// cadence made affordable.
+		//
+		// No RunOnStart, unlike the daily jobs: six hours is shorter than the
+		// gap between two deploys, so the slot is not one a release can starve.
+		sched.Add(scheduler.Job{
+			Name:  "cfb-games",
+			Label: "Football schedule",
+			NextDelay: func(now time.Time) time.Duration {
+				return cfbdata.GamesDelay(now, location)
+			},
+			Timeout: syncRunTimeout,
+			Run: func(ctx context.Context) error {
+				return syncService.SyncGames(ctx, syncService.GetCurrentSeasonYear(), nil, nil)
 			},
 		})
 
