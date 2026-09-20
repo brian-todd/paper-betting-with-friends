@@ -22,8 +22,21 @@ type Client struct {
 
 // NewClient creates a new CBB Data API client.
 func NewClient(apiKey string) *Client {
+	return NewClientAt(defaultBaseURL, apiKey)
+}
+
+// NewClientAt creates a client pointed at an arbitrary base URL, for replaying
+// captured fixtures against a fake upstream.
+//
+// This is deliberately a constructor rather than a configuration value. An
+// environment variable would put a production process one typo away from
+// syncing a season out of a fixture directory and reporting success the whole
+// time -- the exact failure class the fixture work exists to catch. A
+// constructor is reachable only from code that means to call it, and the only
+// callers are tests and `seed -fixtures`.
+func NewClientAt(baseURL, apiKey string) *Client {
 	return &Client{
-		baseURL: defaultBaseURL,
+		baseURL: baseURL,
 		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
