@@ -437,15 +437,18 @@ requests a month and the football jobs are most of it:
   badge, since a kickoff moved earlier leaves a gap in which a bet can be placed
   on or voided off a game already under way. `UpdateScheduledAt` cannot close it
   there; only the scoreboard calls it. The remedy is
-  `CFB_SCOREBOARD_CLASSIFICATIONS` rather than a faster rate. It carries no
-  `RunOnStart` and no catch-up for a slot missed while the process was down —
+  `CFB_SCOREBOARD_CLASSIFICATIONS` rather than a faster rate. It carries
+  `RunOnStart` but no catch-up for a slot missed while the process was down —
   the obvious catch-up keys on the last *success*, which never advances while a
   run keeps failing, so a `/games` endpoint returning 502s would be retried
-  every minute forever
+  every minute forever. `RunOnStart` is the cheap half of the same idea, and it
+  covers the case the six-hour grid cannot: `NextDelay` is recomputed on every
+  start, so a process restarting faster than its interval never reaches the
+  timer, and this job would never run at all
 
 `TestFootballCadenceStaysWithinMonthlyCallBudget` walks real months at all
 three schedules and fails if a change to any of them overruns the plan, capped
-at 10,000 against a measured worst month of ~7,730. It drives the scoreboard
+at 10,000 against a measured worst month of ~7,770. It drives the scoreboard
 from a synthetic slate, because a cadence derived from the games table cannot be
 costed against a feed assumed live around the clock. That slate is calibrated
 against the real schedule — ~34 live hours a week against ~36 measured — and a

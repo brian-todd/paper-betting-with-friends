@@ -256,14 +256,17 @@ func NextGamesSync(now time.Time, loc *time.Location) time.Time {
 
 // GamesDelay returns how long to wait after now before the next schedule sync.
 //
-// Deliberately no catch-up for a slot missed while the process was down, and
-// no RunOnStart. Six hours of a stale schedule is the staleness the split
-// argues is acceptable, a fresh database is filled by a seed rather than by
-// this job, and the obvious version -- key the catch-up on the last success --
-// is actively harmful: a run that keeps failing never advances the timestamp
-// that would call the catch-up off, so a /games endpoint returning 502s gets
-// retried every minute forever. If a missed slot ever does prove to matter,
-// key it on the last attempt.
+// Deliberately no catch-up for a slot missed while the process was down. Six
+// hours of a stale schedule is the staleness the split argues is acceptable, a
+// fresh database is filled by a seed rather than by this job, and the obvious
+// version -- key the catch-up on the last success -- is actively harmful: a run
+// that keeps failing never advances the timestamp that would call the catch-up
+// off, so a /games endpoint returning 502s gets retried every minute forever.
+// If a missed slot ever does prove to matter, key it on the last attempt.
+//
+// The job does carry RunOnStart, which is the cheap half of that idea and
+// covers the one case this arithmetic cannot: a process restarting faster than
+// six hours never reaches the timer at all. See cmd/server.
 func GamesDelay(now time.Time, loc *time.Location) time.Duration {
 	if delay := NextGamesSync(now, loc).Sub(now); delay > minDelay {
 		return delay

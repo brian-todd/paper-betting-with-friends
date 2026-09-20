@@ -540,16 +540,16 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		gameContextCallsPerRun = 2
 
 		// Deploys in a month, as a worst case rather than an observed rate.
-		// Both daily jobs and the scoreboard carry scheduler.RunOnStart, so
-		// each restart buys one extra run of each on top of the schedule --
-		// the point of the flag, and a cost the plan should carry rather than
-		// discover. Two a working day is a busier release cadence than this
-		// project has ever had.
+		// Both daily jobs, the scoreboard and the schedule feed all carry
+		// scheduler.RunOnStart, so each restart buys one extra run of each on
+		// top of the schedule -- the point of the flag, and a cost the plan
+		// should carry rather than discover. Two a working day is a busier
+		// release cadence than this project has ever had.
 		restartsPerMonth = 40
 
-		// The worst month measured here is January at ~7,730: 2,545 scoreboard
+		// The worst month measured here is January at ~7,770: 2,545 scoreboard
 		// runs at two divisions, 1,865 lines, 123 games, the two daily jobs and
-		// 400 restart calls. The cap is ~1.3x that, which is a real margin
+		// 440 restart calls. The cap is ~1.3x that, which is a real margin
 		// only because the scoreboard came down first -- while it was ~8,900 a
 		// division, a 1.5x rule would have set the cap above the whole 30,000
 		// allowance, which is to say it would not have been a test.
@@ -623,9 +623,11 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 			// fires at its usual time afterwards and the restart runs are
 			// purely additive. The scoreboard is in here because a start
 			// against an unpopulated games table would otherwise idle for up
-			// to an hour before taking a live reading.
+			// to an hour before taking a live reading; the schedule feed
+			// because a process restarting faster than six hours would never
+			// reach its timer at all.
 			restartCalls := restartsPerMonth *
-				(teamStatsCallsPerRun + gameContextCallsPerRun + scoreboardDivisions)
+				(teamStatsCallsPerRun + gameContextCallsPerRun + scoreboardDivisions + gamesCallsPerRun)
 
 			calls := scoreboardRuns*scoreboardDivisions +
 				linesRuns*linesCallsPerRun +

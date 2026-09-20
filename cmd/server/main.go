@@ -350,15 +350,22 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 		// remedy is CFB_SCOREBOARD_CLASSIFICATIONS, which the scoreboard's own
 		// cadence made affordable.
 		//
-		// No RunOnStart, unlike the daily jobs: six hours is shorter than the
-		// gap between two deploys, so the slot is not one a release can starve.
+		// RunOnStart for a narrower reason than the daily jobs have. An
+		// ordinary deploy cannot starve a six-hour slot, since the slot is a
+		// wall-clock grid point rather than an interval measured from boot. A
+		// process that keeps restarting can: NextDelay is recomputed from
+		// scratch on every start, so a timer that never reaches six hours
+		// never fires, and /games -- the only feed for every division the
+		// scoreboard does not poll -- simply never syncs while every other job
+		// goes on looking healthy. One call a restart buys that back.
 		sched.Add(scheduler.Job{
 			Name:  "cfb-games",
 			Label: "Football schedule",
 			NextDelay: func(now time.Time) time.Duration {
 				return cfbdata.GamesDelay(now, location)
 			},
-			Timeout: syncRunTimeout,
+			RunOnStart: true,
+			Timeout:    syncRunTimeout,
 			Run: func(ctx context.Context) error {
 				return syncService.SyncGames(ctx, syncService.GetCurrentSeasonYear(), nil, nil)
 			},
