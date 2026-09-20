@@ -66,7 +66,13 @@ const InstantLayout = "20060102T150405Z"
 // emptyQuery is the directory standing in for a request with no query string.
 const emptyQuery = "_"
 
-//go:embed testdata
+// The "all:" prefix is load-bearing. Without it //go:embed skips every path
+// whose name begins with "_" or ".", which is precisely the directory standing
+// in for an empty query -- so /venues and /teams, the two endpoints everything
+// else holds a foreign key into, would be absent from the embedded tree while
+// sitting on disk in plain sight.
+//
+//go:embed all:testdata
 var embedded embed.FS
 
 // A Capture is one recorded response.

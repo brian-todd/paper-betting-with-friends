@@ -251,6 +251,13 @@ func TestClientErrorsOnNonOKStatus(t *testing.T) {
 	if !strings.Contains(err.Error(), "429") {
 		t.Errorf("error = %q, want it to mention status 429", err)
 	}
+	// The status alone is not enough to act on. An upstream 429 or 502 says
+	// something about why, and so does the fixture server's refusal -- which
+	// names the directory to capture, and was being discarded at the one
+	// moment a reader needed it.
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("error = %q, want it to carry the upstream's own explanation", err)
+	}
 }
 
 func TestClientErrorsOnMalformedJSON(t *testing.T) {

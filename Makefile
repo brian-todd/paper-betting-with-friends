@@ -1,4 +1,4 @@
-.PHONY: help dev build run test test-db test-db-create clean migrate-up migrate-down migrate-create docker-up docker-down docker-logs seed seedcbb seed-test-data sync-calendar tools vendor-htmx fmt fmt-check fix-check vet vulncheck
+.PHONY: help dev build run test test-db test-db-create clean migrate-up migrate-down migrate-create docker-up docker-down docker-logs seed seedcbb seed-fixtures seedcbb-fixtures capture seed-test-data sync-calendar tools vendor-htmx fmt fmt-check fix-check vet vulncheck
 
 # The database `make test-db` creates and points the suite at. Overridable so a
 # developer already running PostgreSQL elsewhere can use it instead.
@@ -28,6 +28,9 @@ help:
 	@echo "  make docker-build   - Build Docker images"
 	@echo "  make seed           - Seed database with CFB data (usage: make seed year=2024 week=1 seasonType=regular)"
 	@echo "  make seedcbb        - Seed database with CBB data (usage: make seedcbb season=2025)"
+	@echo "  make seed-fixtures  - Seed CFB data from committed fixtures (no API key needed)"
+	@echo "  make seedcbb-fixtures - Seed CBB data from committed fixtures (no API key needed)"
+	@echo "  make capture        - Re-record API fixtures (spends metered requests)"
 	@echo "  make seed-test-data - Add test users, leagues, and a mix of bets against seeded games"
 	@echo "  make sync-calendar  - Sync calendar data for all years (2002 - present)"
 
@@ -176,6 +179,33 @@ seedcbb:
 	@CMD="go run ./cmd/seedcbb"; \
 	if [ -n "$(season)" ]; then CMD="$$CMD -season=$(season)"; fi; \
 	$$CMD
+
+# Seed from the captured API responses in internal/fixtures rather than the
+# live API: no key, no network, no metered requests. This is what a fresh clone
+# runs to get a populated database.
+#
+# Asking for a year or week the fixtures do not cover is not silently empty --
+# the fake upstream answers an unrouted path with a 500 naming the directory to
+# capture, and the seed refuses to report success having written nothing.
+#
+# Usage: make seed-fixtures            (football, the captured week)
+#        make seed-fixtures week=2
+seed-fixtures:
+	@CMD="go run ./cmd/seed -fixtures"; \
+	if [ -n "$(year)" ]; then CMD="$$CMD -year=$(year)"; fi; \
+	if [ -n "$(week)" ]; then CMD="$$CMD -week=$(week)"; fi; \
+	$$CMD
+
+# The same for basketball.
+seedcbb-fixtures:
+	@CMD="go run ./cmd/seedcbb -fixtures"; \
+	if [ -n "$(season)" ]; then CMD="$$CMD -season=$(season)"; fi; \
+	$$CMD
+
+# Record live API responses into internal/fixtures/testdata. Spends metered
+# requests, so it is a deliberate act -- nothing else in the repository calls it.
+capture:
+	scripts/capture.sh
 
 # Add test users, test leagues, and a mix of pending/won/lost bets against
 # whatever games are already in the database (run `make seed` first).

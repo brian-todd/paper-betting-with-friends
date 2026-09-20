@@ -29,6 +29,17 @@ func write(t *testing.T, files map[string]string) fixtures.Set {
 	return fixtures.FromDir(root)
 }
 
+// start runs a fixture server for the test's lifetime and returns its base URL.
+func start(t *testing.T, opts ...fixtureserver.Option) (string, *fixtureserver.Server) {
+	t.Helper()
+	base, fake, stop, err := fixtureserver.Listen(fixtures.CFBD, opts...)
+	if err != nil {
+		t.Fatalf("starting the fixture server: %v", err)
+	}
+	t.Cleanup(stop)
+	return base, fake
+}
+
 func get(t *testing.T, base, path string) (int, string) {
 	t.Helper()
 	resp, err := http.Get(base + path)
@@ -49,10 +60,9 @@ func get(t *testing.T, base, path string) (int, string) {
 // looks exactly like a sync with nothing to write -- the bug the fixtures
 // exist to find, rebuilt inside the tool meant to find it.
 func TestUnroutedPathIsALoudFailureAndNeverAnEmptyArray(t *testing.T) {
-	srv, _ := fixtureserver.Start(fixtures.CFBD, fixtureserver.WithFixtures(write(t, nil)))
-	defer srv.Close()
+	srvURL, _ := start(t, fixtureserver.WithFixtures(write(t, nil)))
 
-	status, body := get(t, srv.URL, "/teams")
+	status, body := get(t, srvURL, "/teams")
 
 	if status != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", status)
@@ -80,14 +90,13 @@ func TestNthRequestGetsNthCapture(t *testing.T) {
 		"cfbd/scoreboard/classification=fbs/20260905T205903Z.json": `["second"]`,
 		"cfbd/scoreboard/classification=fbs/20260905T211324Z.json": `["third"]`,
 	})
-	srv, fake := fixtureserver.Start(fixtures.CFBD, fixtureserver.WithFixtures(set))
-	defer srv.Close()
+	srvURL, fake := start(t, fixtureserver.WithFixtures(set))
 
 	// Past the end it repeats the last, which is what a feed does when nothing
 	// has changed -- a poll during a commercial break is not an error.
 	want := []string{`["first"]`, `["second"]`, `["third"]`, `["third"]`}
 	for i, w := range want {
-		status, body := get(t, srv.URL, "/scoreboard?classification=fbs")
+		status, body := get(t, srvURL, "/scoreboard?classification=fbs")
 		if status != http.StatusOK {
 			t.Fatalf("request %d: status = %d", i+1, status)
 		}
@@ -109,13 +118,12 @@ func TestQueryOrderDoesNotForkTheSequence(t *testing.T) {
 		"cfbd/games/week=2&year=2026/20260905T204909Z.json": `["first"]`,
 		"cfbd/games/week=2&year=2026/20260905T205903Z.json": `["second"]`,
 	})
-	srv, _ := fixtureserver.Start(fixtures.CFBD, fixtureserver.WithFixtures(set))
-	defer srv.Close()
+	srvURL, _ := start(t, fixtureserver.WithFixtures(set))
 
-	if _, body := get(t, srv.URL, "/games?year=2026&week=2"); body != `["first"]` {
+	if _, body := get(t, srvURL, "/games?year=2026&week=2"); body != `["first"]` {
 		t.Fatalf("first request = %s", body)
 	}
-	if _, body := get(t, srv.URL, "/games?week=2&year=2026"); body != `["second"]` {
+	if _, body := get(t, srvURL, "/games?week=2&year=2026"); body != `["second"]` {
 		t.Errorf("the same query spelled the other way restarted the sequence: got %s", body)
 	}
 }
@@ -124,14 +132,12 @@ func TestExhaustIsErrorRefusesPastTheEnd(t *testing.T) {
 	set := write(t, map[string]string{
 		"cfbd/venues/_/20260905T204909Z.json": `["only"]`,
 	})
-	srv, _ := fixtureserver.Start(fixtures.CFBD,
-		fixtureserver.WithFixtures(set), fixtureserver.ExhaustIsError())
-	defer srv.Close()
+	srvURL, _ := start(t, fixtureserver.WithFixtures(set), fixtureserver.ExhaustIsError())
 
-	if status, _ := get(t, srv.URL, "/venues"); status != http.StatusOK {
+	if status, _ := get(t, srvURL, "/venues"); status != http.StatusOK {
 		t.Fatalf("first request: status = %d, want 200", status)
 	}
-	status, body := get(t, srv.URL, "/venues")
+	status, body := get(t, srvURL, "/venues")
 	if status != http.StatusInternalServerError {
 		t.Errorf("second request: status = %d, want 500", status)
 	}
@@ -148,14 +154,13 @@ func TestFailuresAreFixturesToo(t *testing.T) {
 		"cfbd/games/year=2026/20260905T204909Z.502.json": `{"error":"upstream"}`,
 		"cfbd/venues/_/20260905T204909Z.bad":             `<html>maintenance</html>`,
 	})
-	srv, _ := fixtureserver.Start(fixtures.CFBD, fixtureserver.WithFixtures(set))
-	defer srv.Close()
+	srvURL, _ := start(t, fixtureserver.WithFixtures(set))
 
-	if status, _ := get(t, srv.URL, "/games?year=2026"); status != http.StatusBadGateway {
+	if status, _ := get(t, srvURL, "/games?year=2026"); status != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", status)
 	}
 
-	resp, err := http.Get(srv.URL + "/venues")
+	resp, err := http.Get(srvURL + "/venues")
 	if err != nil {
 		t.Fatalf("GET /venues: %v", err)
 	}

@@ -25,11 +25,14 @@
 package fixtureserver
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"sync"
+	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/fixtures"
 )
@@ -80,11 +83,33 @@ func New(provider string, opts ...Option) *Server {
 	return s
 }
 
-// Start returns a running httptest server and its base URL, ready for
-// NewClientAt. The caller closes it.
-func Start(provider string, opts ...Option) (*httptest.Server, *Server) {
-	fake := New(provider, opts...)
-	return httptest.NewServer(fake), fake
+// Listen starts the handler on a loopback port and returns its base URL, ready
+// to hand to cfbdata.NewClientAt. The caller calls stop.
+//
+// A plain net.Listener rather than httptest, because httptest imports testing
+// and flag: linking it into `seed` would register the whole -test.* flag set
+// on a user-facing command.
+func Listen(provider string, opts ...Option) (baseURL string, fake *Server, stop func(), err error) {
+	fake = New(provider, opts...)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("listening for the fixture server: %w", err)
+	}
+
+	srv := &http.Server{Handler: fake, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("fixture server stopped", "error", err)
+		}
+	}()
+
+	stop = func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}
+	return "http://" + listener.Addr().String(), fake, stop, nil
 }
 
 // Requests returns the paths served so far, in order, query strings included.

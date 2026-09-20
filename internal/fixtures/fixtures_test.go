@@ -146,3 +146,26 @@ func TestSequenceSaysWhereItLookedWhenNothingIsThere(t *testing.T) {
 		t.Errorf("error %q does not name the directory %q", err, want)
 	}
 }
+
+// //go:embed silently skips any path beginning with "_" or ".", and "_" is the
+// name of the empty-query directory -- so the endpoints with no query at all,
+// which is to say the reference data every other row holds a foreign key into,
+// are exactly the ones an "all:"-less embed would drop. On disk the whole time,
+// absent from the binary.
+func TestEmbeddedTreeIncludesTheEmptyQueryDirectory(t *testing.T) {
+	for _, endpoint := range []struct{ provider, path string }{
+		{CFBD, "/venues"},
+		{CFBD, "/teams"},
+		{CBBD, "/venues"},
+		{CBBD, "/teams"},
+	} {
+		captures, err := Embedded().Sequence(endpoint.provider, endpoint.path, "")
+		if err != nil {
+			t.Errorf("%s %s: %v", endpoint.provider, endpoint.path, err)
+			continue
+		}
+		if len(captures[0].Body) == 0 {
+			t.Errorf("%s %s: captured body is empty", endpoint.provider, endpoint.path)
+		}
+	}
+}
