@@ -699,6 +699,13 @@ A failed migration leaves the schema dirty and the server then refuses to boot.
 something to leave set. The files stay on disk so `make migrate-up` and the
 embedded copy read the same directory.
 
+One down migration is *designed* to fail. 000023 dropped a unique index that the
+data had been silently conforming to by losing rows, so restoring it errors on any
+database that has since stored a colliding pair — which is every database worth
+having run it on. The file says so and gives the `force 23` recovery. Rolling back
+past it means first deciding which of each colliding pair of teams to delete, and
+a migration is the wrong place to decide that.
+
 ## Things to Avoid
 
 - float64 for money or odds — always `decimal.Decimal`
