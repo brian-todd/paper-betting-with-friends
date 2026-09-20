@@ -18,6 +18,11 @@ import (
 // were tested against rows a test author built -- which is to say against a
 // disagreement invented by someone who already knew which feed was right.
 //
+// Three of the four are genuinely exercised here, each confirmed by mutating the
+// rule and watching this fail. The fourth -- `completed` being OR'd -- is
+// asserted but cannot fail against this fixture set; the comment at the check
+// says why.
+//
 // Here the disagreement is the recorded one. /games for week 1 was captured on
 // 2026-09-20, by which time all 455 of its games were completed with real
 // scores. The scoreboard series was captured live on 2026-09-05, and its first
@@ -44,83 +49,145 @@ func TestTwoFeedsWritingOneGameConverge(t *testing.T) {
 	gamesRunAt := firstSnapshot.Add(-time.Hour)
 	seedReference(t, db, gamesRunAt)
 
-	// What /games left behind, for the contested games only.
-	type stored struct {
-		status      models.GameStatus
-		completed   bool
-		homeScore   int
-		awayScore   int
-		finalizedAt *time.Time
-	}
-	before := make(map[int64]stored)
+	// What /games left behind, before the scoreboard says anything.
 	contested := snapshotGames(t)
+	ids := make([]int64, 0, len(contested))
 	for _, g := range contested {
-		game, result := gameByExternalID(t, db, g.ID)
-		if result == nil {
-			t.Fatalf("game %d has no result after the /games seed; /games reports every week 1 "+
-				"game completed with a score, so the convergence assertions have nothing to contest", g.ID)
+		ids = append(ids, g.ID)
+	}
+
+	before := snapAll(t, db, ids)
+	for _, g := range contested {
+		was, ok := before[g.ID]
+		if !ok {
+			// syncGames skips a game whose team, venue or week it cannot
+			// resolve. The scoreboard is FBS and /teams is unfiltered, so this
+			// should not happen -- but if it does, the game simply is not part of
+			// the comparison rather than a failure.
+			continue
 		}
-		before[g.ID] = stored{game.Status, game.Completed, result.HomeScore, result.AwayScore, result.FinalizedAt}
+		if was.FinalizedAt == nil {
+			t.Fatalf("game %d has no finalized result after the /games seed; /games reports "+
+				"every week 1 game completed with a score, so there is nothing to contest", g.ID)
+		}
 	}
 	if len(before) == 0 {
 		t.Fatal("no contested games; every assertion below would pass vacuously")
 	}
 
-	// One scoreboard poll, at the instant the snapshot was taken.
-	newFeed(t, db, firstSnapshot).scoreboard(1)
+	// The whole live Saturday, one snapshot at a time, in the order the feed
+	// produced them.
+	//
+	// Not one arrival: a rule that holds against a single poll but not against
+	// the twenty after it is not holding, and production sees all of them. The
+	// series is also where the interesting shape is -- a game moves scheduled to
+	// in_progress to completed across it, while the /games row it contradicts
+	// stays final throughout.
+	//
+	// Twenty-one, not twenty-six. The last five captures are from 2026-09-12,
+	// which the calendar puts in week 2, and week 2's games are not seeded here;
+	// they would be counted as unknown rather than refused, so requireAnswered
+	// would not notice.
+	const saturdaySnapshots = 21
+
+	feed := newFeed(t, db, firstSnapshot)
 
 	var walkedBack, rescored, refinalized, unfinished int
-	for _, g := range contested {
-		was := before[g.ID]
-		game, result := gameByExternalID(t, db, g.ID)
 
-		// Rule: UpdateReportedStatus only ever moves a game forward. A game
-		// stored as final may not be reported back to scheduled or in_progress,
-		// because cancelling a bet is gated on the game not being under way and
-		// a fallback to scheduled would reopen the refund window.
-		if was.status == models.GameStatusFinal && game.Status != models.GameStatusFinal {
-			walkedBack++
-			t.Errorf("game %d went from %s to %s: the scoreboard reported %q and advancesFrom "+
-				"let it through", g.ID, was.status, game.Status, g.Status)
-		}
-		// Rule: completed is OR'd, never assigned.
-		if was.completed && !game.Completed {
-			unfinished++
-			t.Errorf("game %d was completed and is not any more; the scoreboard reported %q", g.ID, g.Status)
-		}
+	// previous is each game's status as of the last arrival checked, so a
+	// regression anywhere in the series is caught at the step it happens rather
+	// than only if it survives to the end.
+	previous := make(map[int64]models.GameStatus, len(before))
+	for id, was := range before {
+		previous[id] = was.Status
+	}
 
-		if result == nil {
-			t.Errorf("game %d lost its result row entirely", g.ID)
-			continue
-		}
-		// Rule: a provisional write may not overwrite the score of an already
-		// finalized result. EvaluateBetsForGame re-reads this row, so guarding
-		// finalized_at without guarding what it certifies is half a rule.
-		if was.finalizedAt != nil && (result.HomeScore != was.homeScore || result.AwayScore != was.awayScore) {
-			rescored++
-			t.Errorf("game %d was finalized at %d-%d and now reads %d-%d: the scoreboard was "+
-				"reporting %q with %v-%v",
-				g.ID, was.homeScore, was.awayScore, result.HomeScore, result.AwayScore,
-				g.Status, points(g.HomeTeam.Points), points(g.AwayTeam.Points))
-		}
-		// Rule: the first finalized_at is kept, so the feed that sees a game
-		// finish first is the one that dates it.
-		if was.finalizedAt != nil {
-			if result.FinalizedAt == nil {
-				t.Errorf("game %d lost its finalized_at", g.ID)
-			} else if !result.FinalizedAt.Equal(*was.finalizedAt) {
-				refinalized++
-				t.Errorf("game %d was finalized at %s and now reads %s",
-					g.ID, was.finalizedAt.Format(time.RFC3339Nano), result.FinalizedAt.Format(time.RFC3339Nano))
+	for snapshot := 1; snapshot <= saturdaySnapshots; snapshot++ {
+		feed.scoreboard(1)
+
+		now := snapAll(t, db, ids)
+		for id, was := range before {
+			got, ok := now[id]
+			if !ok {
+				t.Fatalf("game %d vanished at snapshot %d", id, snapshot)
 			}
+
+			// Monotonic across the series. advancesFrom permits scheduled to
+			// in_progress to final and nothing backwards, so the stored status
+			// may only move forward however many times either feed writes.
+			if rank(got.Status) < rank(previous[id]) {
+				walkedBack++
+				t.Errorf("snapshot %d: game %d went from %s to %s",
+					snapshot, id, previous[id], got.Status)
+			}
+			previous[id] = got.Status
+
+			// Rule: completed is OR'd, never assigned.
+			//
+			// This one cannot fail against this fixture set, and it is kept
+			// labelled rather than deleted. Only Upsert assigns `completed`, and
+			// only /games calls Upsert -- the scoreboard goes through
+			// UpdateReportedStatus -- so exercising the OR needs a /games
+			// response reporting `completed: false` for a game already stored as
+			// completed. The week 1 capture reports every game completed, so
+			// replacing the OR with a plain assignment writes `true` over `true`
+			// and this passes. Confirmed by mutation.
+			//
+			// It needs the same missing capture as the other convergence
+			// direction: a /games response recorded mid-slate. With one, this
+			// becomes a real assertion without changing.
+			if was.Completed && !got.Completed {
+				unfinished++
+				t.Errorf("snapshot %d: game %d was completed and is not any more", snapshot, id)
+			}
+
+			// Rule: a provisional write may not overwrite the score of an
+			// already finalized result. EvaluateBetsForGame re-reads this row, so
+			// guarding finalized_at without guarding what it certifies is half a
+			// rule.
+			if got.HomeScore == nil || got.AwayScore == nil {
+				t.Errorf("snapshot %d: game %d lost its score", snapshot, id)
+			} else if *got.HomeScore != *was.HomeScore || *got.AwayScore != *was.AwayScore {
+				rescored++
+				t.Errorf("snapshot %d: game %d was finalized at %d-%d and now reads %d-%d",
+					snapshot, id, *was.HomeScore, *was.AwayScore, *got.HomeScore, *got.AwayScore)
+			}
+
+			// Rule: the first finalized_at is kept, so the feed that sees a game
+			// finish first is the one that dates it.
+			if got.FinalizedAt == nil {
+				t.Errorf("snapshot %d: game %d lost its finalized_at", snapshot, id)
+			} else if !got.FinalizedAt.Equal(*was.FinalizedAt) {
+				refinalized++
+				t.Errorf("snapshot %d: game %d was finalized at %s and now reads %s",
+					snapshot, id, was.FinalizedAt.Format(time.RFC3339Nano),
+					got.FinalizedAt.Format(time.RFC3339Nano))
+			}
+		}
+
+		// Bail rather than repeat the same failure twenty more times.
+		if t.Failed() {
+			t.Fatalf("stopping at snapshot %d of %d", snapshot, saturdaySnapshots)
+		}
+	}
+
+	// And the outcome the guards exist for, stated rather than only the path to
+	// it: a game /games called final is still final when the series ends.
+	after := snapAll(t, db, ids)
+	for id, was := range before {
+		if was.Status == models.GameStatusFinal && after[id].Status != models.GameStatusFinal {
+			walkedBack++
+			t.Errorf("game %d ended the series as %s, having been final before it",
+				id, after[id].Status)
 		}
 	}
 
 	// The counts are logged rather than asserted on: they are properties of the
 	// capture, and a recapture moves them. What is asserted is that none of the
 	// four rules broke on any of them.
-	t.Logf("held %d contested games across four write rules (%d walked back, %d unfinished, "+
-		"%d rescored, %d refinalized)", len(contested), walkedBack, unfinished, rescored, refinalized)
+	t.Logf("held %d contested games across %d scoreboard arrivals and four write rules "+
+		"(%d walked back, %d unfinished, %d rescored, %d refinalized)",
+		len(contested), saturdaySnapshots, walkedBack, unfinished, rescored, refinalized)
 }
 
 // snapshotGames is the games in the first scoreboard snapshot that /games
@@ -155,9 +222,22 @@ func snapshotGames(t *testing.T) []cfbdata.APIScoreboardGame {
 	return out
 }
 
-func points(p *int) any {
-	if p == nil {
-		return "none"
+// rank orders the statuses this feed writes, so "forward" is comparable.
+// advancesFrom is the rule; this is the same order stated as a number, and the
+// two agreeing is what the test relies on -- see the mutation check in the
+// commit that added it.
+func rank(s models.GameStatus) int {
+	switch s {
+	case models.GameStatusScheduled:
+		return 0
+	case models.GameStatusInProgress:
+		return 1
+	case models.GameStatusFinal:
+		return 2
+	default:
+		// postponed and cancelled are off this line entirely and neither feed
+		// here reports them. Treating one as ahead of everything keeps it from
+		// reading as a regression if that ever changes.
+		return 3
 	}
-	return *p
 }

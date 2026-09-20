@@ -36,8 +36,9 @@ type SyncService struct {
 	betEvaluator      BetEvaluator
 	logger            *slog.Logger
 
-	// clock is the season window and every result's fetchedAt. See
-	// cfbdata.SyncService for why this is a settable field.
+	// clock is the incremental sync's date window and every result's fetchedAt.
+	// Not GetCurrentSeason, which deliberately keeps the real clock -- see its
+	// own comment. See cfbdata.SyncService for why this is a settable field.
 	clock timeutil.Clock
 }
 
@@ -69,7 +70,6 @@ func (s *SyncService) SetClock(now func() time.Time) {
 }
 
 // GetCurrentSeason determines the basketball season year.
-// Basketball seasons span calendar years (e.g., 2025 season runs Nov 2025 - April 2026).
 //
 // This one keeps the real clock rather than taking a SyncService's: both callers
 // are a cmd/ flag default resolved before any service exists. SeasonFor is the
@@ -79,10 +79,28 @@ func GetCurrentSeason() int {
 	return SeasonFor(time.Now())
 }
 
-// SeasonFor is the season year containing an instant.
+// SeasonFor is the season year CBBD would label an instant's games with.
+//
+// A basketball season spans two calendar years and is named for the later one:
+// season 2026 is November 2025 through April 2026, which is what SeedAll fetches
+// and what the feed's own `season` field says on every game in that range --
+// verified against the committed captures, where every game from 2025-11-03 to
+// 2026-04-07 carries season 2026.
+//
+// This was wrong by a year for every month of the season until it was tested.
+// The docstring above it claimed "2025 season runs Nov 2025 - April 2026",
+// contradicting the correct comment in SeedAll thirty lines below, and the
+// arithmetic was written against the wrong one: through the whole of November to
+// April it named the season that had ended the previous spring. Only the manual
+// `cbb-seed` job uses it -- the incremental sync asks for a date window and
+// names no season -- so the symptom was a seed triggered without an explicit
+// year fetching a season nobody was watching, and reporting success.
+//
+// Outside the season, July onward resolves to the season about to start, which
+// is the one a seed run in the autumn wants.
 func SeasonFor(now time.Time) int {
-	if now.Month() <= time.June {
-		return now.Year() - 1
+	if now.Month() >= time.July {
+		return now.Year() + 1
 	}
 	return now.Year()
 }

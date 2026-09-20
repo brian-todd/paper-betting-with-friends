@@ -78,6 +78,10 @@ func TestScoreboardClassificationsMatchTheStoredCase(t *testing.T) {
 		// The bug itself, reproduced. This is the call ResolveScoreboardState
 		// would make if it did not fold the case first, and it has to find
 		// nothing for the next subtest to be saying anything.
+		// 6h duplicates the unexported cfbdata.maxGameDuration. Nothing here
+		// turns on the exact value -- any window wide enough to contain a
+		// kickoff would do -- so the duplication is not a second source of
+		// truth for the cadence.
 		active, err := games.HasActiveGames([]string{"FBS"}, midSlate, 6*time.Hour)
 		if err != nil {
 			t.Fatalf("HasActiveGames: %v", err)

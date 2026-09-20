@@ -66,8 +66,11 @@ func TestGamesStatusIsInferredFromTheClock(t *testing.T) {
 		// reads as in progress whose stored kickoff is still ahead.
 		var early int64
 		if err := db.Model(&models.Game{}).
-			Where("sport = ? AND status = ? AND scheduled_at > ?",
+			Joins("JOIN weeks ON weeks.id = games.week_id").
+			Where("games.sport = ? AND games.status = ? AND games.scheduled_at > ?",
 				models.SportFootball, models.GameStatusInProgress, midSlate).
+			Where("weeks.season = ? AND weeks.number = ? AND weeks.season_type = ?",
+				fixtureYear, futureWeek, models.SeasonTypeRegular).
 			Count(&early).Error; err != nil {
 			t.Fatalf("counting: %v", err)
 		}
@@ -87,8 +90,14 @@ func TestGamesStatusIsInferredFromTheClock(t *testing.T) {
 		newFeed(t, db, midSlate).games(futureWeek)
 
 		tbd := tbdGames(t, futureWeek)
+		var checked int
 		for _, g := range tbd {
-			game, _ := gameByExternalID(t, db, g.ID)
+			game, _ := findGame(db, g.ID)
+			if game == nil {
+				// syncGames could not resolve a team, a venue or a week for it.
+				continue
+			}
+			checked++
 			if game.Status == models.GameStatusInProgress {
 				t.Errorf("game %d (%s v %s) has no announced kickoff -- the feed sends startTimeTBD "+
 					"with the placeholder %s -- and reads as in progress at %s. Betting is closed on "+
@@ -109,6 +118,12 @@ func TestGamesStatusIsInferredFromTheClock(t *testing.T) {
 		// status -- still closes on these games at midnight of the day they are
 		// played. Fixing that needs a column saying the instant is a placeholder,
 		// and a decision about whether such a game takes bets at all.
+		if checked == 0 {
+			t.Fatalf("none of the %d startTimeTBD games in the capture reached the database, "+
+				"so nothing above was checked", len(tbd))
+		}
+		t.Logf("checked %d of %d startTimeTBD games", checked, len(tbd))
+
 		first := tbd[0]
 		game, _ := gameByExternalID(t, db, first.ID)
 		if !game.ScheduledAt.Equal(first.StartDate) {

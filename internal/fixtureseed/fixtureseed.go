@@ -27,8 +27,8 @@
 // Dropping the unique index fixed both halves: no violation to poison the
 // transaction, and the 107 teams -- plus the 49 games that had been skipped as
 // "team not found" -- are written. A basketball seed is the most expensive test
-// in the suite at roughly 24 seconds for a whole season, so it wants to stay one
-// test rather than one per assertion.
+// in the suite at roughly 65 seconds under -race for a whole season, so it wants
+// to stay one test rather than one per assertion.
 //
 // # Two checks, because neither covers the other
 //

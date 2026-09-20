@@ -171,7 +171,75 @@ func statuses(t *testing.T, db *gorm.DB, week int) map[models.GameStatus]int {
 	return out
 }
 
-// gameByExternalID reads back one game with its result, by the feed's own ID.
+// findGame reads back one game with its result, or nil when the sync never wrote
+// it.
+//
+// A missing game is not necessarily a failure: syncGames skips one whose home
+// team, away team or week it cannot resolve, and the /teams capture does not
+// cover every school the smaller divisions play. A caller iterating games out of
+// a capture has to tolerate that, or a recapture turns a pass into a confusing
+// fatal about a row nothing promised.
+func findGame(db *gorm.DB, externalID int64) (*models.Game, *models.GameResult) {
+	game, err := repository.NewGameRepository(db).FindByExternalID(externalID, models.SportFootball)
+	if err != nil {
+		return nil, nil
+	}
+	result, err := repository.NewGameResultRepository(db).FindByGameID(game.ID)
+	if err != nil {
+		return game, nil
+	}
+	return game, result
+}
+
+// A snap is one game's stored state, for a caller comparing many games across
+// many arrivals.
+type snap struct {
+	Status      models.GameStatus
+	Completed   bool
+	HomeScore   *int
+	AwayScore   *int
+	FinalizedAt *time.Time
+}
+
+// snapAll reads the stored state of every football game named by external ID, in
+// one query.
+//
+// One query rather than a lookup per game because the convergence test compares
+// 57 games after each of 21 scoreboard arrivals, and a pair of round trips per
+// game per arrival is most of that test's runtime. The scores are nullable here
+// where models.GameResult has them as ints: this is a LEFT JOIN, so a game with
+// no result row yet reads as nil rather than as 0-0.
+func snapAll(t *testing.T, db *gorm.DB, externalIDs []int64) map[int64]snap {
+	t.Helper()
+
+	type row struct {
+		ExternalID  int64
+		Status      models.GameStatus
+		Completed   bool
+		HomeScore   *int
+		AwayScore   *int
+		FinalizedAt *time.Time
+	}
+	var rows []row
+	err := db.Model(&models.Game{}).
+		Select("games.external_id, games.status, games.completed, "+
+			"game_results.home_score, game_results.away_score, game_results.finalized_at").
+		Joins("LEFT JOIN game_results ON game_results.game_id = games.id").
+		Where("games.sport = ? AND games.external_id IN ?", models.SportFootball, externalIDs).
+		Scan(&rows).Error
+	if err != nil {
+		t.Fatalf("reading stored state for %d games: %v", len(externalIDs), err)
+	}
+
+	out := make(map[int64]snap, len(rows))
+	for _, r := range rows {
+		out[r.ExternalID] = snap{r.Status, r.Completed, r.HomeScore, r.AwayScore, r.FinalizedAt}
+	}
+	return out
+}
+
+// gameByExternalID is findGame for a caller that has already established the row
+// must be there.
 func gameByExternalID(t *testing.T, db *gorm.DB, externalID int64) (*models.Game, *models.GameResult) {
 	t.Helper()
 

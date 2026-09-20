@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brian/paper-betting-with-friends/internal/cbbdata"
+	"github.com/brian/paper-betting-with-friends/internal/fixtures"
 	"github.com/brian/paper-betting-with-friends/internal/fixtureseed"
+	"github.com/brian/paper-betting-with-friends/internal/fixtureserver"
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/testdb"
 )
@@ -45,8 +48,12 @@ func TestBasketballSeedsARealSeason(t *testing.T) {
 			Where("sport = ?", models.SportBasketball).Count(&teams).Error; err != nil {
 			t.Fatalf("counting teams: %v", err)
 		}
-		if want := int64(1519); teams != want {
-			t.Errorf("stored %d basketball teams, want %d from the capture: %d are missing",
+		// The expected number comes from the capture rather than a literal, so a
+		// recapture that adds or drops a school moves the expectation with it
+		// instead of failing for the wrong reason.
+		want := int64(len(capturedTeams(t)))
+		if teams != want {
+			t.Errorf("stored %d basketball teams, want the %d in the /teams capture: %d missing",
 				teams, want, want-teams)
 		}
 	})
@@ -106,4 +113,29 @@ func TestBasketballSeedsARealSeason(t *testing.T) {
 			t.Error("no basketball game reads as final across a whole captured season")
 		}
 	})
+}
+
+// capturedTeams is the /teams capture, read through the real client.
+//
+// The count of these is what a seed has to write. Deriving it here rather than
+// writing 1,519 into the test keeps the expectation and the fixture in step, and
+// the number is the whole assertion: the bug this guards against was 107 of them
+// silently not arriving.
+func capturedTeams(t *testing.T) []cbbdata.APITeam {
+	t.Helper()
+
+	base, _, stop, err := fixtureserver.Listen(fixtures.CBBD)
+	if err != nil {
+		t.Fatalf("starting the fake upstream: %v", err)
+	}
+	defer stop()
+
+	teams, err := cbbdata.NewClientAt(base, "").GetTeams(context.Background())
+	if err != nil {
+		t.Fatalf("reading the /teams capture: %v", err)
+	}
+	if len(teams) == 0 {
+		t.Fatal("the /teams capture is empty, so the count assertion would pass vacuously")
+	}
+	return teams
 }

@@ -455,10 +455,9 @@ hard-codes `"fbs"` in lower case and only a comment said that was right.
 
 Seeded tests stay few and shared: a week is thousands of rows written and
 rolled back, about 1.3s — nearer 8s under `-race`, and a whole basketball season
-is ~51s. `make test` is unaffected at 3.8s because these skip without a
-database; `make test-db` and CI are ~59s warm and ~1m40s including a cold build,
-most of it that basketball season, which is also the only thing exercising
-`seedcbb -fixtures` end to end. They also couple to
+is ~65s under `-race`. `make test` is unaffected at 3.8s because these skip
+without a database; `make test-db` and CI are ~1m8s, most of it that basketball
+season, which is also the only thing exercising `seedcbb -fixtures` end to end. They also couple to
 the fixture set, so a recapture moves a test that turns on "the third FCS game
 of week 2".
 
@@ -528,10 +527,18 @@ import cycle.
 
 Two traps in these tests specifically. Subtests share one transaction, so the
 first failed statement poisons every later one and a single bad query reads as
-several failures — look at the first. And a rule that passes is not a rule that
-is tested: both halves of the convergence test were checked by mutation
-(widening `advancesFrom` fails it on 16 games, replacing the score guards with
-plain assignment on 31) rather than trusted because they were green.
+several failures — look at the first.
+
+And a rule that passes is not a rule that is tested. Every guard these tests
+claim to cover was checked by **mutating the guard and watching the test fail**:
+widening `advancesFrom`, replacing the score and `finalized_at` guards with plain
+assignment, reverting the `startTimeTBD` case, and un-folding
+`normalizeClassifications` all fail. One does not — replacing
+`games.completed OR excluded.completed` with a plain assignment passes, because
+only `/games` calls `Upsert` and the captured week reports every game
+`completed`, so there is nothing for the OR to protect. That check is kept and
+labelled in the test rather than deleted. Do this to any new write-rule test
+before believing it.
 
 ### Logging
 
