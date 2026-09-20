@@ -8,6 +8,7 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -140,6 +141,10 @@ type Service struct {
 	// location resolves the calendar-day and time-of-day filters. Those ask
 	// which local day a kickoff falls on, which no instant can answer alone.
 	location *time.Location
+
+	// clock decides which week is current and whether a game is still open to
+	// bet on. See cfbdata.SyncService for why this is a settable field.
+	clock timeutil.Clock
 }
 
 // NewService creates a new games service.
@@ -165,6 +170,12 @@ func NewService(db *gorm.DB, location *time.Location) *Service {
 
 		location: location,
 	}
+}
+
+// SetClock overrides the time source. The zero value is time.Now, so only a
+// test replaying a recorded response needs to call this.
+func (s *Service) SetClock(now func() time.Time) {
+	s.clock.Set(now)
 }
 
 // Location is the timezone the service resolves calendar-day filters in.
@@ -468,7 +479,7 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 // is exactly the thing nobody wants to see once the game is being played.
 // The instant comparison needs no location -- see AGENTS.md.
 func (s *Service) forecastFor(game *models.Game) *models.GameForecast {
-	if !game.ScheduledAt.After(time.Now()) {
+	if !game.ScheduledAt.After(s.clock.Now()) {
 		return nil
 	}
 
@@ -652,7 +663,7 @@ func (s *Service) GetCurrentWeek() (season int, weekNumber int, seasonType model
 		slog.Warn("ignoring weeks with an implausible span", "count", skipped, "max_span", models.MaxWeekSpan)
 	}
 
-	week, ok := pickCurrentWeek(time.Now(), usable)
+	week, ok := pickCurrentWeek(s.clock.Now(), usable)
 	if !ok {
 		return 0, 0, "", false
 	}

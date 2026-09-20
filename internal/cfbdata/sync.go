@@ -13,6 +13,7 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/brian/paper-betting-with-friends/internal/syncerr"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -47,6 +48,13 @@ type SyncService struct {
 
 	betEvaluator BetEvaluator
 	logger       *slog.Logger
+
+	// clock is what every status inference and every fetchedAt in this package
+	// reads. A fixture of a live Saturday replayed against a real clock means
+	// nothing: every game in it kicked off years ago, so every status infers
+	// the same way and the disagreement between the two feeds -- the thing the
+	// write rules exist for -- never happens.
+	clock timeutil.Clock
 }
 
 // NewSyncService creates a new SyncService.
@@ -80,11 +88,17 @@ func (s *SyncService) SetBetEvaluator(evaluator BetEvaluator) {
 	s.betEvaluator = evaluator
 }
 
+// SetClock overrides the time source. The zero value is time.Now, so only a
+// test replaying a recorded response needs to call this.
+func (s *SyncService) SetClock(now func() time.Time) {
+	s.clock.Set(now)
+}
+
 // GetCurrentSeasonYear determines the correct season year for syncing based on calendar data.
 // CFB seasons span calendar years (e.g., 2025 season runs Aug 2025 - Jan 2026).
 // Falls back to the current calendar year if no matching season is found.
 func (s *SyncService) GetCurrentSeasonYear() int {
-	now := time.Now()
+	now := s.clock.Now()
 	season, err := s.weekRepo.FindSeasonContainingDate(now)
 	if err == nil && season > 0 {
 		return season
@@ -435,7 +449,7 @@ func (s *SyncService) SyncGames(ctx context.Context, year int, week *int, season
 		status := models.GameStatusScheduled
 		if g.Completed {
 			status = models.GameStatusFinal
-		} else if time.Now().After(g.StartDate.Add(5 * time.Minute)) {
+		} else if s.clock.Now().After(g.StartDate.Add(5 * time.Minute)) {
 			status = models.GameStatusInProgress
 		}
 
@@ -478,7 +492,7 @@ func (s *SyncService) SyncGames(ctx context.Context, year int, week *int, season
 				continue
 			}
 
-			result := gameResultFrom(dbGame.ID, g, time.Now())
+			result := gameResultFrom(dbGame.ID, g, s.clock.Now())
 			if err := s.gameResultRepo.Upsert(result); err != nil {
 				s.logger.Error("failed to upsert game result for game", "game", g.ID, "error", err)
 			}

@@ -11,6 +11,7 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/brian/paper-betting-with-friends/internal/syncerr"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -34,6 +35,10 @@ type SyncService struct {
 	overUnderOddsRepo *repository.OverUnderOddsRepository
 	betEvaluator      BetEvaluator
 	logger            *slog.Logger
+
+	// clock is the season window and every result's fetchedAt. See
+	// cfbdata.SyncService for why this is a settable field.
+	clock timeutil.Clock
 }
 
 // NewSyncService creates a new SyncService.
@@ -57,10 +62,25 @@ func (s *SyncService) SetBetEvaluator(evaluator BetEvaluator) {
 	s.betEvaluator = evaluator
 }
 
+// SetClock overrides the time source. The zero value is time.Now, so only a
+// test replaying a recorded response needs to call this.
+func (s *SyncService) SetClock(now func() time.Time) {
+	s.clock.Set(now)
+}
+
 // GetCurrentSeason determines the basketball season year.
 // Basketball seasons span calendar years (e.g., 2025 season runs Nov 2025 - April 2026).
+//
+// This one keeps the real clock rather than taking a SyncService's: both callers
+// are a cmd/ flag default resolved before any service exists. SeasonFor is the
+// testable half, in the shape the other pure helpers in these packages use --
+// now as a parameter, the call site deciding where it comes from.
 func GetCurrentSeason() int {
-	now := time.Now()
+	return SeasonFor(time.Now())
+}
+
+// SeasonFor is the season year containing an instant.
+func SeasonFor(now time.Time) int {
 	if now.Month() <= time.June {
 		return now.Year() - 1
 	}
@@ -133,7 +153,7 @@ func (s *SyncService) SeedAll(ctx context.Context, season int) error {
 
 // SyncGamesAndLines performs an incremental sync of games and lines for a date window.
 func (s *SyncService) SyncGamesAndLines(ctx context.Context) error {
-	now := time.Now()
+	now := s.clock.Now()
 	start := now.AddDate(0, 0, -1).Format("2006-01-02T00:00:00.000Z")
 	end := now.AddDate(0, 0, 3).Format("2006-01-02T23:59:59.000Z")
 
@@ -376,7 +396,7 @@ func (s *SyncService) syncGames(ctx context.Context, opts GameQueryOpts) error {
 				continue
 			}
 
-			result := gameResultFrom(dbGame.ID, g, status, time.Now())
+			result := gameResultFrom(dbGame.ID, g, status, s.clock.Now())
 			if err := s.gameResultRepo.Upsert(result); err != nil {
 				s.logger.Error("failed to upsert game result for game", "game", g.ID, "error", err)
 			}
