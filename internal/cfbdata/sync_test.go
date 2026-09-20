@@ -88,24 +88,35 @@ func TestMapProviderToSource(t *testing.T) {
 		name     string
 		provider string
 		expected models.OddsSource
+		known    bool
 	}{
-		{"draftkings", "DraftKings", models.OddsSourceDraftKings},
-		{"fanduel", "FanDuel", models.OddsSourceFanDuel},
-		{"betmgm", "BetMGM", models.OddsSourceBetMGM},
-		{"caesars", "Caesars", models.OddsSourceCaesars},
-		{"espn bet", "ESPN Bet", models.OddsSourceESPN},
-		{"espn", "espn", models.OddsSourceESPN},
-		{"bovada", "Bovada", models.OddsSourceBovada},
-		{"lowercase", "draftkings", models.OddsSourceDraftKings},
-		{"unknown provider", "UnknownBook", ""},
-		{"empty string", "", ""},
+		{"draftkings", "DraftKings", models.OddsSourceDraftKings, true},
+		{"fanduel", "FanDuel", models.OddsSourceFanDuel, true},
+		{"betmgm", "BetMGM", models.OddsSourceBetMGM, true},
+		{"caesars", "Caesars", models.OddsSourceCaesars, true},
+		{"espn bet", "ESPN Bet", models.OddsSourceESPN, true},
+		{"espn", "espn", models.OddsSourceESPN, true},
+		{"bovada", "Bovada", models.OddsSourceBovada, true},
+		{"lowercase", "draftkings", models.OddsSourceDraftKings, true},
+
+		// CFBD's second spelling of DraftKings, dropped on purpose rather than
+		// by falling off the end of the switch. It is known, so it does not
+		// warn; it maps to nothing, so it is not stored. See the comment on
+		// mapProviderToSource for the measurement behind that.
+		{"the spaced spelling is dropped knowingly", "Draft Kings", "", true},
+
+		{"unknown provider", "UnknownBook", "", false},
+		{"empty string", "", "", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mapProviderToSource(tt.provider)
+			got, known := mapProviderToSource(tt.provider)
 			if got != tt.expected {
 				t.Errorf("mapProviderToSource(%q) = %q, want %q", tt.provider, got, tt.expected)
+			}
+			if known != tt.known {
+				t.Errorf("mapProviderToSource(%q) known = %v, want %v", tt.provider, known, tt.known)
 			}
 		})
 	}

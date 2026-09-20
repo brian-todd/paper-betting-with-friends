@@ -648,6 +648,12 @@ func (s *SyncService) SyncLines(ctx context.Context, year int, week *int, season
 	// slate, but the run has to end up reporting it -- see syncerr.
 	var failed syncerr.Tally
 
+	// A book we do not recognise is worth one line a run, not one a quote. A
+	// new sportsbook pricing the whole slate would otherwise bury the log
+	// under thousands of identical warnings -- and a log nobody can read is
+	// the same as no log, which is what this warning exists to stop being.
+	unknownBooks := make(map[string]bool)
+
 	for _, l := range lines {
 		// Look up game by external ID.
 		game, err := s.gameRepo.FindByExternalID(l.ID, models.SportFootball)
@@ -661,7 +667,12 @@ func (s *SyncService) SyncLines(ctx context.Context, year int, week *int, season
 		awayTeam, _ := s.teamRepo.FindByExternalID(l.AwayTeamID, models.SportFootball)
 
 		for _, line := range l.Lines {
-			source := mapProviderToSource(line.Provider)
+			source, known := mapProviderToSource(line.Provider)
+			if !known && !unknownBooks[line.Provider] {
+				unknownBooks[line.Provider] = true
+				s.logger.Warn("skipping odds from an unrecognised sportsbook",
+					"provider", line.Provider, "first_seen_on_game", l.ID)
+			}
 			if source == "" {
 				continue
 			}
@@ -756,23 +767,54 @@ func parseSpread(formatted string, spreadValue float64, homeTeam, awayTeam *mode
 }
 
 // mapProviderToSource maps API provider names to our OddsSource enum.
-func mapProviderToSource(provider string) models.OddsSource {
+//
+// The second return distinguishes a provider we have decided not to store from
+// one we have never seen. Both are skipped, but only the second is worth a log
+// line -- a new sportsbook appearing in the feed should not be invisible.
+func mapProviderToSource(provider string) (source models.OddsSource, known bool) {
 	switch strings.ToLower(provider) {
 	case "draftkings":
-		return models.OddsSourceDraftKings
+		return models.OddsSourceDraftKings, true
 	case "fanduel":
-		return models.OddsSourceFanDuel
+		return models.OddsSourceFanDuel, true
 	case "betmgm":
-		return models.OddsSourceBetMGM
+		return models.OddsSourceBetMGM, true
 	case "caesars":
-		return models.OddsSourceCaesars
+		return models.OddsSourceCaesars, true
 	case "espn bet", "espn":
-		return models.OddsSourceESPN
+		return models.OddsSourceESPN, true
 	case "bovada":
-		return models.OddsSourceBovada
+		return models.OddsSourceBovada, true
+
+	// CFBD sends DraftKings under two spellings in completed weeks, and they
+	// are not copies of each other. Across the captured weeks 278 games carry
+	// both; 43 of those disagree on the spread and 33 on the total. What the
+	// spaced one never carries is a moneyline -- none of the 278, against 226
+	// for the unspaced one.
+	//
+	// That disagreement is the reason to drop it rather than a reason to keep
+	// it. Both spellings map to one OddsSource and the odds tables are keyed
+	// on (game_id, source), so mapping both would store whichever the feed
+	// happened to list last: an arbitrary pick between two real quotes, with
+	// nothing in the row recording which. Dropping the spaced one is instead a
+	// deterministic choice of the richer record.
+	//
+	// It costs twelve week-1 games, all FCS or Division II, that are quoted
+	// only that way and so carry no odds at all. Weighed against 70 games
+	// whose stored spread or total would otherwise be decided by list order,
+	// and against the spelling having already vanished from the live feed --
+	// week 4 is 21 quotes, every one unspaced -- that is the better trade.
+	//
+	// cbbdata's mapping accepts this same string, and the difference is the
+	// feeds', not ours: CBBD uses the spaced spelling and no other, so there
+	// is no second quote to disagree with and nothing arbitrary to store.
+	// Refusing it there would discard 42% of basketball quotes and leave 471
+	// games unpriced. Do not "unify" the two without re-measuring both.
+	case "draft kings":
+		return "", true
+
 	default:
-		// Unknown provider, skip.
-		return ""
+		return "", false
 	}
 }
 

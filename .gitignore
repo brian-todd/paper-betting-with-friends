@@ -19,6 +19,16 @@ tmp/
 dist/
 build/
 
+# Stray `go build ./cmd/x` output in the repository root. `make build` writes
+# to bin/, so anything here is an accident -- and a 34 MB binary is one that
+# has already had to be filtered back out of a branch once.
+/server
+/seed
+/seedcbb
+/seedtestdata
+/synccalendar
+/capture
+
 # Environment variables
 .env
 .env.local

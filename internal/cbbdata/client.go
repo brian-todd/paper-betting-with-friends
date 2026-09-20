@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -22,8 +24,21 @@ type Client struct {
 
 // NewClient creates a new CBB Data API client.
 func NewClient(apiKey string) *Client {
+	return NewClientAt(defaultBaseURL, apiKey)
+}
+
+// NewClientAt creates a client pointed at an arbitrary base URL, for replaying
+// captured fixtures against a fake upstream.
+//
+// This is deliberately a constructor rather than a configuration value. An
+// environment variable would put a production process one typo away from
+// syncing a season out of a fixture directory and reporting success the whole
+// time -- the exact failure class the fixture work exists to catch. A
+// constructor is reachable only from code that means to call it, and the only
+// callers are tests and `seed -fixtures`.
+func NewClientAt(baseURL, apiKey string) *Client {
 	return &Client{
-		baseURL: defaultBaseURL,
+		baseURL: baseURL,
 		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
@@ -48,7 +63,7 @@ func (c *Client) doRequest(ctx context.Context, path string, result any) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status code: %d: %s", resp.StatusCode, errorBody(resp.Body))
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
@@ -156,4 +171,23 @@ func buildLineQuery(opts LineQueryOpts) string {
 		q += fmt.Sprintf("%sconference=%s", sep, *opts.Conference)
 	}
 	return q
+}
+
+// errorBody reads a bounded snippet of a failed response for the error message.
+//
+// Without it the only thing a caller learns from a failure is a number. An
+// upstream 502 usually says something about why, and the fixture server's own
+// refusal is a sentence naming the directory to capture -- which was being
+// thrown away at exactly the moment someone needed it.
+func errorBody(body io.Reader) string {
+	const limit = 512
+	snippet, err := io.ReadAll(io.LimitReader(body, limit))
+	if err != nil || len(snippet) == 0 {
+		return "(no body)"
+	}
+	text := strings.TrimSpace(string(snippet))
+	if len(snippet) == limit {
+		text += "..."
+	}
+	return text
 }

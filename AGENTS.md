@@ -16,6 +16,11 @@
 - `make migrate-create name=<name>` — create new migration pair
 - `make seed year=YYYY week=N seasonType=regular` — seed CFB data
 - `make seedcbb season=YYYY` — seed CBB data
+- `make seed-fixtures` / `make seedcbb-fixtures` — seed from the captured API
+  responses in `internal/fixtures/testdata`. No API key, no network, no metered
+  requests; this is what a fresh clone runs. See Fixtures
+- `make capture` — re-record those fixtures. Spends metered requests, so
+  nothing else in the repository calls it
 - `make vendor-htmx` — re-download the vendored htmx build and verify its checksum
 
 ## Architecture
@@ -344,6 +349,49 @@ games the scoreboard has never covered. A row's presence means "the scoreboard
 has seen this game", never "this game is live"; the clock is left in place once
 a game ends, so the live strip gates on `Game.Status`, not on the row.
 
+### Fixtures
+
+`internal/fixtures/testdata` holds recorded CFBD and CBBD responses, and
+`internal/fixtureserver` replays them over HTTP. `cfbdata.NewClientAt` and
+`cbbdata.NewClientAt` are the seam — a constructor rather than a
+`CFB_DATA_BASE_URL`, because an environment variable would put production one
+typo away from syncing a season out of a fixture directory while logging
+success.
+
+The layout is path → directories, query → leaf directory, capture instant →
+file name: `cfbd/games/week=1&year=2026/20260920T124751Z.json`. The query is
+sorted before it is slugged, and `_` names an empty query. Failure suffixes:
+`.502.json` serves that status, `.bad` serves non-JSON under a JSON content
+type.
+
+- **`//go:embed all:testdata`, never `//go:embed testdata`.** Without `all:`,
+  embed skips every path beginning with `_` — which is the empty-query
+  directory, so `/venues` and `/teams` vanish from the binary while sitting on
+  disk
+- **The fake upstream answers an unrouted path with a 500, never `[]`.** Every
+  endpoint here returns a JSON array, so the empty one is the tempting answer
+  and the worst available: a sync over it writes nothing and reports success
+- **A route serves a sequence.** The nth request gets the nth capture, and past
+  the end it repeats the last
+- **Never filter a capture by division, conference or team.** Narrow by week.
+  The spread across `fbs`/`fcs`/`ii`/`iii` is what several past bugs needed to
+  be visible, and `/venues` and `/teams` are unfiltered because `syncGames`
+  skips a game whose team is missing, logs a warning and returns nil
+- **A fixture seed checks two things**, because neither covers the other: that
+  the fake upstream refused nothing (`Server.Refusals()`, which holds whatever
+  was already in the database), and that the tables are not empty (which
+  catches a capture that is present but hollow, and can only fail against a
+  fresh database)
+- **`make capture` replaces a route's capture; it refuses to replace a
+  sequence.** The server replays oldest-first, so appending a second capture of
+  a single-shot endpoint leaves the seed reading the stale one forever. A route
+  with several captures is a series on purpose — `-append` extends it,
+  `-replace` discards it, and the refusal happens before any metered request
+
+`internal/fixtureseed` is the shared path. `cmd/seed -fixtures` runs it against
+a connection; a test runs it against a `testdb` transaction to get rows the
+feed really sent — see Testing.
+
 ### Testing
 
 - Table-driven tests with `t.Run()` subtests
@@ -360,6 +408,19 @@ cannot reach that and an in-memory engine answers a different dialect.
 back when the test ends, so fixtures cannot outlive a run — which matters
 because a developer's database holds real seeded seasons. `InsertTeam`,
 `InsertVenue` and `InsertGame` fill in everything a test did not set.
+
+There are two ways to fill that transaction, and the choice is by subject.
+A test about **logic** — a predicate refusing an edge, a stake moving a
+difference — uses the `Insert*` helpers, where the inputs are visible and
+minimal. A test about **the shape of real data** — a query over a mixed
+division slate, a parser meeting a field it has only been described — calls
+`fixtureseed.Football(ctx, db, year, week)` and gets rows CFBD actually sent.
+The `Insert*` defaults are somebody's belief about the feed; `InsertTeam`
+hard-codes `"fbs"` in lower case and only a comment said that was right.
+
+Seeded tests stay few and shared: a week is thousands of rows written and
+rolled back, about 1.3s. They also couple to the fixture set, so a recapture
+moves a test that turns on "the third FCS game of week 2".
 
 Run them with `make test-db`, which starts the compose database and creates
 `betting_tracker_test` beside the development one. Without `TEST_DATABASE_URL`
@@ -539,3 +600,8 @@ embedded copy read the same directory.
 - `.Format`-style mtime cache busting for assets — every embedded file reports the zero mtime; hash the contents
 - Unbounded database pools — `database.Connect` sets the limits, and `DB_MAX_OPEN_CONNS` has to stay under the server's own cap
 - Assuming a route is admin-only because it lives in `internal/admin` — it is only guarded if it was registered through `guard` in `RegisterRoutes`
+- `//go:embed testdata` without the `all:` prefix for fixtures — it silently drops the `_` directory, which is where the unfiltered endpoints live
+- Answering an unrouted fixture path with `[]` — it is indistinguishable from a successful sync with nothing to write
+- Appending a fresh capture beside an old one on a single-shot endpoint — the server replays oldest-first, so the new one is never reached
+- Filtering a capture by division — the spread is the property that makes the fixture worth having
+- A base-URL environment variable — `NewClientAt` is the seam, and it is reachable only from code that means to call it
