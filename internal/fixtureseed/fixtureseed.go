@@ -12,6 +12,19 @@
 //     shapes them -- nulls where it sends nulls, a classification in the case
 //     it uses -- rather than the way whoever wrote InsertGame imagined.
 //
+// # Football seeds into a transaction; basketball does not
+//
+// Football is safe to run against a `testdb` transaction. Basketball is not,
+// and the reason is not the fixtures: `cbbdata.syncTeams` meets a duplicate
+// team abbreviation in the real feed, logs it and continues. On a connection
+// each statement autocommits, so one bad row is skipped and the season lands.
+// Inside a transaction the first error poisons every statement after it, and
+// the seed collapses into a cascade of "current transaction is aborted".
+//
+// So Basketball is for `seedcbb -fixtures` against a connection. A test
+// wanting basketball rows needs that constraint lifted first, which means
+// savepoints around the writes the sync deliberately tolerates.
+//
 // # Zero is a failure, not a result
 //
 // Every seed here ends by counting what it wrote and refusing a zero. That is

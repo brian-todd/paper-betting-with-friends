@@ -665,7 +665,11 @@ func (s *SyncService) syncLines(ctx context.Context, year int, week *int, season
 		awayTeam, _ := s.teamRepo.FindByExternalID(l.AwayTeamID, models.SportFootball)
 
 		for _, line := range l.Lines {
-			source := mapProviderToSource(line.Provider)
+			source, known := mapProviderToSource(line.Provider)
+			if !known {
+				s.logger.Warn("skipping odds from an unrecognised sportsbook",
+					"provider", line.Provider, "game", l.ID)
+			}
 			if source == "" {
 				continue
 			}
@@ -760,23 +764,46 @@ func parseSpread(formatted string, spreadValue float64, homeTeam, awayTeam *mode
 }
 
 // mapProviderToSource maps API provider names to our OddsSource enum.
-func mapProviderToSource(provider string) models.OddsSource {
+//
+// The second return distinguishes a provider we have decided not to store from
+// one we have never seen. Both are skipped, but only the second is worth a log
+// line -- a new sportsbook appearing in the feed should not be invisible.
+func mapProviderToSource(provider string) (source models.OddsSource, known bool) {
 	switch strings.ToLower(provider) {
 	case "draftkings":
-		return models.OddsSourceDraftKings
+		return models.OddsSourceDraftKings, true
 	case "fanduel":
-		return models.OddsSourceFanDuel
+		return models.OddsSourceFanDuel, true
 	case "betmgm":
-		return models.OddsSourceBetMGM
+		return models.OddsSourceBetMGM, true
 	case "caesars":
-		return models.OddsSourceCaesars
+		return models.OddsSourceCaesars, true
 	case "espn bet", "espn":
-		return models.OddsSourceESPN
+		return models.OddsSourceESPN, true
 	case "bovada":
-		return models.OddsSourceBovada
+		return models.OddsSourceBovada, true
+
+	// CFBD sends DraftKings under two spellings in completed weeks, and the
+	// spaced one is a strictly poorer record of the same quote: across the
+	// captured weeks, 278 games carry both, with identical spreads and totals,
+	// and "Draft Kings" has a moneyline on none of them against 226 for
+	// "DraftKings". It has already vanished from the current week's feed, so
+	// it reads as a legacy artifact rather than a second book.
+	//
+	// Dropped on purpose, and named here so it is not mistaken for an
+	// oversight. Mapping it would add nothing to those 278 games; it would
+	// pick up twelve week-1 games whose only quote it is, all of them FCS or
+	// Division II, which is not worth storing a book's degraded duplicate for.
+	//
+	// cbbdata's mapping accepts this same string, and the difference is the
+	// feeds', not ours: CBBD uses the spaced spelling and no other, so
+	// refusing it there would discard 42% of basketball quotes and leave 471
+	// games unpriced. Do not "unify" the two without re-measuring both.
+	case "draft kings":
+		return "", true
+
 	default:
-		// Unknown provider, skip.
-		return ""
+		return "", false
 	}
 }
 

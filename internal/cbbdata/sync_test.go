@@ -74,3 +74,39 @@ func TestGameResultFrom(t *testing.T) {
 		})
 	}
 }
+
+func TestMapProviderToSource(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		expected models.OddsSource
+		known    bool
+	}{
+		{"bovada", "Bovada", models.OddsSourceBovada, true},
+		{"espn bet", "ESPN BET", models.OddsSourceESPN, true},
+
+		// CBBD spells DraftKings with a space and never without one, so this
+		// case is not a nicety: it is 42% of every quote the feed sends, and
+		// the only book pricing 471 games in a season. cfbdata refuses the same
+		// string, because CFBD sends both spellings and the spaced one there is
+		// a moneyline-less duplicate. The two are measured separately on
+		// purpose -- see the comments on both functions before unifying them.
+		{"the spaced spelling is the only one CBBD sends", "Draft Kings", models.OddsSourceDraftKings, true},
+		{"and the unspaced one still maps", "DraftKings", models.OddsSourceDraftKings, true},
+
+		{"unknown provider", "UnknownBook", "", false},
+		{"empty string", "", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, known := mapProviderToSource(tt.provider)
+			if got != tt.expected {
+				t.Errorf("mapProviderToSource(%q) = %q, want %q", tt.provider, got, tt.expected)
+			}
+			if known != tt.known {
+				t.Errorf("mapProviderToSource(%q) known = %v, want %v", tt.provider, known, tt.known)
+			}
+		})
+	}
+}

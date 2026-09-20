@@ -418,7 +418,10 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 		}
 
 		for _, line := range l.Lines {
-			source := mapProviderToSource(line.Provider)
+			source, known := mapProviderToSource(line.Provider)
+			if !known {
+				s.logger.Warn("skipping odds from an unrecognised sportsbook", "provider", line.Provider)
+			}
 			if source == "" {
 				continue
 			}
@@ -527,22 +530,34 @@ func mapGameStatus(status string) models.GameStatus {
 }
 
 // mapProviderToSource maps API provider names to our OddsSource enum.
-func mapProviderToSource(provider string) models.OddsSource {
+//
+// "draft kings" is accepted here and refused by the football mapping, and the
+// asymmetry is the feeds', not ours. CBBD spells it that way and no other:
+// across a captured season it is 4,516 of 10,732 quotes, carrying 4,514
+// spreads and 1,639 moneylines, and it is the only book quoting 471 games at
+// all -- which without this case have no odds and read as unbettable. CFBD
+// sends both spellings and the spaced one there is a moneyline-less duplicate
+// of the other, so cfbdata drops it. Changing either to match the other loses
+// real data.
+//
+// The second return distinguishes a provider we decline to store from one we
+// have never seen, so a new sportsbook is not silently discarded.
+func mapProviderToSource(provider string) (source models.OddsSource, known bool) {
 	switch strings.ToLower(provider) {
-	case "draftkings":
-		return models.OddsSourceDraftKings
+	case "draftkings", "draft kings":
+		return models.OddsSourceDraftKings, true
 	case "fanduel":
-		return models.OddsSourceFanDuel
+		return models.OddsSourceFanDuel, true
 	case "betmgm":
-		return models.OddsSourceBetMGM
+		return models.OddsSourceBetMGM, true
 	case "caesars":
-		return models.OddsSourceCaesars
+		return models.OddsSourceCaesars, true
 	case "espn bet", "espn":
-		return models.OddsSourceESPN
+		return models.OddsSourceESPN, true
 	case "bovada":
-		return models.OddsSourceBovada
+		return models.OddsSourceBovada, true
 	default:
-		return ""
+		return "", false
 	}
 }
 
