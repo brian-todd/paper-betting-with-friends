@@ -208,6 +208,12 @@ func (s *Server) refuse(w http.ResponseWriter, route string, cause error) {
 	s.refusals++
 	s.mu.Unlock()
 
+	// Logged as well as returned. A sync that tolerates a failed fetch never
+	// surfaces the body, and `fixtureseed` tells the reader the server recorded
+	// which paths -- so it has to have done.
+	slog.Warn("fixture server has no fixture for a request",
+		"provider", s.provider, "route", route, "reason", cause)
+
 	msg := fmt.Sprintf("no fixture for %s %s: %v\n\n"+
 		"Capture it with: scripts/capture.sh -provider %s '%s'\n",
 		s.provider, route, cause, s.provider, route)

@@ -652,6 +652,12 @@ func (s *SyncService) syncLines(ctx context.Context, year int, week *int, season
 	// slate, but the run has to end up reporting it -- see syncerr.
 	var failed syncerr.Tally
 
+	// A book we do not recognise is worth one line a run, not one a quote. A
+	// new sportsbook pricing the whole slate would otherwise bury the log
+	// under thousands of identical warnings -- and a log nobody can read is
+	// the same as no log, which is what this warning exists to stop being.
+	unknownBooks := make(map[string]bool)
+
 	for _, l := range lines {
 		// Look up game by external ID.
 		game, err := s.gameRepo.FindByExternalID(l.ID, models.SportFootball)
@@ -666,9 +672,10 @@ func (s *SyncService) syncLines(ctx context.Context, year int, week *int, season
 
 		for _, line := range l.Lines {
 			source, known := mapProviderToSource(line.Provider)
-			if !known {
+			if !known && !unknownBooks[line.Provider] {
+				unknownBooks[line.Provider] = true
 				s.logger.Warn("skipping odds from an unrecognised sportsbook",
-					"provider", line.Provider, "game", l.ID)
+					"provider", line.Provider, "first_seen_on_game", l.ID)
 			}
 			if source == "" {
 				continue
@@ -783,21 +790,29 @@ func mapProviderToSource(provider string) (source models.OddsSource, known bool)
 	case "bovada":
 		return models.OddsSourceBovada, true
 
-	// CFBD sends DraftKings under two spellings in completed weeks, and the
-	// spaced one is a strictly poorer record of the same quote: across the
-	// captured weeks, 278 games carry both, with identical spreads and totals,
-	// and "Draft Kings" has a moneyline on none of them against 226 for
-	// "DraftKings". It has already vanished from the current week's feed, so
-	// it reads as a legacy artifact rather than a second book.
+	// CFBD sends DraftKings under two spellings in completed weeks, and they
+	// are not copies of each other. Across the captured weeks 278 games carry
+	// both; 43 of those disagree on the spread and 33 on the total. What the
+	// spaced one never carries is a moneyline -- none of the 278, against 226
+	// for the unspaced one.
 	//
-	// Dropped on purpose, and named here so it is not mistaken for an
-	// oversight. Mapping it would add nothing to those 278 games; it would
-	// pick up twelve week-1 games whose only quote it is, all of them FCS or
-	// Division II, which is not worth storing a book's degraded duplicate for.
+	// That disagreement is the reason to drop it rather than a reason to keep
+	// it. Both spellings map to one OddsSource and the odds tables are keyed
+	// on (game_id, source), so mapping both would store whichever the feed
+	// happened to list last: an arbitrary pick between two real quotes, with
+	// nothing in the row recording which. Dropping the spaced one is instead a
+	// deterministic choice of the richer record.
+	//
+	// It costs twelve week-1 games, all FCS or Division II, that are quoted
+	// only that way and so carry no odds at all. Weighed against 70 games
+	// whose stored spread or total would otherwise be decided by list order,
+	// and against the spelling having already vanished from the live feed --
+	// week 4 is 21 quotes, every one unspaced -- that is the better trade.
 	//
 	// cbbdata's mapping accepts this same string, and the difference is the
-	// feeds', not ours: CBBD uses the spaced spelling and no other, so
-	// refusing it there would discard 42% of basketball quotes and leave 471
+	// feeds', not ours: CBBD uses the spaced spelling and no other, so there
+	// is no second quote to disagree with and nothing arbitrary to store.
+	// Refusing it there would discard 42% of basketball quotes and leave 471
 	// games unpriced. Do not "unify" the two without re-measuring both.
 	case "draft kings":
 		return "", true

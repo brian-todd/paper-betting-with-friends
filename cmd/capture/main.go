@@ -166,7 +166,15 @@ func capture(client *http.Client, provider, host, apiKey, out, instant string, m
 				"pass -append to add to it or -replace to discard it", full, len(existing))
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, host+raw, nil)
+	// Rebuilt from the parsed parts rather than host+raw, so a fully qualified
+	// argument -- which the directory logic already strips -- does not produce
+	// https://host/https://host/venues.
+	url := host + requestPath
+	if rawQuery != "" {
+		url += "?" + rawQuery
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
@@ -190,8 +198,20 @@ func capture(client *http.Client, provider, host, apiKey, out, instant string, m
 	}
 	name += ".json"
 
-	// Only now that a response is in hand, so a failed request cannot cost the
-	// capture that was already there.
+	// Only a success may replace what is already there. A 502 or a 401 is a
+	// response like any other as far as the transport is concerned, so without
+	// this a refresh run during an outage would delete the whole fixture set
+	// and leave error bodies in its place -- which is the one moment the old
+	// captures matter most.
+	//
+	// Capturing a failure on purpose is still possible, and is what -append is
+	// for: a `.502.json` beside a good capture is a fixture, a `.502.json`
+	// instead of one is a loss.
+	if resp.StatusCode != http.StatusOK && len(existing) > 0 && mode != modeAppend {
+		return fmt.Errorf("upstream answered %d and %s already holds a capture; "+
+			"refusing to replace a good fixture with an error body. Pass -append to keep both",
+			resp.StatusCode, full)
+	}
 	if mode != modeAppend {
 		for _, old := range existing {
 			if err := os.Remove(filepath.Join(full, old)); err != nil {

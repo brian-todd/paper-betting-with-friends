@@ -190,10 +190,15 @@ seedcbb:
 #
 # Usage: make seed-fixtures            (football, the captured week)
 #        make seed-fixtures week=2
+# seasonType is passed through rather than dropped: the captures were taken
+# without one, and `seed` refuses the combination with a sentence saying so.
+# Swallowing it here would turn that explicit refusal back into a silent
+# no-effect flag.
 seed-fixtures:
 	@CMD="go run ./cmd/seed -fixtures"; \
 	if [ -n "$(year)" ]; then CMD="$$CMD -year=$(year)"; fi; \
 	if [ -n "$(week)" ]; then CMD="$$CMD -week=$(week)"; fi; \
+	if [ -n "$(seasonType)" ]; then CMD="$$CMD -seasonType=$(seasonType)"; fi; \
 	$$CMD
 
 # The same for basketball.

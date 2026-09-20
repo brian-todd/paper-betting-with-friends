@@ -88,9 +88,10 @@ func TestMapProviderToSource(t *testing.T) {
 		// CBBD spells DraftKings with a space and never without one, so this
 		// case is not a nicety: it is 42% of every quote the feed sends, and
 		// the only book pricing 471 games in a season. cfbdata refuses the same
-		// string, because CFBD sends both spellings and the spaced one there is
-		// a moneyline-less duplicate. The two are measured separately on
-		// purpose -- see the comments on both functions before unifying them.
+		// string, because CFBD sends both spellings and they disagree on 70 of
+		// the 278 games carrying both -- so mapping both there would store
+		// whichever the feed listed last. The two are measured separately on
+		// purpose; see the comments on both functions before unifying them.
 		{"the spaced spelling is the only one CBBD sends", "Draft Kings", models.OddsSourceDraftKings, true},
 		{"and the unspaced one still maps", "DraftKings", models.OddsSourceDraftKings, true},
 
