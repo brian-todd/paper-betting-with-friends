@@ -427,6 +427,11 @@ feed really sent — see Testing. `fixtureseed.At(instant)` replays a seed as
 though it were running then, which a test asserting on a status or a
 `finalized_at` needs and `seed -fixtures` does not.
 
+`fixtureseed.Football` runs the whole `SeedAll`, so it only works for a week with
+the whole set captured — weeks 1 and 2. `fixtureseed.FootballGames` is one week of
+games alone, on top of reference data a prior `Football` call wrote, which is what
+week 6 needs. It refuses a zero for the same reason the others do.
+
 **Which week a fixture can answer for depends on when it was captured.** Weeks 1
 and 2 were recorded on 2026-09-20, after they had been played: `/games` reports
 every game `completed` with a real score, so they infer `final` whatever the
@@ -509,10 +514,24 @@ generalise here: a bubble's clock starts at 2000-01-01, decades before any
 captured instant, and a bubble waits for `net/http.Transport`'s read loop, which
 never ends. `internal/timeutil/clock.go` says this at length.
 
+`admin.Service` has one too, for the two facts the sync page reports about "now":
+the scoreboard state and the upper bound on a manual seed's season. It is not
+about production drift — the scheduler passes its own instant into `NextDelay`, so
+both sides of "the same function, not a second opinion" read the wall clock and
+agree. It is that `Health()` was the one part of that page nothing could pin,
+while the current week beside it already came through `games.Service`, so a page
+rendered at a fixture instant answered one question from the fixture and the other
+from today. Give it the **same instant** as the sync services in a test.
+
 Three things keep their own `time.Now`: the repositories (it sets `updated_at`,
 which nothing asserts on), `games.ZoneAbbreviation` (a free function deriving a
 display label), and `cbbdata.GetCurrentSeason` (a `cmd/` flag default resolved
 before any service exists — `SeasonFor(now)` is its testable half).
+
+A service method that writes a timestamp reads its own clock rather than taking
+one. `bets.FinalizeGameResult` took an `at` argument and its single caller always
+passed `time.Now()`, so the parameter was not flexibility — it was a second clock
+to forget to set.
 
 #### The level ladder
 

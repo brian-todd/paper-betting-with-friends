@@ -146,6 +146,60 @@ func Football(ctx context.Context, db *gorm.DB, year, week int, opts ...Option) 
 	})
 }
 
+// FootballGames seeds one week of games alone, on top of reference data a prior
+// Football call has already written.
+//
+// It exists because not every captured week has the whole set behind it. Weeks 1
+// and 2 have games, rankings and lines, which is what `seed -fixtures` needs.
+// Week 6 has games only -- it was recorded for what an unplayed week looks like,
+// and rankings and lines would have cost two more metered requests to answer a
+// question nothing asks. Calling Football for it walks into the fixture server's
+// 500 on /rankings, which is the server doing its job and not a usable seed.
+//
+// The reference data has to be there already: syncGames skips a game whose home
+// team, away team or week it cannot resolve, logs a warning, and returns nil. So
+// this ends by counting what it wrote for that week and refusing a zero, the same
+// rule the whole-season seeds follow and for the same reason -- a sync over
+// missing rows reports success having written nothing.
+func FootballGames(ctx context.Context, db *gorm.DB, year, week int, opts ...Option) (int64, error) {
+	if err := requireSchema(db); err != nil {
+		return 0, err
+	}
+
+	base, fake, stop, err := fixtureserver.Listen(fixtures.CFBD)
+	if err != nil {
+		return 0, err
+	}
+	defer stop()
+
+	sync := cfbdata.NewSyncService(cfbdata.NewClientAt(base, ""), db)
+	sync.SetClock(resolve(opts).now)
+
+	if err := sync.SyncGames(ctx, year, &week, nil); err != nil {
+		return 0, fmt.Errorf("seeding football games for %d week %d from fixtures: %w", year, week, err)
+	}
+	if err := requireNoRefusals(fake); err != nil {
+		return 0, err
+	}
+
+	var rows int64
+	err = db.Model(&models.Game{}).
+		Joins("JOIN weeks ON weeks.id = games.week_id").
+		Where("games.sport = ? AND weeks.season = ? AND weeks.number = ?",
+			models.SportFootball, year, week).
+		Count(&rows).Error
+	if err != nil {
+		return 0, fmt.Errorf("counting games for %d week %d: %w", year, week, err)
+	}
+	if rows == 0 {
+		return 0, fmt.Errorf("seed wrote no games for %d week %d: the reference data has to be "+
+			"loaded first -- syncGames skips a game whose team, venue or week it cannot find, "+
+			"logs it, and returns nil", year, week)
+	}
+	slog.Info("seeded games from fixtures", "year", year, "week", week, "rows", rows)
+	return rows, nil
+}
+
 // Basketball seeds venues, teams, games and lines for a season.
 func Basketball(ctx context.Context, db *gorm.DB, season int, opts ...Option) ([]Count, error) {
 	if err := requireSchema(db); err != nil {

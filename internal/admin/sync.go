@@ -84,7 +84,7 @@ func (s *Service) TriggerSync(actor *models.User, job, season string) error {
 
 	if season != "" {
 		year, err := strconv.Atoi(season)
-		if err != nil || year < minSeedSeason || year > time.Now().Year()+1 {
+		if err != nil || year < minSeedSeason || year > s.clock.Now().Year()+1 {
 			return ErrInvalidSeason
 		}
 		args = []string{season}
@@ -123,7 +123,7 @@ func (s *Service) Health() (SystemHealth, error) {
 	// than a second opinion that can drift from it. Only meaningful when the
 	// football sync exists at all, which is what the API key decides.
 	if health.CFBConfigured {
-		state := cfbdata.ResolveScoreboardState(s.gameRepo, slog.Default(), time.Now(), s.cfg.CFBScoreboardClassifications)
+		state := cfbdata.ResolveScoreboardState(s.gameRepo, slog.Default(), s.clock.Now(), s.cfg.CFBScoreboardClassifications)
 		health.ScoreboardLive = state.Active
 		if state.NextKickoff != nil {
 			health.ScoreboardNextKickoff = *state.NextKickoff

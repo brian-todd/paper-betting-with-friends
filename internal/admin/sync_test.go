@@ -7,13 +7,19 @@ import (
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/scheduler"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 )
 
 // The season is validated in the service rather than in the job because a job
 // runs on a background goroutine, where a bad value can only be logged. Here it
 // can be handed back to the person who typed it.
 func TestTriggerSyncValidatesSeason(t *testing.T) {
-	nextYear := strconv.Itoa(time.Now().Year() + 1)
+	// A fixed clock, so "next season" is a fixed string rather than whatever
+	// year the suite happens to run in -- and so the upper bound is asserted to
+	// come from the service's clock rather than the wall clock.
+	now := time.Date(2026, time.September, 20, 12, 0, 0, 0, time.UTC)
+	nextYear := strconv.Itoa(now.Year() + 1)
+	yearAfter := strconv.Itoa(now.Year() + 2)
 
 	tests := []struct {
 		name    string
@@ -23,6 +29,7 @@ func TestTriggerSyncValidatesSeason(t *testing.T) {
 		{name: "blank means the current season", season: ""},
 		{name: "earliest season the providers have", season: "2002"},
 		{name: "next season, so it can be pre-seeded", season: nextYear},
+		{name: "the season after next, which nobody has data for", season: yearAfter, wantErr: true},
 		{name: "before the providers have data", season: "2001", wantErr: true},
 		{name: "far future", season: "3000", wantErr: true},
 		{name: "not a number", season: "twenty-twenty", wantErr: true},
@@ -36,6 +43,7 @@ func TestTriggerSyncValidatesSeason(t *testing.T) {
 			// through to ErrUnknownJob. That is the signal validation allowed
 			// it: the two errors are distinguishable, which is all this needs.
 			svc := &Service{sched: scheduler.New(nil)}
+			svc.SetClock(timeutil.Fixed(now))
 
 			err := svc.TriggerSync(nil, "cfb-seed", tt.season)
 

@@ -3,7 +3,6 @@ package bets
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
@@ -181,7 +180,13 @@ func (s *Service) FindGameResult(gameID uuid.UUID) (*models.GameResult, error) {
 //
 // This is the manual escape hatch for a provider that reports a score but never
 // calls the game complete. It settles real money, so callers must confirm.
-func (s *Service) FinalizeGameResult(gameID uuid.UUID, at time.Time) error {
+//
+// The instant stamped on finalized_at comes from this service's clock rather
+// than from an argument. It took one before, from the single caller, which always
+// passed time.Now() -- so the parameter was not flexibility, it was a second
+// clock for a caller to forget to set. Every other write on this service reads
+// the same one.
+func (s *Service) FinalizeGameResult(gameID uuid.UUID) error {
 	result, err := s.gameResultRepo.FindByGameID(gameID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -191,6 +196,7 @@ func (s *Service) FinalizeGameResult(gameID uuid.UUID, at time.Time) error {
 	}
 
 	if !result.IsFinal() {
+		at := s.clock.Now()
 		result.FinalizedAt = &at
 		if err := s.gameResultRepo.Update(result); err != nil {
 			return err
