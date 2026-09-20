@@ -246,9 +246,11 @@ flapping, and both live in SQL so neither writer has to read before writing:
 - `GameRepository.Upsert` never regresses a `final` status, and `completed` is
   OR'd rather than assigned
 - `GameRepository.UpdateReportedStatus` is stricter still: `advancesFrom` lists
-  what each status may replace, so a game only ever moves forward. Cancelling a
-  bet is gated on `Game.Status` alone, so a status that could fall back to
-  `scheduled` would reopen the refund window on a game already being played
+  what each status may replace, so a game only ever moves forward. `cancellable`
+  reads the status as well as the kickoff — not instead of it, since PR 1 — so a
+  status that could fall back to `scheduled` would reopen the refund window on a
+  game whose stored kickoff is also wrong, which is exactly the delayed-game
+  case
 - `GameResultRepository.Upsert` keeps the first `finalized_at`, COALESCEs the
   line scores and excitement index so the feed that does not know a value cannot
   erase it, and refuses to let a *provisional* write overwrite the score of an
@@ -422,16 +424,40 @@ requests a month and the football jobs are most of it:
   division CFBD returns, and their status is inferred from the clock, which
   reads `in_progress` for hours at a time. Each extra division is another
   ~2,700 requests a month in the heart of the season, ~720 out of it
-- `cfb-games-and-lines` follows the football week — 15 minutes Thu–Sat, 30
-  midweek, hourly overnight (`cfbdata.SyncDelay`) — at two requests a run
+- `cfb-lines` follows the football week — 15 minutes Thu–Sat, 30 midweek,
+  hourly overnight (`cfbdata.SyncDelay`) — at one request a run, ~1,870 a month
+- `cfb-games` runs four times a day on the wall clock (`cfbdata.GamesDelay`),
+  ~120 a month. It shared the lines cadence until the two were split, which
+  paid a 15-minute game-day rate for a feed that changes weekly. What made the
+  split safe is that nothing time-critical comes off `/games` for the divisions
+  the scoreboard covers. Outside them it is the only feed there is, and two
+  things get worse by the same six hours: a bet can sit unsettled that long
+  after its game ends, and `scheduled_at` can be that stale where it used to be
+  at most an hour — which is a betting cutoff and a refund window, not just a
+  badge, since a kickoff moved earlier leaves a gap in which a bet can be placed
+  on or voided off a game already under way. `UpdateScheduledAt` cannot close it
+  there; only the scoreboard calls it. The remedy is
+  `CFB_SCOREBOARD_CLASSIFICATIONS` rather than a faster rate. It carries
+  `RunOnStart` but no catch-up for a slot missed while the process was down —
+  the obvious catch-up keys on the last *success*, which never advances while a
+  run keeps failing, so a `/games` endpoint returning 502s would be retried
+  every minute forever. `RunOnStart` is the cheap half of the same idea, and it
+  covers the case the six-hour grid cannot: `NextDelay` is recomputed on every
+  start, so a process restarting faster than its interval never reaches the
+  timer, and this job would never run at all
 
-`TestFootballCadenceStaysWithinMonthlyCallBudget` walks real months at the real
-schedules and fails if a change to either overruns the plan. It drives the
-scoreboard from a synthetic slate, because a cadence derived from the games
-table cannot be costed against a feed assumed live around the clock. That slate
-is calibrated against the real schedule — ~34 live hours a week against ~36
-measured — and a slate that is too thin is the one way this test passes while
-production overspends.
+`TestFootballCadenceStaysWithinMonthlyCallBudget` walks real months at all
+three schedules and fails if a change to any of them overruns the plan, capped
+at 10,000 against a measured worst month of ~7,770. It drives the scoreboard
+from a synthetic slate, because a cadence derived from the games table cannot be
+costed against a feed assumed live around the clock. That slate is calibrated
+against the real schedule — ~34 live hours a week against ~36 measured — and a
+slate that is too thin is the one way this test passes while production
+overspends.
+
+What that cap does *not* catch is `/games` going back onto the lines cadence:
+~1,740 calls a month hides under a cap sized for the scoreboard, which dominates
+the sum. `TestNextGamesSyncRunsFourTimesADay` is what pins that rate.
 
 A job can also be run on demand: `Trigger(name)` sends on a capacity-1 channel,
 and that buffer *is* the debounce — a second trigger while one is pending
@@ -509,6 +535,7 @@ embedded copy read the same directory.
 - Treating a `GameLiveState` row as "this game is live" — it exists from before kickoff and keeps the last clock after the whistle; gate on `Game.Status`
 - Trusting stored week dates unchecked — filter on `models.Week.Plausible()` in *every* path that asks "which season/week is it now"
 - Calling `j.Run` directly, or starting any goroutine whose panic nothing recovers — one takes down the whole process
+- Keying a job's missed-slot catch-up on its last *success* — a run that keeps failing never advances it, so an endpoint returning 502s is retried every minute forever; key it on the last attempt, if at all
 - `.Format`-style mtime cache busting for assets — every embedded file reports the zero mtime; hash the contents
 - Unbounded database pools — `database.Connect` sets the limits, and `DB_MAX_OPEN_CONNS` has to stay under the server's own cap
 - Assuming a route is admin-only because it lives in `internal/admin` — it is only guarded if it was registered through `guard` in `RegisterRoutes`

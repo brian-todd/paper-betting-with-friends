@@ -176,17 +176,17 @@ func TestNextSyncAlwaysLandsOnItsOwnGrid(t *testing.T) {
 	}
 }
 
-// The cadence is a spending plan, not just a freshness setting, so the
-// arithmetic behind it is worth pinning down: walking real calendar months at
-// the real schedule keeps a future tweak to the intervals from quietly
-// overrunning CFBD's monthly allowance.
+// The lines cadence on its own, which the football-wide budget test below
+// counts but does not isolate. This is the schedule most likely to be reached
+// for -- it is the one with a game-day rate -- so it is worth a cap close
+// enough to the real number to notice a change.
 //
-// The cap leaves room underneath the 5,000 limit for the calendar job and the
-// occasional manual seed.
+// One call a run since /games moved to its own job. The worst month is January
+// at 1,865 runs.
 func TestSyncCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 	const (
-		callsPerRun     = 2
-		monthlyCallsCap = 4000
+		callsPerRun     = 1
+		monthlyCallsCap = 2200
 	)
 
 	eastern := mustLoad(t, "America/New_York")
@@ -330,6 +330,120 @@ func TestScoreboardDelayIsAlwaysPositiveAcrossDST(t *testing.T) {
 	}
 }
 
+// The schedule feed runs four times a day on the wall-clock grid: midnight,
+// 6am, noon and 6pm local.
+func TestNextGamesSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	at := func(day, hour, minute int) time.Time {
+		return time.Date(2026, time.September, day, hour, minute, 0, 0, eastern)
+	}
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"early morning waits for 6am", at(10, 3, 20), at(10, 6, 0)},
+		{"mid-morning waits for noon", at(10, 9, 45), at(10, 12, 0)},
+		{"afternoon waits for 6pm", at(10, 14, 0), at(10, 18, 0)},
+		{"evening rolls into tomorrow", at(10, 22, 30), at(11, 0, 0)},
+
+		// A grid point is not a zero delay. Returning now would have the
+		// scheduler fire again immediately against a metered endpoint.
+		{"exactly on a slot moves to the next", at(10, 12, 0), at(10, 18, 0)},
+
+		// Saturday is not special here, which is the whole point of the split:
+		// a game-day rate belongs to the feed that reports a game.
+		{"saturday afternoon is paced like any other day", at(12, 15, 31), at(12, 18, 0)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NextGamesSync(tc.now, eastern); !got.Equal(tc.want) {
+				t.Errorf("NextGamesSync(%s) = %s, want %s",
+					tc.now.Format(time.RFC1123), got.Format(time.RFC1123), tc.want.Format(time.RFC1123))
+			}
+		})
+	}
+}
+
+// Six hours is not a divisor of a day's UTC offset anywhere that keeps one, so
+// reading the grid in the wrong zone does not merely relabel the slots -- it
+// moves them. Eastern noon is 16:00 UTC, which is not on the UTC grid at all.
+func TestNextGamesSyncIsReadInTheConfiguredZone(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	now := time.Date(2026, time.September, 10, 13, 0, 0, 0, eastern)
+
+	if got, want := GamesDelay(now, eastern), 5*time.Hour; got != want {
+		t.Errorf("eastern: GamesDelay = %v, want %v (1pm waits for 6pm local)", got, want)
+	}
+	// The same instant is 17:00 UTC, an hour short of the 18:00 UTC slot.
+	if got, want := GamesDelay(now, time.UTC), time.Hour; got != want {
+		t.Errorf("utc: GamesDelay = %v, want %v", got, want)
+	}
+}
+
+func TestGamesDelayDefaultsToUTCWhenLocationIsNil(t *testing.T) {
+	now := time.Date(2026, time.September, 10, 13, 0, 0, 0, time.UTC)
+	if got, want := GamesDelay(now, nil), 5*time.Hour; got != want {
+		t.Errorf("GamesDelay(nil location) = %v, want %v", got, want)
+	}
+}
+
+// Same hazard as the other two grids, and it has to be checked on this one
+// too: during the repeated hour of a fall-back, the next grid point by wall
+// clock is in the past, which the scheduler would read as a negative delay and
+// poll flat out until the hour cleared.
+func TestGamesDelayIsAlwaysPositiveAcrossDST(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	for _, start := range []time.Time{
+		time.Date(2026, time.March, 7, 0, 0, 0, 0, eastern),
+		time.Date(2026, time.November, 1, 0, 0, 0, 0, eastern),
+	} {
+		for offset := range 48 * 60 {
+			now := start.Add(time.Duration(offset) * time.Minute)
+
+			delay := GamesDelay(now, eastern)
+			if delay <= 0 {
+				t.Fatalf("GamesDelay(%v) = %v, want positive", now, delay)
+			}
+			// The grid is wall-clock, so the step across the repeated hour is
+			// genuinely an hour longer in absolute time. What is checked is
+			// that it stops there rather than skipping a whole cycle.
+			if delay > gamesInterval+time.Hour {
+				t.Fatalf("GamesDelay(%v) = %v, longer than a cadence stretched by the DST fall-back", now, delay)
+			}
+		}
+	}
+}
+
+// The schedule sync lands four times a day, every day, whatever the week looks
+// like -- which is what makes it ~120 calls a month instead of ~1,750.
+func TestNextGamesSyncRunsFourTimesADay(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	// A minute past midnight rather than on it, so the window holds exactly
+	// seven of each slot: starting on a grid point skips that day's midnight
+	// run, which would make the count 27 and read like a bug in the cadence.
+	start := time.Date(2026, time.September, 1, 0, 1, 0, 0, eastern)
+	end := start.AddDate(0, 0, 7)
+
+	runs := 0
+	for now := start; ; runs++ {
+		now = NextGamesSync(now, eastern)
+		if !now.Before(end) {
+			break
+		}
+	}
+
+	if want := 4 * 7; runs != want {
+		t.Errorf("a week of schedule syncs = %d runs, want %d", runs, want)
+	}
+}
+
 // slateKickoffs builds a representative week of a real football season for
 // every week touching [start, end), in loc.
 //
@@ -378,6 +492,17 @@ func slateKickoffs(start, end time.Time, loc *time.Location) []time.Time {
 // schedules so that raising a rate, or adding a division, cannot quietly
 // overrun the plan.
 //
+// Three jobs on three schedules since the split: lines on the football week,
+// the schedule on its six-hour grid, and the scoreboard on whatever the games
+// table says is being played, counted separately because they are now three
+// independent rates to get wrong.
+//
+// Note what this does not catch. Putting /games back on the lines cadence
+// costs ~1,740 calls a month, which still fits under the cap -- the cap is
+// sized for the scoreboard, which dominates the sum, and a change of that size
+// hides inside it. TestNextGamesSyncRunsFourTimesADay is what pins the
+// schedule feed's own rate.
+//
 // The scoreboard is now counted against a synthetic slate rather than a feed
 // polled around the clock, because that is what its cadence reads: five
 // minutes while a game is being played, hourly otherwise. Counting it as
@@ -401,7 +526,10 @@ func slateKickoffs(start, end time.Time, loc *time.Location) []time.Time {
 // that grows with the request count of whatever those jobs fetch.
 func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 	const (
-		gamesAndLinesCallsPerRun = 2
+		// One each, since the split. They were two calls on one schedule, and
+		// /games was paying the line's rate to pick up a weekly change.
+		linesCallsPerRun = 1
+		gamesCallsPerRun = 1
 
 		// Three ratings, records, ATS and season efficiency.
 		teamStatsCallsPerRun = 6
@@ -412,14 +540,20 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		gameContextCallsPerRun = 2
 
 		// Deploys in a month, as a worst case rather than an observed rate.
-		// Both daily jobs and the scoreboard carry scheduler.RunOnStart, so
-		// each restart buys one extra run of each on top of the schedule --
-		// the point of the flag, and a cost the plan should carry rather than
-		// discover. Two a working day is a busier release cadence than this
-		// project has ever had.
+		// Both daily jobs, the scoreboard and the schedule feed all carry
+		// scheduler.RunOnStart, so each restart buys one extra run of each on
+		// top of the schedule -- the point of the flag, and a cost the plan
+		// should carry rather than discover. Two a working day is a busier
+		// release cadence than this project has ever had.
 		restartsPerMonth = 40
 
-		monthlyCallsCap = 12000
+		// The worst month measured here is January at ~7,770: 2,545 scoreboard
+		// runs at two divisions, 1,865 lines, 123 games, the two daily jobs and
+		// 440 restart calls. The cap is ~1.3x that, which is a real margin
+		// only because the scoreboard came down first -- while it was ~8,900 a
+		// division, a 1.5x rule would have set the cap above the whole 30,000
+		// allowance, which is to say it would not have been a test.
+		monthlyCallsCap = 10000
 
 		// The budget is checked at the widest division list an operator is
 		// likely to configure, not at the FBS-only default -- the default
@@ -471,8 +605,11 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 			scoreboardRuns := countRuns(start, end, func(now time.Time) time.Time {
 				return NextScoreboardSync(now, eastern, stateAt(now))
 			})
-			syncRuns := countRuns(start, end, func(now time.Time) time.Time {
+			linesRuns := countRuns(start, end, func(now time.Time) time.Time {
 				return NextSync(now, eastern)
+			})
+			gamesRuns := countRuns(start, end, func(now time.Time) time.Time {
+				return NextGamesSync(now, eastern)
 			})
 			teamStatsRuns := countRuns(start, end, func(now time.Time) time.Time {
 				return NextTeamStatsSync(now, eastern)
@@ -486,18 +623,21 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 			// fires at its usual time afterwards and the restart runs are
 			// purely additive. The scoreboard is in here because a start
 			// against an unpopulated games table would otherwise idle for up
-			// to an hour before taking a live reading.
+			// to an hour before taking a live reading; the schedule feed
+			// because a process restarting faster than six hours would never
+			// reach its timer at all.
 			restartCalls := restartsPerMonth *
-				(teamStatsCallsPerRun + gameContextCallsPerRun + scoreboardDivisions)
+				(teamStatsCallsPerRun + gameContextCallsPerRun + scoreboardDivisions + gamesCallsPerRun)
 
 			calls := scoreboardRuns*scoreboardDivisions +
-				syncRuns*gamesAndLinesCallsPerRun +
+				linesRuns*linesCallsPerRun +
+				gamesRuns*gamesCallsPerRun +
 				teamStatsRuns*teamStatsCallsPerRun +
 				gameContextRuns*gameContextCallsPerRun +
 				restartCalls
 			if calls > monthlyCallsCap {
-				t.Errorf("%d-%02d: %d scoreboard, %d games, %d team-stats and %d game-context runs plus %d restarts = %d calls, over the %d budget",
-					year, month, scoreboardRuns, syncRuns, teamStatsRuns, gameContextRuns, restartsPerMonth, calls, monthlyCallsCap)
+				t.Errorf("%d-%02d: %d scoreboard, %d lines, %d games, %d team-stats and %d game-context runs plus %d restarts = %d calls, over the %d budget",
+					year, month, scoreboardRuns, linesRuns, gamesRuns, teamStatsRuns, gameContextRuns, restartsPerMonth, calls, monthlyCallsCap)
 			}
 		}
 	}

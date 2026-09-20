@@ -77,8 +77,8 @@ To run without Docker, point `DATABASE_URL` at your own PostgreSQL, then
 Each sport's sync registers itself only if its API key is present, so running
 one sport is supported; a missing key logs a warning and disables that sync.
 
-Football's games-and-lines sync is polled on a cadence that follows the
-football week rather than a flat interval, in `APP_TIMEZONE` wall-clock:
+Football's **lines** sync is polled on a cadence that follows the football week
+rather than a flat interval, in `APP_TIMEZONE` wall-clock:
 
 | When | Interval |
 | --- | --- |
@@ -92,6 +92,28 @@ kickoffs are still being settled well after midnight Eastern. Runs sit on a grid
 measured from midnight, so a redeploy cannot shift the schedule onto an
 arbitrary offset. The shape lives in `cfbdata.NextSync`.
 
+The **schedule** sync (`/games`) used to ride that same cadence and now runs
+four times a day, at midnight, 6am, noon and 6pm local (`cfbdata.NextGamesSync`).
+A book moves a number all week; a kickoff, a venue and an opponent move a
+handful of times a season. For the divisions the scoreboard covers nothing
+time-critical comes off `/games` any more — the score and the status come from
+the scoreboard, a moved kickoff is corrected within five minutes, and every
+money decision gates on `scheduled_at` rather than on a synced status.
+
+Outside those divisions `/games` is the only feed there is, and slowing it costs
+two things rather than one. A bet can sit unsettled for up to six hours after
+its game ends, because the score and the `completed` flag arrive only from
+`/games` — the `bet-settlement` sweep cannot help, since it reads the database
+and nothing has written the result yet. And `scheduled_at` itself can be six
+hours stale where it used to be at most one, which matters because it is what
+closes betting and what bounds a refund: a kickoff moved **later** closes
+betting early, and one moved **earlier** leaves a window in which a bet can
+still be placed on, or voided off, a game already being played.
+`UpdateScheduledAt` does not reach these games — the scoreboard is what calls
+it. Both are bounded by the six-hour interval, and the remedy for a division
+anyone actually bets is adding it to `CFB_SCOREBOARD_CLASSIFICATIONS`, which
+restores five-minute status, score and kickoff for it.
+
 **The cadence is a budget, not just a freshness setting.** CFBD meters us at
 30,000 calls a month, shared across every job below. Rough cost of each through
 a month of the season, at default configuration (FBS-only scoreboard,
@@ -99,19 +121,20 @@ a month of the season, at default configuration (FBS-only scoreboard,
 
 | Job | Cadence | Calls/run | ~Calls/month |
 | --- | --- | --- | --- |
-| `cfb-games-and-lines` | table above | 2 (`/games` + `/lines`) | ~3,550 |
+| `cfb-lines` | table above | 1 (`/lines`) | ~1,870 |
+| `cfb-games` | every 6 hours on the wall clock | 1 (`/games`) | ~120 |
 | `cfb-scoreboard` | 5 min while a game is live, hourly otherwise, one call per division | 1 | ~2,700 |
 | `cfb-calendar` | daily, loops years until the API returns empty | ~25 | ~750 |
 | `cfb-rankings` | every 6 hours | 1 | ~120 |
 | `cbb-games-and-lines` | flat `CBB_SYNC_INTERVAL_MINS` (default 15), no seasonal throttle | 2 (`/games` + `/lines`) | ~5,760 |
 | `bet-settlement` | every 5 minutes | 0 — database only | 0 |
-| **Total** | | | **~12,900 / 30,000** |
+| **Total** | | | **~11,300 / 30,000** |
 
 That leaves roughly two thirds of the budget as headroom. Two things to watch
 if this changes:
 
 - `TestFootballCadenceStaysWithinMonthlyCallBudget` (`internal/cfbdata`) only
-  covers the football jobs, capped at 12,000 rather than the real 30,000, to
+  covers the football jobs, capped at 10,000 rather than the real 30,000, to
   leave room for calendar, rankings, and basketball. It's tested against
   `CFB_SCOREBOARD_CLASSIFICATIONS` set to two divisions (the widest an operator
   would plausibly configure) and against a month that is football all the way

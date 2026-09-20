@@ -8,7 +8,7 @@ import "time"
 // already a natural key, there is exactly one row per job, and nothing
 // references it. A surrogate key here would only be ceremony.
 type SyncState struct {
-	// Job is the scheduler job name, e.g. "cfb-games-and-lines".
+	// Job is the scheduler job name, e.g. "cfb-lines".
 	Job string `gorm:"primaryKey"`
 
 	// LastSuccessAt is when the job last completed without error. A run that

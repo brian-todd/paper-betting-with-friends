@@ -33,7 +33,7 @@ var adminRoutes = []struct {
 	{http.MethodGet, "/admin/bets"},
 	{http.MethodPost, "/admin/bets/spread/" + uuid.Nil.String() + "/status"},
 	{http.MethodGet, "/admin/sync"},
-	{http.MethodPost, "/admin/sync/cfb-games-and-lines/run"},
+	{http.MethodPost, "/admin/sync/cfb-lines/run"},
 	{http.MethodGet, "/admin/games"},
 	{http.MethodGet, "/admin/games/" + uuid.Nil.String()},
 	{http.MethodPost, "/admin/games/" + uuid.Nil.String() + "/evaluate"},
