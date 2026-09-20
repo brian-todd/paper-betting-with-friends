@@ -2,6 +2,7 @@ package cfbdata_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/brian/paper-betting-with-friends/internal/cfbdata"
@@ -11,6 +12,11 @@ import (
 
 // fixtureYear is the season the committed captures cover.
 const fixtureYear = 2026
+
+// capturedGameWeeks is every week /games has a capture for. Rankings and lines
+// exist for the first two only, which is what `seed -fixtures` needs; week 6 is
+// games alone, recorded for what an unplayed week looks like.
+var capturedGameWeeks = []int{1, 2, 6}
 
 // client returns a real client pointed at the committed fixtures.
 func client(t *testing.T, opts ...fixtureserver.Option) *cfbdata.Client {
@@ -101,29 +107,89 @@ func TestClientDecodesEveryCapturedEndpoint(t *testing.T) {
 		}
 	})
 
-	t.Run("games", func(t *testing.T) {
-		games, err := c.GetGames(ctx, fixtureYear, &week, nil)
+	// Every captured week, not just the first. The test's name says every
+	// captured endpoint and it used to mean week 1 only, which left week 2
+	// decoded by nothing at all.
+	for _, w := range capturedGameWeeks {
+		t.Run(fmt.Sprintf("games week %d", w), func(t *testing.T) {
+			games, err := c.GetGames(ctx, fixtureYear, &w, nil)
+			if err != nil {
+				t.Fatalf("GetGames: %v", err)
+			}
+			if len(games) == 0 {
+				t.Fatal("no games decoded")
+			}
+			var withTeams, withStart int
+			for _, g := range games {
+				if g.HomeTeam != "" && g.AwayTeam != "" {
+					withTeams++
+				}
+				if !g.StartDate.IsZero() {
+					withStart++
+				}
+			}
+			if withTeams != len(games) {
+				t.Errorf("%d of %d games decoded without both team names", len(games)-withTeams, len(games))
+			}
+			if withStart != len(games) {
+				t.Errorf("%d of %d games decoded with a zero start date, which reads as a kickoff long past", len(games)-withStart, len(games))
+			}
+		})
+	}
+
+	// The week 6 capture is load-bearing in a way the others are not, and the
+	// way to lose it is to refresh it.
+	//
+	// Weeks 1 and 2 were recorded after they were played, so every game in them
+	// is completed with a real score. Week 6 was recorded before -- nothing
+	// completed, no points, real future kickoffs, and games the feed had not
+	// scheduled. That is the only capture in which the clock decides anything,
+	// and three level-2 tests rest on it.
+	//
+	// Re-recording it after 2026-10-11 would return a played week and silently
+	// remove the premise from all three. So it is deliberately NOT in
+	// scripts/capture.sh's default set, and this subtest is what says so out
+	// loud: if it fails after a capture run, the fixture was refreshed and the
+	// fix is `git checkout` on that directory, not an adjustment here.
+	t.Run("week 6 is still an unplayed week", func(t *testing.T) {
+		w := 6
+		games, err := c.GetGames(ctx, fixtureYear, &w, nil)
 		if err != nil {
 			t.Fatalf("GetGames: %v", err)
 		}
-		if len(games) == 0 {
-			t.Fatal("no games decoded")
-		}
-		var withTeams, withStart int
+
+		var completed, tbd, withPoints int
+		divisions := map[string]int{}
 		for _, g := range games {
-			if g.HomeTeam != "" && g.AwayTeam != "" {
-				withTeams++
+			if g.Completed {
+				completed++
 			}
-			if !g.StartDate.IsZero() {
-				withStart++
+			if g.StartTimeTBD {
+				tbd++
+			}
+			if g.HomePoints != nil || g.AwayPoints != nil {
+				withPoints++
+			}
+			divisions[g.HomeClassification]++
+		}
+
+		if completed != 0 {
+			t.Errorf("%d of %d week 6 games are completed; this capture is the unplayed one and "+
+				"TestGamesStatusIsInferredFromTheClock has nothing left to infer", completed, len(games))
+		}
+		if withPoints != 0 {
+			t.Errorf("%d week 6 games carry points; the capture has been refreshed", withPoints)
+		}
+		if tbd == 0 {
+			t.Error("no week 6 game is startTimeTBD; the placeholder-kickoff case has no fixture")
+		}
+		for _, want := range []string{"fbs", "fcs", "ii", "iii"} {
+			if divisions[want] == 0 {
+				t.Errorf("no %q games in week 6; the division spread is the property the capture "+
+					"rule exists to keep", want)
 			}
 		}
-		if withTeams != len(games) {
-			t.Errorf("%d of %d games decoded without both team names", len(games)-withTeams, len(games))
-		}
-		if withStart != len(games) {
-			t.Errorf("%d of %d games decoded with a zero start date, which reads as a kickoff long past", len(games)-withStart, len(games))
-		}
+		t.Logf("week 6: %d games, %d startTimeTBD, divisions %v", len(games), tbd, divisions)
 	})
 
 	t.Run("rankings", func(t *testing.T) {

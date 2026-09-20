@@ -407,6 +407,14 @@ type.
   was already in the database), and that the tables are not empty (which
   catches a capture that is present but hollow, and can only fail against a
   fresh database)
+- **Some captures are worth more stale than fresh.** Week 6 of 2026 was
+  recorded before it was played, and that is its entire value — it is the only
+  capture in which the clock decides anything, and three level-2 tests rest on
+  it. Re-recording it returns a played week and silently removes their premise,
+  so it is not in `scripts/capture.sh`'s default set. `week 6 is still an
+  unplayed week` in the level-1 test is what notices; if it fails after a
+  capture run, `git checkout` that directory rather than editing the test.
+  Recording a *new* unplayed week is the way to replace it
 - **`make capture` replaces a route's capture; it refuses to replace a
   sequence.** The server replays oldest-first, so appending a second capture of
   a single-shot endpoint leaves the seed reading the stale one forever. A route
@@ -705,6 +713,7 @@ embedded copy read the same directory.
 - Appending a fresh capture beside an old one on a single-shot endpoint — the server replays oldest-first, so the new one is never reached
 - Filtering a capture by division — the spread is the property that makes the fixture worth having
 - A base-URL environment variable — `NewClientAt` is the seam, and it is reachable only from code that means to call it
+- Re-capturing an *unplayed* week — its value is that the games had not happened, and a refresh destroys it silently
 - Inferring a status from a `startTimeTBD` placeholder or a zero `startDate` — both are instants the feed does not mean, and `advancesFrom` has no edge back from the `in_progress` they produce
 - A unique index on a display string — the one on `teams.abbreviation` cost 107 basketball teams and the 49 games that needed them, because `Upsert` arbitrates a different index and the violation was logged and continued past
 - Replaying a fixture against the real clock — use `SetClock` or `fixtureseed.At`, or every recorded game reads as long finished

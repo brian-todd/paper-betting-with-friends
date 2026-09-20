@@ -70,6 +70,17 @@ func TestTwoFeedsWritingOneGameConverge(t *testing.T) {
 			t.Fatalf("game %d has no finalized result after the /games seed; /games reports "+
 				"every week 1 game completed with a score, so there is nothing to contest", g.ID)
 		}
+		// The seed's clock actually took effect. Without this, fixtureseed.At
+		// could be silently ignored -- or wrong by years -- and every assertion
+		// below would still pass, because they compare the stored value against
+		// itself. It is also this test's premise: "keeps the first finalized_at"
+		// only means something if the instant /games stamped differs from the one
+		// the scoreboard would.
+		if !was.FinalizedAt.Equal(gamesRunAt) {
+			t.Fatalf("game %d was finalized at %s, want the seed's clock %s -- fixtureseed.At "+
+				"is not reaching the sync, so nothing here is replaying at a chosen instant",
+				g.ID, was.FinalizedAt.Format(time.RFC3339Nano), gamesRunAt.Format(time.RFC3339Nano))
+		}
 	}
 	if len(before) == 0 {
 		t.Fatal("no contested games; every assertion below would pass vacuously")
