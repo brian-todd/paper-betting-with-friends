@@ -79,6 +79,37 @@ func TestUnroutedPathIsALoudFailureAndNeverAnEmptyArray(t *testing.T) {
 			t.Errorf("the refusal does not mention %q:\n%s", want, body)
 		}
 	}
+
+	// The refusal's whole value is that it tells the reader what to run, so
+	// the command has to be one. It named the provider as a bare word for a
+	// while, which capture.sh reads as another path to fetch -- it would have
+	// spent a metered request on https://api.collegefootballdata.com/cfbd and
+	// captured the 404.
+	if !strings.Contains(body, "-provider cfbd") {
+		t.Errorf("the suggested command would not parse; capture.sh needs -provider:\n%s", body)
+	}
+}
+
+// A seed cannot see the 500s the sync logged and carried on past, so the
+// server has to keep the count for it.
+func TestRefusalsAreCounted(t *testing.T) {
+	set := write(t, map[string]string{
+		"cfbd/venues/_/20260905T204909Z.json": `["only"]`,
+	})
+	srvURL, fake := start(t, fixtureserver.WithFixtures(set))
+
+	if n := fake.Refusals(); n != 0 {
+		t.Fatalf("Refusals() = %d before any request", n)
+	}
+	get(t, srvURL, "/venues")
+	if n := fake.Refusals(); n != 0 {
+		t.Errorf("Refusals() = %d after a request that was answered", n)
+	}
+	get(t, srvURL, "/teams")
+	get(t, srvURL, "/games?year=2026")
+	if n := fake.Refusals(); n != 2 {
+		t.Errorf("Refusals() = %d, want 2", n)
+	}
 }
 
 // The convergence tests turn entirely on this: the same request has to answer

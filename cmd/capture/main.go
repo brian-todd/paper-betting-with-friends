@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -138,11 +139,18 @@ func capture(client *http.Client, provider, host, apiKey, out, instant, raw stri
 		return fmt.Errorf("writing %s: %w", file, err)
 	}
 
-	// An empty array is the shape that reads as success and is not, so it is
-	// worth a warning at the moment of capture rather than a puzzle later.
-	if trimmed := strings.TrimSpace(string(body)); trimmed == "[]" {
-		slog.Warn("captured an empty array; a sync over this will do nothing and report success",
-			"path", raw, "file", file)
+	// Two shapes worth noticing now rather than as a puzzle later. An empty
+	// array reads as success and is not. A 200 that is not JSON at all is an
+	// upstream error page or a captcha, and committing one would fail at the
+	// far end of a decode with nothing pointing back here.
+	if resp.StatusCode == http.StatusOK {
+		if trimmed := strings.TrimSpace(string(body)); trimmed == "[]" {
+			slog.Warn("captured an empty array; a sync over this will do nothing and report success",
+				"path", raw, "file", file)
+		} else if !json.Valid(body) {
+			slog.Warn("captured a 200 whose body is not JSON; this is probably an error page",
+				"path", raw, "file", file)
+		}
 	}
 
 	slog.Info("captured", "path", raw, "status", resp.StatusCode, "bytes", len(body), "file", file)

@@ -117,12 +117,29 @@ func FromDir(dir string) Set {
 }
 
 // Dir is the directory a request resolves to, relative to the tree root.
+//
+// The result is checked against fs.ValidPath rather than trusted. io/fs would
+// reject a climbing path anyway, so this is not the only thing standing
+// between a request path and the filesystem -- but "some other layer rejects
+// it" is a property that holds until someone swaps the layer, and the fixture
+// server hands it a path straight off the wire.
 func Dir(provider, requestPath, rawQuery string) (string, error) {
 	slug, err := QuerySlug(rawQuery)
 	if err != nil {
 		return "", err
 	}
-	return path.Join(provider, strings.Trim(requestPath, "/"), slug), nil
+
+	dir := path.Join(provider, strings.Trim(requestPath, "/"), slug)
+
+	// Two separate escapes, and fs.ValidPath only catches the first. A path
+	// with enough ".." leaves the tree ("../etc/passwd"), which io/fs would
+	// reject anyway; one with exactly enough stays valid and merely leaves the
+	// *provider* directory, so "/.." resolves to "_" and a cfbd server would
+	// answer out of the cbbd tree. Require both.
+	if !fs.ValidPath(dir) || (dir != provider && !strings.HasPrefix(dir, provider+"/")) {
+		return "", fmt.Errorf("request path %q does not resolve inside %s/", requestPath, provider)
+	}
+	return dir, nil
 }
 
 // QuerySlug is the leaf directory name for a raw query string.

@@ -39,7 +39,7 @@ func main() {
 // still runs when the command fails.
 func run(cfg *config.Config, year, week int, seasonType string, useFixtures bool) error {
 	if useFixtures {
-		return runFixtures(cfg, year, week)
+		return runFixtures(cfg, year, week, seasonType)
 	}
 
 	if cfg.CFBDataAPIKey == "" {
@@ -91,7 +91,17 @@ func run(cfg *config.Config, year, week int, seasonType string, useFixtures bool
 // background service to start and no port to configure. Asking for a year or
 // week the fixtures do not cover is not silently empty -- the fixture server
 // answers with a 500 naming the directory to capture.
-func runFixtures(cfg *config.Config, year, week int) error {
+func runFixtures(cfg *config.Config, year, week int, seasonType string) error {
+	// The captures were taken without a seasonType, because `seed` sends none
+	// unless asked, and a query present in one and absent in the other slugs to
+	// two different directories. Accepting the flag and ignoring it would be
+	// the quiet kind of wrong this whole package exists to avoid.
+	if seasonType != "" {
+		return fmt.Errorf("-seasonType=%s cannot be combined with -fixtures: "+
+			"the captures were taken without one, and adding it would look for "+
+			"fixtures that were never recorded", seasonType)
+	}
+
 	// -year defaults to the current year, which is right for the live API and
 	// wrong here: the fixtures cover one captured season, so the default would
 	// start failing the January after they were taken. An explicit -year is

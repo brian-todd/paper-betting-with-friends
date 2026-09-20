@@ -53,6 +53,14 @@ type Server struct {
 	// requests records every path seen, so a test can assert on what the sync
 	// actually fetched -- including what it fetched and should not have.
 	requests []string
+	// refusals counts requests no fixture covered. A seed can assert this is
+	// zero, which is a check on the fixture set that does not depend on what
+	// was already in the database.
+	refusals int
+	// sequences memoises resolution. Without it every request re-reads every
+	// capture on the route, which for /teams is 1.5 MB a call and for a
+	// scoreboard replay is the same twenty-six bodies over and over.
+	sequences map[string][]fixtures.Capture
 }
 
 // Option configures a Server.
@@ -73,9 +81,10 @@ func WithFixtures(set fixtures.Set) Option {
 // New returns a handler replaying the given provider's captures.
 func New(provider string, opts ...Option) *Server {
 	s := &Server{
-		provider: provider,
-		set:      fixtures.Embedded(),
-		served:   make(map[string]int),
+		provider:  provider,
+		set:       fixtures.Embedded(),
+		served:    make(map[string]int),
+		sequences: make(map[string][]fixtures.Capture),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -119,6 +128,37 @@ func (s *Server) Requests() []string {
 	return append([]string(nil), s.requests...)
 }
 
+// Refusals reports how many requests found no fixture. Zero is the only
+// acceptable value after a seed: a sync that tolerates a failed fetch would
+// otherwise leave the gap invisible.
+func (s *Server) Refusals() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.refusals
+}
+
+// sequence resolves a request, memoising the result.
+func (s *Server) sequence(requestPath, rawQuery string) ([]fixtures.Capture, error) {
+	key := requestPath + "?" + rawQuery
+
+	s.mu.Lock()
+	cached, ok := s.sequences[key]
+	s.mu.Unlock()
+	if ok {
+		return cached, nil
+	}
+
+	captures, err := s.set.Sequence(s.provider, requestPath, rawQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	s.sequences[key] = captures
+	s.mu.Unlock()
+	return captures, nil
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route := r.URL.Path
 	if r.URL.RawQuery != "" {
@@ -129,7 +169,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.requests = append(s.requests, route)
 	s.mu.Unlock()
 
-	captures, err := s.set.Sequence(s.provider, r.URL.Path, r.URL.RawQuery)
+	captures, err := s.sequence(r.URL.Path, r.URL.RawQuery)
 	if err != nil {
 		s.refuse(w, route, err)
 		return
@@ -164,8 +204,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // naming the path, and deliberately not an empty array -- see the package
 // comment.
 func (s *Server) refuse(w http.ResponseWriter, route string, cause error) {
+	s.mu.Lock()
+	s.refusals++
+	s.mu.Unlock()
+
 	msg := fmt.Sprintf("no fixture for %s %s: %v\n\n"+
-		"Capture it with: scripts/capture.sh %s '%s'\n",
+		"Capture it with: scripts/capture.sh -provider %s '%s'\n",
 		s.provider, route, cause, s.provider, route)
 	http.Error(w, msg, http.StatusInternalServerError)
 }

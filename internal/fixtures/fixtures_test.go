@@ -169,3 +169,24 @@ func TestEmbeddedTreeIncludesTheEmptyQueryDirectory(t *testing.T) {
 		}
 	}
 }
+
+// The fixture server hands Dir a path straight off the wire, so a climbing
+// one has to be refused here rather than left to whatever reads the result.
+func TestDirRefusesAPathThatClimbsOutOfTheTree(t *testing.T) {
+	for _, requestPath := range []string{
+		"/../../../etc/passwd",
+		"/..",
+		"/teams/../../..",
+	} {
+		got, err := Dir(CFBD, requestPath, "")
+		if err == nil {
+			t.Errorf("Dir(%q) = %q, want a refusal", requestPath, got)
+		}
+	}
+
+	// A doubled separator is not a climb and must still resolve, since a
+	// client assembling a path from parts can produce one.
+	if _, err := Dir(CFBD, "//teams", ""); err != nil {
+		t.Errorf("Dir(%q): %v", "//teams", err)
+	}
+}
