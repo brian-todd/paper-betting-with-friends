@@ -1,6 +1,8 @@
 package fixtures
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -188,5 +190,40 @@ func TestDirRefusesAPathThatClimbsOutOfTheTree(t *testing.T) {
 	// client assembling a path from parts can produce one.
 	if _, err := Dir(CFBD, "//teams", ""); err != nil {
 		t.Errorf("Dir(%q): %v", "//teams", err)
+	}
+}
+
+// A .DS_Store in a fixture directory used to fail the entire endpoint, with
+// every capture on the route present and readable. Loud, but about nothing.
+func TestSequenceIgnoresHiddenFilesAndNotOtherRubbish(t *testing.T) {
+	dir := t.TempDir()
+	route := filepath.Join(dir, "cfbd", "venues", "_")
+	if err := os.MkdirAll(route, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(route, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("20260905T204909Z.json", `["real"]`)
+	write(".DS_Store", "\x00\x01")
+	write(".gitkeep", "")
+
+	set := FromDir(dir)
+	captures, err := set.Sequence(CFBD, "/venues", "")
+	if err != nil {
+		t.Fatalf("hidden files broke the route: %v", err)
+	}
+	if len(captures) != 1 {
+		t.Fatalf("got %d captures, want the one real one", len(captures))
+	}
+
+	// A visible file with a name nobody can read is still an error, because
+	// the alternative is a capture silently never served.
+	write("summary.tsv", "captured_at\tbytes\n")
+	if _, err := set.Sequence(CFBD, "/venues", ""); err == nil {
+		t.Error("a visible file with an unparseable name was ignored rather than reported")
 	}
 }

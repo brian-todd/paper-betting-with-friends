@@ -188,6 +188,15 @@ func (s Set) Sequence(provider, requestPath, rawQuery string) ([]Capture, error)
 		if entry.IsDir() {
 			continue
 		}
+		// Skip what the filesystem and the editor leave behind. A stray
+		// .DS_Store used to fail the whole endpoint, loudly and falsely, with
+		// every fixture on the route sitting there intact. Anything not
+		// hidden is still an error: a real file with an unreadable name is
+		// worth shouting about, because the alternative is a capture nobody
+		// notices was never being served.
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
 		capture, err := parseName(entry.Name())
 		if err != nil {
 			return nil, fmt.Errorf("%s/%s: %w", dir, entry.Name(), err)
@@ -204,7 +213,16 @@ func (s Set) Sequence(provider, requestPath, rawQuery string) ([]Capture, error)
 		return nil, fmt.Errorf("no fixture files in %s in %s", dir, s.name)
 	}
 
-	slices.SortFunc(captures, func(a, b Capture) int { return a.At.Compare(b.At) })
+	// Ordered by instant, with the path breaking a tie. SortFunc is not
+	// stable, and two captures can share an instant -- a `.502.json` beside a
+	// `.json`, or two appends inside the same second -- so without the
+	// tie-break which one a request gets would vary between runs.
+	slices.SortFunc(captures, func(a, b Capture) int {
+		if c := a.At.Compare(b.At); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Path, b.Path)
+	})
 	return captures, nil
 }
 

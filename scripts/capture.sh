@@ -19,6 +19,15 @@
 #   scripts/capture.sh /venues /teams       # specific cfbd paths
 #   scripts/capture.sh -provider cbbd '/games?season=2026'
 #
+# Re-capturing a route REPLACES what is there. That is the default because the
+# server replays a route oldest-first: a second capture of /venues appended
+# beside the first would leave the seed reading the stale one forever and never
+# reaching the fresh one -- a re-capture that appears to do nothing.
+#
+# A route holding several captures is a sequence on purpose (the scoreboard
+# series is twenty-six), so replacing one is refused before any request is
+# spent. Pass -append to extend it or -replace to discard it.
+#
 # This replaces scripts/capture-scoreboard.sh, whose question -- what the feed
 # looks like between games -- was answered, and whose answer is now the
 # scoreboard fixture series. Its summary.tsv columns were specific to that

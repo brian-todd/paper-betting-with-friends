@@ -375,8 +375,16 @@ type.
   The spread across `fbs`/`fcs`/`ii`/`iii` is what several past bugs needed to
   be visible, and `/venues` and `/teams` are unfiltered because `syncGames`
   skips a game whose team is missing, logs a warning and returns nil
-- **A fixture seed ends by counting what it wrote and failing on zero**, for
-  the same reason
+- **A fixture seed checks two things**, because neither covers the other: that
+  the fake upstream refused nothing (`Server.Refusals()`, which holds whatever
+  was already in the database), and that the tables are not empty (which
+  catches a capture that is present but hollow, and can only fail against a
+  fresh database)
+- **`make capture` replaces a route's capture; it refuses to replace a
+  sequence.** The server replays oldest-first, so appending a second capture of
+  a single-shot endpoint leaves the seed reading the stale one forever. A route
+  with several captures is a series on purpose — `-append` extends it,
+  `-replace` discards it, and the refusal happens before any metered request
 
 `internal/fixtureseed` is the shared path. `cmd/seed -fixtures` runs it against
 a connection; a test runs it against a `testdb` transaction to get rows the
@@ -567,5 +575,6 @@ embedded copy read the same directory.
 - Assuming a route is admin-only because it lives in `internal/admin` — it is only guarded if it was registered through `guard` in `RegisterRoutes`
 - `//go:embed testdata` without the `all:` prefix for fixtures — it silently drops the `_` directory, which is where the unfiltered endpoints live
 - Answering an unrouted fixture path with `[]` — it is indistinguishable from a successful sync with nothing to write
+- Appending a fresh capture beside an old one on a single-shot endpoint — the server replays oldest-first, so the new one is never reached
 - Filtering a capture by division — the spread is the property that makes the fixture worth having
 - A base-URL environment variable — `NewClientAt` is the seam, and it is reachable only from code that means to call it
