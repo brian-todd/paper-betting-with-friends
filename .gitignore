@@ -19,6 +19,10 @@ tmp/
 dist/
 build/
 
+# `make build` output. The comment below has said "make build writes to bin/"
+# since the root-level binaries were ignored, without this line to go with it.
+/bin/
+
 # Stray `go build ./cmd/x` output in the repository root. `make build` writes
 # to bin/, so anything here is an accident -- and a 34 MB binary is one that
 # has already had to be filtered back out of a branch once.

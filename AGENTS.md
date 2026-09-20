@@ -454,8 +454,12 @@ The `Insert*` defaults are somebody's belief about the feed; `InsertTeam`
 hard-codes `"fbs"` in lower case and only a comment said that was right.
 
 Seeded tests stay few and shared: a week is thousands of rows written and
-rolled back, about 1.3s. They also couple to the fixture set, so a recapture
-moves a test that turns on "the third FCS game of week 2".
+rolled back, about 1.3s — nearer 8s under `-race`, and a whole basketball season
+is 92s. `make test` is unaffected at 3.8s because these skip without a database;
+`make test-db` and CI are 1m41s, most of it the basketball season, which is also
+the only thing exercising `seedcbb -fixtures` end to end. They also couple to
+the fixture set, so a recapture moves a test that turns on "the third FCS game
+of week 2".
 
 Run them with `make test-db`, which starts the compose database and creates
 `betting_tracker_test` beside the development one. Without `TEST_DATABASE_URL`
