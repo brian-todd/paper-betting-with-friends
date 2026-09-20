@@ -9,11 +9,16 @@ import (
 
 // Team represents a college sports team.
 type Team struct {
-	ID             uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	ExternalID     *int64    `gorm:"uniqueIndex:idx_teams_external_id_sport"`
-	Sport          string    `gorm:"type:varchar(20);not null;default:'football';uniqueIndex:idx_teams_external_id_sport"`
-	Name           string    `gorm:"type:varchar(255);not null"`
-	Abbreviation   string    `gorm:"type:varchar(10);not null;uniqueIndex:idx_teams_abbreviation_sport"`
+	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	ExternalID *int64    `gorm:"uniqueIndex:idx_teams_external_id_sport"`
+	Sport      string    `gorm:"type:varchar(20);not null;default:'football';uniqueIndex:idx_teams_external_id_sport"`
+	Name       string    `gorm:"type:varchar(255);not null"`
+	// Abbreviation is a display string and not a key. It carried a unique index
+	// until migration 000023, which cost 107 of the 1,519 basketball teams CFBD
+	// lists: their truncated abbreviations collide, Upsert arbitrates on
+	// (external_id, sport) and so could not absorb it, and the sync logged the
+	// violation and moved on.
+	Abbreviation   string    `gorm:"type:varchar(10);not null;index:idx_teams_abbreviation_sport"`
 	Mascot         *string   `gorm:"type:varchar(100)"`
 	Conference     string    `gorm:"type:varchar(100);not null"`
 	Classification *string   `gorm:"type:varchar(20)"` // e.g., fbs, fcs.

@@ -105,7 +105,7 @@ func (f *feed) games(week int) {
 // not against the seventeen before it is not holding.
 func (f *feed) scoreboard(n int) {
 	f.t.Helper()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if err := f.sync.SyncScoreboard(context.Background(), []string{"fbs"}); err != nil {
 			f.t.Fatalf("syncing /scoreboard snapshot %d: %v", i+1, err)
 		}

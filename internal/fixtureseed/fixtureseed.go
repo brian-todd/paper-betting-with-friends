@@ -12,18 +12,23 @@
 //     shapes them -- nulls where it sends nulls, a classification in the case
 //     it uses -- rather than the way whoever wrote InsertGame imagined.
 //
-// # Football seeds into a transaction; basketball does not
+// # Both sports seed into a transaction, since migration 000023
 //
-// Football is safe to run against a `testdb` transaction. Basketball is not,
-// and the reason is not the fixtures: `cbbdata.syncTeams` meets a duplicate
-// team abbreviation in the real feed, logs it and continues. On a connection
-// each statement autocommits, so one bad row is skipped and the season lands.
-// Inside a transaction the first error poisons every statement after it, and
-// the seed collapses into a cascade of "current transaction is aborted".
+// Basketball did not, and the reason was not the fixtures. `cbbdata.syncTeams`
+// truncates the feed's abbreviation to ten characters, 79 of the 1,519
+// basketball abbreviations then collide, and the teams table carried a unique
+// index on (abbreviation, sport) that Upsert does not arbitrate on -- so each
+// collision was a unique violation the sync logged and continued past. On a
+// connection each statement autocommits, so 107 teams were silently dropped and
+// the season landed anyway. Inside a transaction the first violation poisons
+// every statement after it and the seed collapsed into a cascade of "current
+// transaction is aborted".
 //
-// So Basketball is for `seedcbb -fixtures` against a connection. A test
-// wanting basketball rows needs that constraint lifted first, which means
-// savepoints around the writes the sync deliberately tolerates.
+// Dropping the unique index fixed both halves: no violation to poison the
+// transaction, and the 107 teams -- plus the 49 games that had been skipped as
+// "team not found" -- are written. A basketball seed is the most expensive test
+// in the suite at roughly 24 seconds for a whole season, so it wants to stay one
+// test rather than one per assertion.
 //
 // # Two checks, because neither covers the other
 //
