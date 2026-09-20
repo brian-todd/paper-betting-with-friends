@@ -50,6 +50,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -58,6 +59,7 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/fixtures"
 	"github.com/brian/paper-betting-with-friends/internal/fixtureserver"
 	"github.com/brian/paper-betting-with-friends/internal/models"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 )
 
 // DefaultYear and DefaultWeek are what the committed football fixtures cover.
@@ -75,9 +77,38 @@ type Count struct {
 	Rows  int64
 }
 
+// An Option adjusts a seed. There is one, and it exists because a fixture
+// replayed against a real clock is only half a recording: the bodies are what
+// the feed sent, but the status every unplayed game is filed under, and the
+// instant every score is stamped with, come from whenever the seed happened to
+// run. `seed -fixtures` wants that -- a developer's database should look like
+// today -- and a test asserting on either wants to say which day it is.
+type Option func(*options)
+
+type options struct {
+	now func() time.Time
+}
+
+// At replays a seed as though it were running at a chosen instant.
+//
+// The instants to choose from are in the fixture file names, which is the whole
+// reason they are the file names: fixtures.Set.Sequence reports the capture
+// instant of every response a route will serve.
+func At(now time.Time) Option {
+	return func(o *options) { o.now = timeutil.Fixed(now) }
+}
+
+func resolve(opts []Option) options {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
 // Football seeds venues, teams, the calendar, and one week of games, rankings
 // and lines, from the embedded fixtures.
-func Football(ctx context.Context, db *gorm.DB, year, week int) ([]Count, error) {
+func Football(ctx context.Context, db *gorm.DB, year, week int, opts ...Option) ([]Count, error) {
 	if err := requireSchema(db); err != nil {
 		return nil, err
 	}
@@ -92,6 +123,7 @@ func Football(ctx context.Context, db *gorm.DB, year, week int) ([]Count, error)
 	// that cannot reach the network is the entire point.
 	client := cfbdata.NewClientAt(base, "")
 	sync := cfbdata.NewSyncService(client, db)
+	sync.SetClock(resolve(opts).now)
 
 	if err := sync.SeedAll(ctx, year, &week, nil); err != nil {
 		return nil, fmt.Errorf("seeding football from fixtures: %w", err)
@@ -110,7 +142,7 @@ func Football(ctx context.Context, db *gorm.DB, year, week int) ([]Count, error)
 }
 
 // Basketball seeds venues, teams, games and lines for a season.
-func Basketball(ctx context.Context, db *gorm.DB, season int) ([]Count, error) {
+func Basketball(ctx context.Context, db *gorm.DB, season int, opts ...Option) ([]Count, error) {
 	if err := requireSchema(db); err != nil {
 		return nil, err
 	}
@@ -123,6 +155,7 @@ func Basketball(ctx context.Context, db *gorm.DB, season int) ([]Count, error) {
 
 	client := cbbdata.NewClientAt(base, "")
 	sync := cbbdata.NewSyncService(client, db)
+	sync.SetClock(resolve(opts).now)
 
 	if err := sync.SeedAll(ctx, season); err != nil {
 		return nil, fmt.Errorf("seeding basketball from fixtures: %w", err)

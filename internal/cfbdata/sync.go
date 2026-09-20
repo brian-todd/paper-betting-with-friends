@@ -446,10 +446,38 @@ func (s *SyncService) SyncGames(ctx context.Context, year int, week *int, season
 		}
 
 		// Determine game status.
+		//
+		// This endpoint reports no status, only `completed` and a start time, so
+		// for every division the scoreboard does not poll and every week outside
+		// the current one this inference is the only status there is. It decides
+		// whether a game can be bet on, whether a placed bet can be edited, and
+		// whether it can be cancelled for a refund.
+		//
+		// Which is why it may only be drawn from a start time the feed actually
+		// means, and there are two it does not. A startTimeTBD game carries a
+		// placeholder -- midnight of the day the feed expects it on -- so once
+		// that midnight passes, inferring from it puts a game nobody has
+		// scheduled into "in progress" for the rest of the day. A missing or
+		// null startDate unmarshals to year 1 with the flag left false, so the
+		// flag does not catch it, and year 1 is a kickoff long past. Neither is
+		// recoverable by the next run: advancesFrom has no edge back from
+		// in_progress to scheduled, so the scoreboard cannot correct it either.
+		//
+		// applyScoreboardGame refuses to store either instant for the same two
+		// reasons. This does store them -- scheduled_at is NOT NULL and on the
+		// first insert there is nothing better to write -- but it no longer
+		// pretends to know what they mean. A startTimeTBD game therefore still
+		// has a placeholder kickoff, and the betting cutoff still reads it;
+		// closing that needs a column recording that the time is a placeholder,
+		// which is a migration and a product decision about whether such a game
+		// takes bets at all.
 		status := models.GameStatusScheduled
-		if g.Completed {
+		switch {
+		case g.Completed:
 			status = models.GameStatusFinal
-		} else if s.clock.Now().After(g.StartDate.Add(5 * time.Minute)) {
+		case g.StartTimeTBD || g.StartDate.IsZero():
+			// Not started, as far as anything here can honestly say.
+		case s.clock.Now().After(g.StartDate.Add(5 * time.Minute)):
 			status = models.GameStatusInProgress
 		}
 
