@@ -490,12 +490,28 @@ The `Insert*` defaults are somebody's belief about the feed; `InsertTeam`
 hard-codes `"fbs"` in lower case and only a comment said that was right.
 
 Seeded tests stay few and shared: a week is thousands of rows written and
-rolled back, about 1.3s — nearer 8s under `-race`, and a whole basketball season
-is ~65s under `-race`. `make test` is unaffected at 3.8s because these skip
-without a database; `make test-db` and CI are ~1m8s, most of it that basketball
-season, which is also the only thing exercising `seedcbb -fixtures` end to end. They also couple to
-the fixture set, so a recapture moves a test that turns on "the third FCS game
-of week 2".
+rolled back, about 1.3s — nearer 8s under `-race`. `make test` is unaffected at
+3–4s because these skip without a database.
+
+`make test-db` and CI are a few seconds under two minutes, and **almost all of
+that is one test.** The basketball season seed is ~100s under `-race` against a
+loaded database and is the critical path; every other package finishes inside
+its shadow, so the suite's wall clock is `cbbdata` plus a little. Levels 3 and 4
+added two football seeds and forty page renders and moved the total by nothing
+measurable. Two consequences worth knowing:
+
+- **Per-package times are not a budget.** They swing three-fold between runs —
+  `cmd/server` was 7s, 72s, 55s and 19s across four runs of the same commit —
+  because twenty packages share one PostgreSQL. Compare wall clock across runs,
+  not one package's number against another's.
+- **The next seeded test is close to free, until basketball stops being the
+  longest pole.** Then everything changes at once. The lever at that point is
+  to run the seeded tests as their own job, not to make them prove less: the
+  basketball test is also the only thing exercising `seedcbb -fixtures` end to
+  end.
+
+They also couple to the fixture set, so a recapture moves a test that turns on
+"the third FCS game of week 2".
 
 Run them with `make test-db`, which starts the compose database and creates
 `betting_tracker_test` beside the development one. Without `TEST_DATABASE_URL`
