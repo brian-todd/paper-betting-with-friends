@@ -1,0 +1,163 @@
+package main
+
+import (
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/brian/paper-betting-with-friends/internal/admin"
+	"github.com/brian/paper-betting-with-friends/internal/auth"
+	"github.com/brian/paper-betting-with-friends/internal/basketball"
+	"github.com/brian/paper-betting-with-friends/internal/bets"
+	"github.com/brian/paper-betting-with-friends/internal/config"
+	"github.com/brian/paper-betting-with-friends/internal/games"
+	"github.com/brian/paper-betting-with-friends/internal/leagues"
+	"github.com/brian/paper-betting-with-friends/internal/scheduler"
+	"github.com/brian/paper-betting-with-friends/internal/templates"
+	"gorm.io/gorm"
+)
+
+// application is everything buildHandler constructs: the HTTP handler the
+// server serves, and the pieces main still has to reach afterwards.
+//
+// It exists because the middle of main is the only place the real wiring lives
+// -- which services a handler was given, which middleware wraps which routes,
+// and in what order -- and a test that builds its own is testing its own
+// opinion of that wiring rather than the one that ships. A level-4 test takes
+// Handler and drives it over httptest; main takes the rest.
+type application struct {
+	// Handler is the fully wrapped router: every route registered, the whole
+	// middleware stack applied, outermost first.
+	Handler http.Handler
+
+	// Renderer is returned because main installs the footer's globals on it
+	// after the scheduler exists, which is after this function has run.
+	Renderer *templates.Renderer
+
+	Auth       *auth.Service
+	Leagues    *leagues.Service
+	Games      *games.Service
+	Bets       *bets.Service
+	Basketball *basketball.Service
+	Admin      *admin.Service
+}
+
+// buildHandler constructs the services, handlers, routes and middleware stack.
+//
+// assetFS is passed in rather than derived from cfg because the choice between
+// the embedded copy and the working directory is main's: os.DirFS(".") is
+// relative to the process's working directory, which is the repository root for
+// the server and the package directory for a test.
+//
+// logger is passed in rather than taken from slog.Default because the two
+// middlewares that use it are the only things in the process that log from
+// outside a service, and main is where logging.Setup decided what a log line
+// looks like.
+//
+// sched is passed in rather than created here because main owns its lifetime --
+// it starts it, waits for it on shutdown, and registers the sync jobs on it once
+// it knows whether there is an API key to sync with. The admin service holds it
+// so the portal's "run now" drives the same job the timer does.
+func buildHandler(
+	cfg *config.Config,
+	db *gorm.DB,
+	location *time.Location,
+	assetFS fs.FS,
+	sched *scheduler.Scheduler,
+	logger *slog.Logger,
+) (*application, error) {
+	renderer, err := templates.NewRenderer(assetFS, cfg.IsDevelopment(), location)
+	if err != nil {
+		return nil, fmt.Errorf("initialize templates: %w", err)
+	}
+
+	app := &application{
+		Renderer:   renderer,
+		Auth:       auth.NewService(db, cfg),
+		Leagues:    leagues.NewService(db),
+		Games:      games.NewService(db, location),
+		Bets:       bets.NewService(db),
+		Basketball: basketball.NewService(db, location),
+	}
+	app.Admin = admin.NewService(db, cfg, sched, app.Bets, app.Games)
+
+	// Initialize handlers.
+	authHandler := auth.NewHandler(app.Auth, renderer)
+	leaguesHandler := leagues.NewHandler(app.Leagues, renderer)
+	gamesHandler := games.NewHandler(app.Games, renderer, db)
+	betsHandler := bets.NewHandler(app.Bets, renderer, db)
+	// The bet slip asks the bets service which weeks already have a Holy Lock.
+	gamesHandler.SetHolyLockReader(app.Bets)
+	// The grid and detail page ask the bets service what the viewer has already
+	// bet on each game.
+	gamesHandler.SetUserBetReader(app.Bets)
+	basketballHandler := basketball.NewHandler(app.Basketball, renderer)
+	adminHandler := admin.NewHandler(app.Admin, renderer)
+
+	// Set up router.
+	mux := http.NewServeMux()
+
+	// Serve static files from the same source as the templates.
+	staticFS, err := fs.Sub(assetFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("open static assets: %w", err)
+	}
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
+
+	// Register auth routes.
+	authHandler.RegisterRoutes(mux)
+
+	// Register admin routes (each one additionally requires the admin flag).
+	adminHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+
+	// Register leagues routes (requires authentication).
+	leaguesHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+
+	// Register games routes (requires authentication).
+	gamesHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+
+	// Register bets routes (requires authentication).
+	betsHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+
+	// Register basketball routes (requires authentication).
+	basketballHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+
+	// Home page.
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
+		user := auth.UserFromContext(r.Context())
+		data := map[string]any{
+			"Title": "Home",
+			"User":  user,
+		}
+
+		if err := renderer.Render(w, "home", data); err != nil {
+			slog.Error("template render failed", "template", "home", "error", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		}
+	})
+
+	// Health check endpoint.
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// Apply middleware stack. Order matters: the logger is outermost so it
+	// still records the 500 that recoverPanics synthesises, and both sit outside
+	// OptionalAuth so a panic in session handling is caught too.
+	app.Handler = applyMiddleware(mux,
+		requestLogger(logger),
+		recoverPanics(logger),
+		securityHeaders(cfg.IsProduction()),
+		auth.OptionalAuth(app.Auth),
+	)
+
+	return app, nil
+}
