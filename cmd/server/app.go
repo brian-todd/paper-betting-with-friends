@@ -36,8 +36,11 @@ type application struct {
 	// after the scheduler exists, which is after this function has run.
 	Renderer *templates.Renderer
 
-	Auth       *auth.Service
-	Leagues    *leagues.Service
+	// The services something outside buildHandler still reaches: main registers
+	// a job on Bets and provisions an account through Admin, and SetClock needs
+	// the four that read a clock. Auth and Leagues are not here because nothing
+	// asks for them -- a level-3 test builds its own from the same *gorm.DB,
+	// and a level-4 test is supposed to reach auth only through /register.
 	Games      *games.Service
 	Bets       *bets.Service
 	Basketball *basketball.Service
@@ -94,10 +97,11 @@ func buildHandler(
 		return nil, fmt.Errorf("initialize templates: %w", err)
 	}
 
+	authService := auth.NewService(db, cfg)
+	leaguesService := leagues.NewService(db)
+
 	app := &application{
 		Renderer:   renderer,
-		Auth:       auth.NewService(db, cfg),
-		Leagues:    leagues.NewService(db),
 		Games:      games.NewService(db, location),
 		Bets:       bets.NewService(db),
 		Basketball: basketball.NewService(db, location),
@@ -105,8 +109,8 @@ func buildHandler(
 	app.Admin = admin.NewService(db, cfg, sched, app.Bets, app.Games)
 
 	// Initialize handlers.
-	authHandler := auth.NewHandler(app.Auth, renderer)
-	leaguesHandler := leagues.NewHandler(app.Leagues, renderer)
+	authHandler := auth.NewHandler(authService, renderer)
+	leaguesHandler := leagues.NewHandler(leaguesService, renderer)
 	gamesHandler := games.NewHandler(app.Games, renderer, db)
 	betsHandler := bets.NewHandler(app.Bets, renderer, db)
 	// The bet slip asks the bets service which weeks already have a Holy Lock.
@@ -131,19 +135,19 @@ func buildHandler(
 	authHandler.RegisterRoutes(mux)
 
 	// Register admin routes (each one additionally requires the admin flag).
-	adminHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+	adminHandler.RegisterRoutes(mux, auth.RequireAuth(authService))
 
 	// Register leagues routes (requires authentication).
-	leaguesHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+	leaguesHandler.RegisterRoutes(mux, auth.RequireAuth(authService))
 
 	// Register games routes (requires authentication).
-	gamesHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+	gamesHandler.RegisterRoutes(mux, auth.RequireAuth(authService))
 
 	// Register bets routes (requires authentication).
-	betsHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+	betsHandler.RegisterRoutes(mux, auth.RequireAuth(authService))
 
 	// Register basketball routes (requires authentication).
-	basketballHandler.RegisterRoutes(mux, auth.RequireAuth(app.Auth))
+	basketballHandler.RegisterRoutes(mux, auth.RequireAuth(authService))
 
 	// Home page.
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
@@ -177,7 +181,7 @@ func buildHandler(
 		requestLogger(logger),
 		recoverPanics(logger),
 		securityHeaders(cfg.IsProduction()),
-		auth.OptionalAuth(app.Auth),
+		auth.OptionalAuth(authService),
 	)
 
 	return app, nil

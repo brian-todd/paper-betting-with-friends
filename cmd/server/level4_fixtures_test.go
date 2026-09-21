@@ -61,6 +61,13 @@ func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 	// main registers the sync jobs, and this process has no API key and wants
 	// no metered request; the admin service holds the scheduler only to report
 	// on it.
+	//
+	// pagetest's config says development, which is load-bearing for the session
+	// cookie -- production marks it Secure and Go's jar then refuses to send it
+	// over plain HTTP. The cost is that buildHandler's renderer runs in dev mode
+	// and re-parses every template on every render. That is the real behaviour
+	// for that config and is left alone rather than worked around; it is a
+	// second or two across this whole test.
 	app, err := buildHandler(env.Config, env.DB, env.Location, pagetest.Assets, scheduler.New(logger), logger)
 	if err != nil {
 		t.Fatalf("building the application: %v", err)
