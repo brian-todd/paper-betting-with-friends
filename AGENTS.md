@@ -500,11 +500,23 @@ recreated before each one — and the sign of a main-versus-branch difference
 flipped between adjacent pairs. Per-package times are worse: `cmd/server`
 measured 7s, 19s, 34s, 55s and 72s across five runs of one commit.
 
-The cause is contention, not CPU. Load average during a run is ~2.5 on twenty
-cores; the suite is bound on the single PostgreSQL container that twenty test
-binaries hammer in parallel, and how that resolves is chaotic. To find out
-whether a change costs time, read CI — its database is a fresh service container
-and its machine is doing nothing else.
+**The variance is thermal.** Sampled during a run, package temperature reaches
+100°C — Tj,max — four times over seventy seconds, and peak clock sags from
+4278 MHz to 3032 MHz, recovering to 4700 MHz within seconds of the test binaries
+exiting. Sustained load heat-soaks the chassis, so each run in a series starts
+hotter and throttles sooner than the last, which produces a clean ascending
+sequence that reads exactly like a regression somebody just introduced. A pause
+resets it.
+
+Two different things, worth keeping apart. *Contention* sets the level: load
+average is only ~2.5 on twenty cores, because the suite is bound on the one
+PostgreSQL container that twenty test binaries hammer in parallel rather than on
+cores. *Throttling* sets the trend between runs. Neither is a property of the
+code.
+
+To find out whether a change costs time, read CI — its database is a fresh
+service container and its machine is doing nothing else. If you must compare
+locally, let the machine idle between runs and still expect ±30%.
 
 What is structurally true and needs no measuring: the basketball season seed is
 the longest pole by a wide margin and everything else finishes inside its

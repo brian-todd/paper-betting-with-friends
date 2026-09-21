@@ -71,8 +71,9 @@ test-db: test-db-reset
 # held 0 live rows, 4,784 dead ones and 5.9 MB. Autovacuum reclaims it within a
 # few minutes of the run ending, so this is not a leak that grows without bound,
 # and it is **not** the explanation for the suite's wall clock wandering
-# between 62s and 120s across runs of identical code. That was looked into and
-# the bloat does not survive between runs; see the spec.
+# between 62s and 120s across runs of identical code. That was chased and turned
+# out to be thermal throttling -- 100C and a 29% clock loss during a run, heat
+# soaking across a series. See the spec.
 #
 # What the reset is actually for is that a run should start from the state CI
 # starts from. CI gets a fresh service container every job; a laptop got
