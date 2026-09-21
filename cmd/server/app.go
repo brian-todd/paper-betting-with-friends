@@ -44,6 +44,27 @@ type application struct {
 	Admin      *admin.Service
 }
 
+// SetClock points everything in the process that reads "now" at one time source.
+//
+// Five things do: four services and the renderer, whose footer resolves the
+// copyright year on its own. A page rendered against replayed fixtures has to
+// get the same answer from all of them -- the sync page reports the
+// scoreboard's state beside the current week, and the games grid and the bet
+// slip disagree about whether a kickoff has passed if only one of them has been
+// moved. Giving them separate instants is the failure this exists to make
+// impossible to write by accident.
+//
+// Only a test calls this; in the server every one of these clocks is time.Now.
+// It is not concurrency-safe and is not meant to be -- call it between
+// buildHandler and the first request, the same contract SetBetEvaluator has.
+func (a *application) SetClock(now func() time.Time) {
+	a.Games.SetClock(now)
+	a.Bets.SetClock(now)
+	a.Basketball.SetClock(now)
+	a.Admin.SetClock(now)
+	a.Renderer.SetClock(now)
+}
+
 // buildHandler constructs the services, handlers, routes and middleware stack.
 //
 // assetFS is passed in rather than derived from cfg because the choice between
