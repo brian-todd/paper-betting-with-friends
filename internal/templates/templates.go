@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 	"github.com/google/uuid"
 )
 
@@ -59,6 +60,10 @@ type Renderer struct {
 	devMode  bool
 	location *time.Location
 
+	// clock is what currentYear reads. The zero value is time.Now, so only a
+	// page test replaying a recording sets it -- see SetClock.
+	clock timeutil.Clock
+
 	assetVersions sync.Map // URL path -> version string
 
 	// globalsMu guards globals. It is deliberately not mu: Render already holds
@@ -66,6 +71,20 @@ type Renderer struct {
 	// RWMutex twice deadlocks if a writer queues between the two.
 	globalsMu sync.RWMutex
 	globals   func() map[string]any
+}
+
+// SetClock overrides the time source the footer's copyright year comes from.
+//
+// It is the one thing a template resolves from "now" on its own, and a page
+// rendered against a replayed recording should date itself from that recording
+// rather than from the day the test runs. Set it to the same instant the
+// services got.
+//
+// The closure in loadTemplates reads this field on every render, so this works
+// after NewRenderer has already parsed everything. Call it before serving, the
+// same contract SetGlobals has.
+func (r *Renderer) SetClock(now func() time.Time) {
+	r.clock.Set(now)
 }
 
 // SetGlobals registers a function supplying values merged into the data of
@@ -157,7 +176,7 @@ func (r *Renderer) loadTemplates() error {
 	// Template functions available in all templates.
 	funcMap := template.FuncMap{
 		"currentYear": func() int {
-			return time.Now().In(r.location).Year()
+			return r.clock.Now().In(r.location).Year()
 		},
 		// localTime renders an instant as a <time> element carrying both a
 		// machine-readable UTC value and the format name, so

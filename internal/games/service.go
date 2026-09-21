@@ -181,6 +181,10 @@ func (s *Service) SetClock(now func() time.Time) {
 // Location is the timezone the service resolves calendar-day filters in.
 func (s *Service) Location() *time.Location { return s.location }
 
+// Now is the service's own clock, for a handler that has to label a page with
+// the moment it is describing rather than the moment it is being rendered.
+func (s *Service) Now() time.Time { return s.clock.Now() }
+
 // GetWeekWithGames retrieves one page of a week's games, narrowed by filter.
 //
 // page is 1-based and clamped into range, so a stale bookmark past the end of a

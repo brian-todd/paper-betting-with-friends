@@ -281,7 +281,7 @@ func renderGamesGrid(t *testing.T, games []GameWithOdds) string {
 		"GameTypeOptions":     GameTypeOptions(),
 		"WeekdayOptions":      WeekdayOptions(),
 		"HourOptions":         HourOptions(),
-		"Zone":                ZoneAbbreviation(time.UTC),
+		"Zone":                ZoneAbbreviation(time.UTC, time.Now()),
 		"Page":                Page{Number: 1, Size: PageSize, Total: len(games), Pages: 1, First: 1, Last: len(games)},
 		"TotalInWeek":         len(games),
 		"PrevURL":             "/games/2026/regular/1",
