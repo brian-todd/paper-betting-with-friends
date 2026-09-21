@@ -1,4 +1,4 @@
-.PHONY: help dev build run test test-db test-db-create clean migrate-up migrate-down migrate-create docker-up docker-down docker-logs seed seedcbb seed-fixtures seedcbb-fixtures capture seed-test-data sync-calendar tools vendor-htmx fmt fmt-check fix-check vet vulncheck
+.PHONY: help dev build run test test-db test-db-reset clean migrate-up migrate-down migrate-create docker-up docker-down docker-logs seed seedcbb seed-fixtures seedcbb-fixtures capture seed-test-data sync-calendar tools vendor-htmx fmt fmt-check fix-check vet vulncheck
 
 # The database `make test-db` creates and points the suite at. Overridable so a
 # developer already running PostgreSQL elsewhere can use it instead.
@@ -59,14 +59,39 @@ test:
 # The database is a separate one from development's rather than the same server
 # with care taken. Tests roll their writes back, but reading real seeded seasons
 # is enough to make a test pass or fail on data it did not write.
-test-db: test-db-create
+test-db: test-db-reset
 	TEST_DATABASE_URL=$(TEST_DATABASE_URL) go test -race -cover ./...
 
-test-db-create:
+# Recreate the test database, every run -- not "create it if absent", which is
+# what this used to do.
+#
+# Every test rolls its transaction back, but a rolled-back transaction has
+# already written its heap tuples: rollback only marks them invisible. Measured
+# immediately after a run, every seeded table is entirely garbage -- `games`
+# held 0 live rows, 4,784 dead ones and 5.9 MB. Autovacuum reclaims it within a
+# few minutes of the run ending, so this is not a leak that grows without bound,
+# and it is **not** the explanation for the suite's wall clock wandering
+# between 62s and 120s across runs of identical code. That was chased and turned
+# out to be thermal throttling -- 100C and a 29% clock loss during a run, heat
+# soaking across a series. See the spec.
+#
+# What the reset is actually for is that a run should start from the state CI
+# starts from. CI gets a fresh service container every job; a laptop got
+# whatever the last twenty runs left, which is a difference nobody can see and
+# everybody has to reason around. testdb.Open already refuses a database that
+# is not empty -- this is the cheapest way to keep that true rather than hope.
+#
+# WITH (FORCE) because a psql session left open on the test database would
+# otherwise fail the drop, and nothing here is worth keeping.
+test-db-reset:
 	docker compose up -d --wait db
-	@docker compose exec -T db psql -U postgres -tc \
-		"SELECT 1 FROM pg_database WHERE datname = '$(TEST_DB_NAME)'" | grep -q 1 || \
-		docker compose exec -T db psql -U postgres -c "CREATE DATABASE $(TEST_DB_NAME)"
+	@case '$(TEST_DB_NAME)' in \
+		*_test) ;; \
+		*) echo "refusing to drop '$(TEST_DB_NAME)': TEST_DB_NAME must end in _test" >&2; exit 1 ;; \
+	esac
+	@docker compose exec -T db psql -U postgres -q -c \
+		"DROP DATABASE IF EXISTS $(TEST_DB_NAME) WITH (FORCE)"
+	@docker compose exec -T db psql -U postgres -q -c "CREATE DATABASE $(TEST_DB_NAME)"
 
 # Clean build artifacts
 clean:

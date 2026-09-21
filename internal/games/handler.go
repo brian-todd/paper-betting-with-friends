@@ -204,7 +204,7 @@ func (h *Handler) ShowWeekGames(w http.ResponseWriter, r *http.Request) {
 		"GameTypeOptions":     GameTypeOptions(),
 		"WeekdayOptions":      WeekdayOptions(),
 		"HourOptions":         HourOptions(),
-		"Zone":                ZoneAbbreviation(h.service.Location()),
+		"Zone":                ZoneAbbreviation(h.service.Location(), h.service.Now()),
 
 		"Page":        weekData.Page,
 		"TotalInWeek": weekData.TotalInWeek,

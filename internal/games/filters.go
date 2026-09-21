@@ -396,11 +396,18 @@ func hourLabel(hour int) string {
 
 // ZoneAbbreviation names the timezone the kickoff window is expressed in, so
 // the label can say which clock it means.
-func ZoneAbbreviation(location *time.Location) string {
+//
+// It takes the instant rather than reading the wall clock because a zone's
+// abbreviation is a function of the date: America/New_York is EDT in September
+// and EST in January. A page rendered against a replayed recording would
+// otherwise label that recording's kickoff window with today's DST state, which
+// is wrong for half the year and silently right for the other half -- so a test
+// written in October would pass until March.
+func ZoneAbbreviation(location *time.Location, at time.Time) string {
 	if location == nil {
 		return "UTC"
 	}
-	return time.Now().In(location).Format("MST")
+	return at.In(location).Format("MST")
 }
 
 // TierOptions exposes the division list to the template.
