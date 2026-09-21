@@ -21,6 +21,16 @@
   requests; this is what a fresh clone runs. See Fixtures
 - `make capture` — re-record those fixtures. Spends metered requests, so
   nothing else in the repository calls it
+
+**`config.Load` calls `godotenv.Load`, so `.env` wins over the process
+environment.** `env -u CFB_DATA_API_KEY ./server` does *not* give you a keyless
+server: the file is read after, the key comes back, every `RunOnStart` job fires,
+and booting for ten seconds to check the process comes up costs a dozen or more
+metered requests against a database with no teams to resolve them to. Move `.env`
+aside, or point `DATABASE_URL` at a scratch database and accept the spend
+knowingly. The fixture paths are keyless for a different and stronger reason —
+`fixtureseed` constructs `NewClientAt(base, "")` and points it at a local socket,
+so no environment can reach an upstream from there.
 - `make vendor-htmx` — re-download the vendored htmx build and verify its checksum
 
 ## Architecture
