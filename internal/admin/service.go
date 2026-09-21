@@ -3,6 +3,7 @@ package admin
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/bets"
 	"github.com/brian/paper-betting-with-friends/internal/config"
@@ -10,6 +11,7 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/brian/paper-betting-with-friends/internal/scheduler"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"golang.org/x/crypto/bcrypt"
@@ -58,6 +60,26 @@ type Service struct {
 	sched *scheduler.Scheduler
 	bets  *bets.Service
 	games *games.Service
+
+	// clock is what the sync page resolves the scoreboard state against, and
+	// what bounds the season a manual seed may be asked for.
+	//
+	// Not because production drifts without it: the scheduler passes its own
+	// instant into NextDelay, so both sides of the "same function, not a second
+	// opinion" claim read the wall clock and agree. It is here because Health()
+	// was the one part of that page nothing could pin -- the current week beside
+	// it already comes through games.Service, which has a clock, so a page
+	// rendered at a fixture instant reported one fact from the fixture and the
+	// other from today. A level-3 test of this page is the thing that wants it.
+	clock timeutil.Clock
+}
+
+// SetClock overrides the time source. The zero value is time.Now, so only a
+// test replaying a recorded response needs to call this. Give it the same
+// instant as the sync services, or the page describes a different moment than
+// the one the rows were written in.
+func (s *Service) SetClock(now func() time.Time) {
+	s.clock.Set(now)
 }
 
 // NewService creates a new admin service.

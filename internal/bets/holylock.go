@@ -105,7 +105,7 @@ func (s *Service) authorizeHolyLock(betType string, betID, userID uuid.UUID) (*h
 	if target.WeekID == nil {
 		return nil, ErrBetNotFootballWeek
 	}
-	if !target.Kickoff.After(time.Now()) {
+	if !target.Kickoff.After(s.clock.Now()) {
 		return nil, ErrGameStarted
 	}
 	return target, nil
@@ -137,7 +137,7 @@ func (s *Service) SetHolyLock(betType string, betID, userID uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		if slot != nil && slot.BetID != betID && !slot.ScheduledAt.After(time.Now()) {
+		if slot != nil && slot.BetID != betID && !slot.ScheduledAt.After(s.clock.Now()) {
 			return ErrHolyLockSettled
 		}
 
@@ -208,8 +208,8 @@ func (s *Service) markHolyLockEligibility(userID uuid.UUID, bets []BetView) {
 		return
 	}
 
-	frozen := frozenHolyLockWeeks(slots, time.Now())
-	now := time.Now()
+	frozen := frozenHolyLockWeeks(slots, s.clock.Now())
+	now := s.clock.Now()
 	for i := range bets {
 		if bets[i].Game.WeekID == nil {
 			continue

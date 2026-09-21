@@ -31,15 +31,6 @@ func (r *TeamRepository) FindByID(id uuid.UUID) (*models.Team, error) {
 	return &team, nil
 }
 
-// FindByAbbreviation retrieves a team by its abbreviation.
-func (r *TeamRepository) FindByAbbreviation(abbr string) (*models.Team, error) {
-	var team models.Team
-	if err := r.db.Preload("HomeVenue").Where("abbreviation = ?", abbr).First(&team).Error; err != nil {
-		return nil, err
-	}
-	return &team, nil
-}
-
 // FindAll retrieves all teams ordered by name.
 func (r *TeamRepository) FindAll() ([]models.Team, error) {
 	var teams []models.Team

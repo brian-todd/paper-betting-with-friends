@@ -12,6 +12,7 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/brian/paper-betting-with-friends/internal/syncerr"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -51,6 +52,11 @@ type Service struct {
 	betPageRepo       *repository.BetPageRepository
 	settlementRepo    *repository.SettlementRepository
 	logger            *slog.Logger
+
+	// clock decides every betting cutoff, every refund window and which games
+	// the settlement sweep considers played out. See cfbdata.SyncService for
+	// why this is a settable field.
+	clock timeutil.Clock
 }
 
 // NewService creates a new bets service.
@@ -75,6 +81,12 @@ func NewService(db *gorm.DB) *Service {
 		settlementRepo:    repository.NewSettlementRepository(db),
 		logger:            slog.Default().With("component", "bet-settlement"),
 	}
+}
+
+// SetClock overrides the time source. The zero value is time.Now, so only a
+// test replaying a recorded response needs to call this.
+func (s *Service) SetClock(now func() time.Time) {
+	s.clock.Set(now)
 }
 
 // CreateSpreadBetInput contains the input for creating a spread bet.
@@ -105,7 +117,7 @@ func (s *Service) CreateSpreadBet(input CreateSpreadBetInput) (*models.SpreadBet
 		return nil, err
 	}
 
-	if game.ScheduledAt.Before(time.Now()) {
+	if game.ScheduledAt.Before(s.clock.Now()) {
 		return nil, ErrGameStarted
 	}
 
@@ -191,7 +203,7 @@ func (s *Service) CreateMoneyLineBet(input CreateMoneyLineBetInput) (*models.Mon
 		return nil, err
 	}
 
-	if game.ScheduledAt.Before(time.Now()) {
+	if game.ScheduledAt.Before(s.clock.Now()) {
 		return nil, ErrGameStarted
 	}
 
@@ -277,7 +289,7 @@ func (s *Service) CreateOverUnderBet(input CreateOverUnderBetInput) (*models.Ove
 		return nil, err
 	}
 
-	if game.ScheduledAt.Before(time.Now()) {
+	if game.ScheduledAt.Before(s.clock.Now()) {
 		return nil, ErrGameStarted
 	}
 
@@ -390,7 +402,7 @@ func (s *Service) CancelSpreadBet(betID, userID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if err := cancellable(game, time.Now()); err != nil {
+	if err := cancellable(game, s.clock.Now()); err != nil {
 		return err
 	}
 
@@ -427,7 +439,7 @@ func (s *Service) CancelMoneyLineBet(betID, userID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if err := cancellable(game, time.Now()); err != nil {
+	if err := cancellable(game, s.clock.Now()); err != nil {
 		return err
 	}
 
@@ -464,7 +476,7 @@ func (s *Service) CancelOverUnderBet(betID, userID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if err := cancellable(game, time.Now()); err != nil {
+	if err := cancellable(game, s.clock.Now()); err != nil {
 		return err
 	}
 
@@ -510,7 +522,7 @@ const minTimeToPlay = 90 * time.Minute
 // reason to leave the rest of a Saturday unpaid, so failures are tallied and
 // reported at the end rather than abandoning the run -- see syncerr.
 func (s *Service) SettleFinalGames(ctx context.Context) error {
-	games, err := s.settlementRepo.FindGamesAwaitingSettlement(time.Now().Add(-minTimeToPlay))
+	games, err := s.settlementRepo.FindGamesAwaitingSettlement(s.clock.Now().Add(-minTimeToPlay))
 	if err != nil {
 		return err
 	}
@@ -1030,7 +1042,7 @@ func (s *Service) betViews(spreadBets []models.SpreadBet, moneyLineBets []models
 	// Several bets often share a game, and the edit form needs that game's
 	// lines, so look each one up once.
 	lines := newLineOptionCache(s)
-	now := time.Now()
+	now := s.clock.Now()
 
 	for _, bet := range spreadBets {
 		pick := bet.Game.HomeTeam.Abbreviation

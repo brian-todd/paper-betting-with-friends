@@ -12,18 +12,23 @@
 //     shapes them -- nulls where it sends nulls, a classification in the case
 //     it uses -- rather than the way whoever wrote InsertGame imagined.
 //
-// # Football seeds into a transaction; basketball does not
+// # Both sports seed into a transaction, since migration 000023
 //
-// Football is safe to run against a `testdb` transaction. Basketball is not,
-// and the reason is not the fixtures: `cbbdata.syncTeams` meets a duplicate
-// team abbreviation in the real feed, logs it and continues. On a connection
-// each statement autocommits, so one bad row is skipped and the season lands.
-// Inside a transaction the first error poisons every statement after it, and
-// the seed collapses into a cascade of "current transaction is aborted".
+// Basketball did not, and the reason was not the fixtures. `cbbdata.syncTeams`
+// truncates the feed's abbreviation to ten characters, 79 of the 1,519
+// basketball abbreviations then collide, and the teams table carried a unique
+// index on (abbreviation, sport) that Upsert does not arbitrate on -- so each
+// collision was a unique violation the sync logged and continued past. On a
+// connection each statement autocommits, so 107 teams were silently dropped and
+// the season landed anyway. Inside a transaction the first violation poisons
+// every statement after it and the seed collapsed into a cascade of "current
+// transaction is aborted".
 //
-// So Basketball is for `seedcbb -fixtures` against a connection. A test
-// wanting basketball rows needs that constraint lifted first, which means
-// savepoints around the writes the sync deliberately tolerates.
+// Dropping the unique index fixed both halves: no violation to poison the
+// transaction, and the 107 teams -- plus the 49 games that had been skipped as
+// "team not found" -- are written. A basketball seed is the most expensive test
+// in the suite at roughly 65 seconds under -race for a whole season, so it wants
+// to stay one test rather than one per assertion.
 //
 // # Two checks, because neither covers the other
 //
@@ -50,6 +55,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -58,6 +64,7 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/fixtures"
 	"github.com/brian/paper-betting-with-friends/internal/fixtureserver"
 	"github.com/brian/paper-betting-with-friends/internal/models"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 )
 
 // DefaultYear and DefaultWeek are what the committed football fixtures cover.
@@ -75,9 +82,38 @@ type Count struct {
 	Rows  int64
 }
 
+// An Option adjusts a seed. There is one, and it exists because a fixture
+// replayed against a real clock is only half a recording: the bodies are what
+// the feed sent, but the status every unplayed game is filed under, and the
+// instant every score is stamped with, come from whenever the seed happened to
+// run. `seed -fixtures` wants that -- a developer's database should look like
+// today -- and a test asserting on either wants to say which day it is.
+type Option func(*options)
+
+type options struct {
+	now func() time.Time
+}
+
+// At replays a seed as though it were running at a chosen instant.
+//
+// The instants to choose from are in the fixture file names, which is the whole
+// reason they are the file names: fixtures.Set.Sequence reports the capture
+// instant of every response a route will serve.
+func At(now time.Time) Option {
+	return func(o *options) { o.now = timeutil.Fixed(now) }
+}
+
+func resolve(opts []Option) options {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
 // Football seeds venues, teams, the calendar, and one week of games, rankings
 // and lines, from the embedded fixtures.
-func Football(ctx context.Context, db *gorm.DB, year, week int) ([]Count, error) {
+func Football(ctx context.Context, db *gorm.DB, year, week int, opts ...Option) ([]Count, error) {
 	if err := requireSchema(db); err != nil {
 		return nil, err
 	}
@@ -92,6 +128,7 @@ func Football(ctx context.Context, db *gorm.DB, year, week int) ([]Count, error)
 	// that cannot reach the network is the entire point.
 	client := cfbdata.NewClientAt(base, "")
 	sync := cfbdata.NewSyncService(client, db)
+	sync.SetClock(resolve(opts).now)
 
 	if err := sync.SeedAll(ctx, year, &week, nil); err != nil {
 		return nil, fmt.Errorf("seeding football from fixtures: %w", err)
@@ -109,8 +146,62 @@ func Football(ctx context.Context, db *gorm.DB, year, week int) ([]Count, error)
 	})
 }
 
+// FootballGames seeds one week of games alone, on top of reference data a prior
+// Football call has already written.
+//
+// It exists because not every captured week has the whole set behind it. Weeks 1
+// and 2 have games, rankings and lines, which is what `seed -fixtures` needs.
+// Week 6 has games only -- it was recorded for what an unplayed week looks like,
+// and rankings and lines would have cost two more metered requests to answer a
+// question nothing asks. Calling Football for it walks into the fixture server's
+// 500 on /rankings, which is the server doing its job and not a usable seed.
+//
+// The reference data has to be there already: syncGames skips a game whose home
+// team, away team or week it cannot resolve, logs a warning, and returns nil. So
+// this ends by counting what it wrote for that week and refusing a zero, the same
+// rule the whole-season seeds follow and for the same reason -- a sync over
+// missing rows reports success having written nothing.
+func FootballGames(ctx context.Context, db *gorm.DB, year, week int, opts ...Option) (int64, error) {
+	if err := requireSchema(db); err != nil {
+		return 0, err
+	}
+
+	base, fake, stop, err := fixtureserver.Listen(fixtures.CFBD)
+	if err != nil {
+		return 0, err
+	}
+	defer stop()
+
+	sync := cfbdata.NewSyncService(cfbdata.NewClientAt(base, ""), db)
+	sync.SetClock(resolve(opts).now)
+
+	if err := sync.SyncGames(ctx, year, &week, nil); err != nil {
+		return 0, fmt.Errorf("seeding football games for %d week %d from fixtures: %w", year, week, err)
+	}
+	if err := requireNoRefusals(fake); err != nil {
+		return 0, err
+	}
+
+	var rows int64
+	err = db.Model(&models.Game{}).
+		Joins("JOIN weeks ON weeks.id = games.week_id").
+		Where("games.sport = ? AND weeks.season = ? AND weeks.number = ?",
+			models.SportFootball, year, week).
+		Count(&rows).Error
+	if err != nil {
+		return 0, fmt.Errorf("counting games for %d week %d: %w", year, week, err)
+	}
+	if rows == 0 {
+		return 0, fmt.Errorf("seed wrote no games for %d week %d: the reference data has to be "+
+			"loaded first -- syncGames skips a game whose team, venue or week it cannot find, "+
+			"logs it, and returns nil", year, week)
+	}
+	slog.Info("seeded games from fixtures", "year", year, "week", week, "rows", rows)
+	return rows, nil
+}
+
 // Basketball seeds venues, teams, games and lines for a season.
-func Basketball(ctx context.Context, db *gorm.DB, season int) ([]Count, error) {
+func Basketball(ctx context.Context, db *gorm.DB, season int, opts ...Option) ([]Count, error) {
 	if err := requireSchema(db); err != nil {
 		return nil, err
 	}
@@ -123,6 +214,7 @@ func Basketball(ctx context.Context, db *gorm.DB, season int) ([]Count, error) {
 
 	client := cbbdata.NewClientAt(base, "")
 	sync := cbbdata.NewSyncService(client, db)
+	sync.SetClock(resolve(opts).now)
 
 	if err := sync.SeedAll(ctx, season); err != nil {
 		return nil, fmt.Errorf("seeding basketball from fixtures: %w", err)

@@ -21,6 +21,16 @@
   requests; this is what a fresh clone runs. See Fixtures
 - `make capture` — re-record those fixtures. Spends metered requests, so
   nothing else in the repository calls it
+
+**`config.Load` calls `godotenv.Load`, so `.env` wins over the process
+environment.** `env -u CFB_DATA_API_KEY ./server` does *not* give you a keyless
+server: the file is read after, the key comes back, every `RunOnStart` job fires,
+and booting for ten seconds to check the process comes up costs a dozen or more
+metered requests against a database with no teams to resolve them to. Move `.env`
+aside, or point `DATABASE_URL` at a scratch database and accept the spend
+knowingly. The fixture paths are keyless for a different and stronger reason —
+`fixtureseed` constructs `NewClientAt(base, "")` and points it at a local socket,
+so no environment can reach an upstream from there.
 - `make vendor-htmx` — re-download the vendored htmx build and verify its checksum
 
 ## Architecture
@@ -78,6 +88,13 @@ mux.Handle("POST /leagues/{id}/join", authMiddleware(http.HandlerFunc(h.Join)))
 - Every model needs a `BeforeCreate` hook that sets UUID if zero-value
 - Use `decimal.Decimal` (shopspring) for all money and odds values — never float64
 - Typed string constants for enums (e.g., `type BetStatus string`)
+- Unique indexes only on things that are keys. `teams.abbreviation` carried one
+  until migration 000023 and it cost rows: the basketball feed's abbreviations
+  are truncated to ten characters and 79 of them then collide, `TeamRepository.Upsert`
+  arbitrates `ON CONFLICT (external_id, sport)` so it could not absorb a
+  violation on the other index, and `syncTeams` logs a failed upsert and
+  continues — 107 teams never written, and every game involving one skipped
+  afterwards as "team not found". Nothing read a team by abbreviation
 
 ### HTMX
 
@@ -279,6 +296,24 @@ catch it; year 1 reads as a kickoff long past, which closes betting and leaves
 every bet already placed neither editable nor cancellable until `/games`
 rewrites the row.
 
+**Neither may be inferred from, either.** `syncGames` derives a status from
+`now > startDate + 5min`, and for every division outside
+`CFB_SCOREBOARD_CLASSIFICATIONS` and every week outside the current one that
+inference is the only status there is. Run against a `startTimeTBD` placeholder
+it puts a game nobody has scheduled into `in_progress` for the rest of the day —
+39 of week 6's 275 games in the committed capture — and `advancesFrom` has no
+edge back, so the scoreboard cannot correct it. The zero `startDate` is the same
+shape with a worse instant. Both now fall through to `scheduled`, which is what
+the feed is actually saying.
+
+What is *not* fixed is the kickoff itself: `scheduled_at` is NOT NULL and the
+first insert has nothing better than the placeholder, so the betting cutoff —
+which reads the kickoff, not the status — still closes on a TBD game at midnight
+of the day it is played. Closing that needs a column recording that the instant
+is a placeholder, and a decision about whether such a game takes bets at all.
+`TestGamesStatusIsInferredFromTheClock` asserts the placeholder is still stored,
+so closing it has to come through there.
+
 `Upsert` still assigns `scheduled_at` unconditionally, so the two writers are
 asymmetric: a `/games` run holding a kickoff CFBD has not corrected yet writes
 the stale time back, and the scoreboard re-corrects it within five minutes. The
@@ -382,6 +417,14 @@ type.
   was already in the database), and that the tables are not empty (which
   catches a capture that is present but hollow, and can only fail against a
   fresh database)
+- **Some captures are worth more stale than fresh.** Week 6 of 2026 was
+  recorded before it was played, and that is its entire value — it is the only
+  capture in which the clock decides anything, and three level-2 tests rest on
+  it. Re-recording it returns a played week and silently removes their premise,
+  so it is not in `scripts/capture.sh`'s default set. `week 6 is still an
+  unplayed week` in the level-1 test is what notices; if it fails after a
+  capture run, `git checkout` that directory rather than editing the test.
+  Recording a *new* unplayed week is the way to replace it
 - **`make capture` replaces a route's capture; it refuses to replace a
   sequence.** The server replays oldest-first, so appending a second capture of
   a single-shot endpoint leaves the seed reading the stale one forever. A route
@@ -390,7 +433,22 @@ type.
 
 `internal/fixtureseed` is the shared path. `cmd/seed -fixtures` runs it against
 a connection; a test runs it against a `testdb` transaction to get rows the
-feed really sent — see Testing.
+feed really sent — see Testing. `fixtureseed.At(instant)` replays a seed as
+though it were running then, which a test asserting on a status or a
+`finalized_at` needs and `seed -fixtures` does not.
+
+`fixtureseed.Football` runs the whole `SeedAll`, so it only works for a week with
+the whole set captured — weeks 1 and 2. `fixtureseed.FootballGames` is one week of
+games alone, on top of reference data a prior `Football` call wrote, which is what
+week 6 needs. It refuses a zero for the same reason the others do.
+
+**Which week a fixture can answer for depends on when it was captured.** Weeks 1
+and 2 were recorded on 2026-09-20, after they had been played: `/games` reports
+every game `completed` with a real score, so they infer `final` whatever the
+clock says and can say nothing about an unplayed game. Week 6 was recorded the
+same day and had not been played — 275 games, none completed, no points, real
+future kickoffs, 39 of them `startTimeTBD`. It is the only capture in which the
+clock decides anything, and `/games` is the only endpoint captured for it.
 
 ### Testing
 
@@ -419,8 +477,12 @@ The `Insert*` defaults are somebody's belief about the feed; `InsertTeam`
 hard-codes `"fbs"` in lower case and only a comment said that was right.
 
 Seeded tests stay few and shared: a week is thousands of rows written and
-rolled back, about 1.3s. They also couple to the fixture set, so a recapture
-moves a test that turns on "the third FCS game of week 2".
+rolled back, about 1.3s — nearer 8s under `-race`, and a whole basketball season
+is ~65s under `-race`. `make test` is unaffected at 3.8s because these skip
+without a database; `make test-db` and CI are ~1m8s, most of it that basketball
+season, which is also the only thing exercising `seedcbb -fixtures` end to end. They also couple to
+the fixture set, so a recapture moves a test that turns on "the third FCS game
+of week 2".
 
 Run them with `make test-db`, which starts the compose database and creates
 `betting_tracker_test` beside the development one. Without `TEST_DATABASE_URL`
@@ -439,6 +501,81 @@ until someone writes a test without knowing about it.
 Compare timestamps with `Equal`, not `==`: the column keeps microseconds and
 the driver returns `Local`, so neither the monotonic reading nor the location
 survives the round trip.
+
+#### The clock
+
+`cfbdata.SyncService`, `cbbdata.SyncService`, `bets.Service`, `games.Service` and
+`basketball.Service` each take an overridable time source:
+
+```go
+svc.SetClock(timeutil.Fixed(time.Date(2026, 10, 10, 20, 0, 0, 0, time.UTC)))
+```
+
+The zero `timeutil.Clock` is `time.Now`, so nothing that does not care has to
+say so. A test replaying a recording does care: `syncGames` infers a status from
+`now > startDate + 5min` and the whole scoreboard cadence is a function of now,
+so a fixture captured on a live Saturday replayed against a real clock has every
+game kicking off in the past, every status inferring the same way, and the
+two-feed disagreement the write rules exist for never happening. The instants to
+choose from are the fixture file names.
+
+Not `testing/synctest`, which `internal/scheduler` uses and which does not
+generalise here: a bubble's clock starts at 2000-01-01, decades before any
+captured instant, and a bubble waits for `net/http.Transport`'s read loop, which
+never ends. `internal/timeutil/clock.go` says this at length.
+
+`admin.Service` has one too, for the two facts the sync page reports about "now":
+the scoreboard state and the upper bound on a manual seed's season. It is not
+about production drift — the scheduler passes its own instant into `NextDelay`, so
+both sides of "the same function, not a second opinion" read the wall clock and
+agree. It is that `Health()` was the one part of that page nothing could pin,
+while the current week beside it already came through `games.Service`, so a page
+rendered at a fixture instant answered one question from the fixture and the other
+from today. Give it the **same instant** as the sync services in a test.
+
+Three things keep their own `time.Now`: the repositories (it sets `updated_at`,
+which nothing asserts on), `games.ZoneAbbreviation` (a free function deriving a
+display label), and `cbbdata.GetCurrentSeason` (a `cmd/` flag default resolved
+before any service exists — `SeasonFor(now)` is its testable half).
+
+A service method that writes a timestamp reads its own clock rather than taking
+one. `bets.FinalizeGameResult` took an `at` argument and its single caller always
+passed `time.Now()`, so the parameter was not flexibility — it was a second clock
+to forget to set.
+
+#### The level ladder
+
+| Level | Boundary | Where |
+| --- | --- | --- |
+| 1 | Fixture → client | `internal/{cfbdata,cbbdata}/client_fixtures_test.go` |
+| 2 | Fixture → database | `internal/cfbdata/{games_status,convergence,classification}_fixtures_test.go`, `internal/cbbdata/level2_fixtures_test.go` |
+| 3 | Database → page | not built |
+| 4 | Fixture → page | not built |
+
+Level 2 is where the write rules above get tested, and they need the recorded
+disagreement: `/games` week 1 and the first live scoreboard snapshot contradict
+each other about 57 of the 99 games they share, which is not a disagreement
+anyone builds by hand, because whoever builds it already knows which feed is
+right.
+
+A level-2 test lives in the **external** test package (`package cfbdata_test`):
+`fixtureseed` imports `cfbdata`, so an internal test file importing it is an
+import cycle.
+
+Two traps in these tests specifically. Subtests share one transaction, so the
+first failed statement poisons every later one and a single bad query reads as
+several failures — look at the first.
+
+And a rule that passes is not a rule that is tested. Every guard these tests
+claim to cover was checked by **mutating the guard and watching the test fail**:
+widening `advancesFrom`, replacing the score and `finalized_at` guards with plain
+assignment, reverting the `startTimeTBD` case, and un-folding
+`normalizeClassifications` all fail. One does not — replacing
+`games.completed OR excluded.completed` with a plain assignment passes, because
+only `/games` calls `Upsert` and the captured week reports every game
+`completed`, so there is nothing for the OR to protect. That check is kept and
+labelled in the test rather than deleted. Do this to any new write-rule test
+before believing it.
 
 ### Logging
 
@@ -572,6 +709,13 @@ A failed migration leaves the schema dirty and the server then refuses to boot.
 something to leave set. The files stay on disk so `make migrate-up` and the
 embedded copy read the same directory.
 
+One down migration is *designed* to fail. 000023 dropped a unique index that the
+data had been silently conforming to by losing rows, so restoring it errors on any
+database that has since stored a colliding pair — which is every database worth
+having run it on. The file says so and gives the `force 23` recovery. Rolling back
+past it means first deciding which of each colliding pair of teams to delete, and
+a migration is the wrong place to decide that.
+
 ## Things to Avoid
 
 - float64 for money or odds — always `decimal.Decimal`
@@ -605,3 +749,9 @@ embedded copy read the same directory.
 - Appending a fresh capture beside an old one on a single-shot endpoint — the server replays oldest-first, so the new one is never reached
 - Filtering a capture by division — the spread is the property that makes the fixture worth having
 - A base-URL environment variable — `NewClientAt` is the seam, and it is reachable only from code that means to call it
+- Re-capturing an *unplayed* week — its value is that the games had not happened, and a refresh destroys it silently
+- Inferring a status from a `startTimeTBD` placeholder or a zero `startDate` — both are instants the feed does not mean, and `advancesFrom` has no edge back from the `in_progress` they produce
+- A unique index on a display string — the one on `teams.abbreviation` cost 107 basketball teams and the 49 games that needed them, because `Upsert` arbitrates a different index and the violation was logged and continued past
+- Replaying a fixture against the real clock — use `SetClock` or `fixtureseed.At`, or every recorded game reads as long finished
+- A level-2 test in the internal test package — `fixtureseed` imports the sync packages, so it has to be `package cfbdata_test`
+- Trusting a green write-rule test — mutate the rule and confirm it fails, or it is asserting on data that never contested anything

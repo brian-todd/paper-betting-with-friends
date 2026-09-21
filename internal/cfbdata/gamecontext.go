@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/google/uuid"
@@ -57,7 +56,7 @@ func (s *SyncService) syncPregameWinProbabilities(ctx context.Context, year int)
 	}
 
 	rows := pregameWinProbabilitiesFrom(payload, games)
-	fetchedAt := time.Now()
+	fetchedAt := s.clock.Now()
 	written := 0
 	for _, row := range rows {
 		row.FetchedAt = fetchedAt
@@ -90,7 +89,7 @@ func (s *SyncService) syncGameForecasts(ctx context.Context, year int) error {
 	// bounded at the few hundred games actually ahead of us.
 	upcoming := make([]APIGameWeather, 0, len(payload))
 	externalIDs := make([]int64, 0, len(payload))
-	now := time.Now()
+	now := s.clock.Now()
 	for _, w := range payload {
 		if !w.StartTime.After(now) {
 			continue
@@ -105,7 +104,7 @@ func (s *SyncService) syncGameForecasts(ctx context.Context, year int) error {
 	}
 
 	rows := gameForecastsFrom(upcoming, games)
-	fetchedAt := time.Now()
+	fetchedAt := s.clock.Now()
 	written := 0
 	for _, row := range rows {
 		row.FetchedAt = fetchedAt

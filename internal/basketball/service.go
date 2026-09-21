@@ -32,6 +32,10 @@ type Service struct {
 	// are stored as instants, so without an explicit zone a late evening tips
 	// over into the next day's slate.
 	location *time.Location
+
+	// clock is what Today resolves against. See cfbdata.SyncService for why
+	// this is a settable field.
+	clock timeutil.Clock
 }
 
 // NewService creates a new basketball service.
@@ -50,9 +54,15 @@ func NewService(db *gorm.DB, loc *time.Location) *Service {
 	}
 }
 
+// SetClock overrides the time source. The zero value is time.Now, so only a
+// test replaying a recorded response needs to call this.
+func (s *Service) SetClock(now func() time.Time) {
+	s.clock.Set(now)
+}
+
 // Today returns the start of the current calendar day in the app's timezone.
 func (s *Service) Today() time.Time {
-	return timeutil.StartOfDay(time.Now(), s.location)
+	return timeutil.StartOfDay(s.clock.Now(), s.location)
 }
 
 // ParseDate interprets a YYYY-MM-DD value from a query string as a calendar day

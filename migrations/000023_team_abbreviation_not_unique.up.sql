@@ -1,0 +1,22 @@
+-- A team's abbreviation is a display string, not a key, and requiring it to be
+-- unique silently threw away teams.
+--
+-- cbbdata truncates the feed's abbreviation to the column's 10 characters, and
+-- across the 1,519 basketball teams CFBD lists, 79 abbreviations are shared by
+-- more than one school -- UAlbany and Albright College both become "ALB",
+-- Colorado State and Chico State both "CSU". TeamRepository.Upsert arbitrates
+-- ON CONFLICT (external_id, sport), so a collision on this index was not
+-- absorbed by the upsert: it was a unique violation the sync logged and
+-- continued past, and 107 teams were never written at all. Every game involving
+-- one was then skipped by syncGames as "team not found", logged, and continued
+-- past as well -- two silent losses stacked under a seed that exited 0.
+--
+-- Nothing reads a team by abbreviation. TeamRepository.FindByAbbreviation exists
+-- and has no callers; every other use is display -- a page title, a bet
+-- description, a search filter. So the constraint was protecting a lookup that
+-- does not happen, at the cost of rows.
+--
+-- The index itself is kept, without the uniqueness, since a lookup by
+-- abbreviation is the thing it was presumably added for.
+DROP INDEX IF EXISTS idx_teams_abbreviation_sport;
+CREATE INDEX idx_teams_abbreviation_sport ON teams(abbreviation, sport);

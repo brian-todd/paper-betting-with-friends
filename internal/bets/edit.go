@@ -2,7 +2,6 @@ package bets
 
 import (
 	"errors"
-	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
@@ -197,7 +196,7 @@ func (s *Service) authorizeEdit(ownerID, userID uuid.UUID, status models.BetStat
 		}
 		return err
 	}
-	if !game.ScheduledAt.After(time.Now()) {
+	if !game.ScheduledAt.After(s.clock.Now()) {
 		return ErrGameStarted
 	}
 

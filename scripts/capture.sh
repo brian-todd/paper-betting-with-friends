@@ -68,6 +68,23 @@ fi
 #
 # No seasonType, because `seed` without -seasonType sends none, and a query
 # present in one and absent in the other resolves to two different directories.
+# A THIRD RULE, learned from the capture that is deliberately not below.
+#
+#   Some captures are worth more stale than fresh, and week 6 of 2026 is one.
+#   It was recorded on 2026-09-20, before it was played: nothing completed, no
+#   points, real future kickoffs, and 39 games the feed had not scheduled. That
+#   is the only capture in which the clock decides anything, and three level-2
+#   tests rest on it. Re-recording it after 2026-10-11 returns a played week and
+#   silently removes their premise, so it is not in the default set and should
+#   not be added to one.
+#
+#   TestClientDecodesEveryCapturedEndpoint/week_6_is_still_an_unplayed_week is
+#   what notices. If it fails after a capture run, the fix is `git checkout` on
+#   internal/fixtures/testdata/cfbd/games/week=6*, not an edit to the test.
+#
+#   Recording a *new* unplayed week is fine and cheap -- one request for a week
+#   that has not happened yet -- and is how to replace week 6 if it ever has to
+#   go.
 YEAR="${YEAR:-2026}"
 default_cfbd=(
     /venues

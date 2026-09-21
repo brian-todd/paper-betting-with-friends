@@ -98,7 +98,7 @@ func (s *Service) FinalizeGame(actor *models.User, gameID uuid.UUID) error {
 			" - " + detail.Game.AwayTeam.Abbreviation + " " + itoa(detail.Result.AwayScore)
 	}
 
-	if err := s.bets.FinalizeGameResult(gameID, time.Now()); err != nil {
+	if err := s.bets.FinalizeGameResult(gameID); err != nil {
 		return err
 	}
 

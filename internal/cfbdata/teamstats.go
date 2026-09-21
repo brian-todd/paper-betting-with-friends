@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
@@ -111,7 +110,7 @@ func (s *SyncService) syncTeamRecords(ctx context.Context, year int) error {
 		return errNoRows
 	}
 
-	fetchedAt := time.Now()
+	fetchedAt := s.clock.Now()
 	written := 0
 	for _, row := range rows {
 		row.FetchedAt = fetchedAt
@@ -137,7 +136,7 @@ func (s *SyncService) writeRatings(source models.RatingSource, rows []models.Tea
 		return errNoRows
 	}
 
-	fetchedAt := time.Now()
+	fetchedAt := s.clock.Now()
 	written := 0
 	for _, row := range rows {
 		row.FetchedAt = fetchedAt
@@ -402,7 +401,7 @@ func (s *SyncService) syncATSRecords(ctx context.Context, year int) error {
 		return errNoRows
 	}
 
-	fetchedAt := time.Now()
+	fetchedAt := s.clock.Now()
 	written := 0
 	for _, row := range rows {
 		row.FetchedAt = fetchedAt
@@ -434,7 +433,7 @@ func (s *SyncService) syncAdvancedStats(ctx context.Context, year int) error {
 		return errNoRows
 	}
 
-	fetchedAt := time.Now()
+	fetchedAt := s.clock.Now()
 	written := 0
 	for _, row := range rows {
 		row.FetchedAt = fetchedAt

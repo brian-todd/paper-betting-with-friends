@@ -171,7 +171,7 @@ func (s *SyncService) applyScoreboardGame(gameID uuid.UUID, g APIScoreboardGame)
 		return fmt.Errorf("updating status: %w", err)
 	}
 
-	if result, ok := scoreboardResult(gameID, g, time.Now()); ok {
+	if result, ok := scoreboardResult(gameID, g, s.clock.Now()); ok {
 		if err := s.gameResultRepo.Upsert(result); err != nil {
 			return fmt.Errorf("upserting result: %w", err)
 		}
