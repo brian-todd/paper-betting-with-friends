@@ -40,7 +40,12 @@ Layered: **Handler → Service → Repository → Models**
 - Feature packages live under `internal/` (auth, bets, leagues, games, basketball, admin)
 - Shared data access in `internal/repository/`
 - External API sync in `internal/cfbdata/` and `internal/cbbdata/`
-- Entry points in `cmd/` (server, seed, seedcbb, seedtestdata, synccalendar)
+- Entry points in `cmd/` (server, seed, seedcbb, seedtestdata, synccalendar,
+  capture). `cmd/server` is split in two: `buildHandler` in `app.go` builds every
+  service, route and middleware and returns the `http.Handler` the server serves;
+  `main.go` keeps config, the database, migrations, the scheduler, the jobs and
+  the signal loop. A test that wants the application without the process takes
+  the first half — see Testing
 - Periodic background syncs run via `internal/scheduler`
 - Logging setup in `internal/logging`; HTTP middleware in `cmd/server/middleware.go`
 - Templates in `templates/` (layouts, pages, partials); static assets in `static/`
@@ -165,7 +170,15 @@ Pass `map[string]any` with `"User"` key (from auth context). Pages are in `templ
 
 `NewRenderer` takes an `fs.FS`, not a directory path. `main` passes `assets.FS`
 (embedded) in production and `os.DirFS(".")` in development, so editing a
-template or the CSS still takes effect without a rebuild.
+template or the CSS still takes effect without a rebuild. It is `main` that
+chooses, not `buildHandler`, because `os.DirFS(".")` is relative to the
+process's working directory — the repository root for the server and the package
+directory under `go test`.
+
+`currentYear` is the only template function that resolves "now" on its own, and
+it reads `Renderer.SetClock` rather than the wall clock so a page rendered
+against a replayed recording dates itself from that recording. Anything else a
+template needs from the clock should arrive in its data.
 
 The `asset` function versions a URL by **hashing the file's contents**, never
 its mtime: every file in an `embed.FS` reports the zero time, so an
@@ -524,6 +537,13 @@ generalise here: a bubble's clock starts at 2000-01-01, decades before any
 captured instant, and a bubble waits for `net/http.Transport`'s read loop, which
 never ends. `internal/timeutil/clock.go` says this at length.
 
+`templates.Renderer` has one for the footer's copyright year, which is the one
+thing a template resolves from "now" by itself. `cmd/server`'s
+`application.SetClock` fans one instant out to all five — four services and the
+renderer — and a page test should use it rather than setting them one at a time,
+because the failure it prevents is a page answering one question from the
+fixture and the next from today.
+
 `admin.Service` has one too, for the two facts the sync page reports about "now":
 the scoreboard state and the upper bound on a manual seed's season. It is not
 about production drift — the scheduler passes its own instant into `NextDelay`, so
@@ -533,10 +553,16 @@ while the current week beside it already came through `games.Service`, so a page
 rendered at a fixture instant answered one question from the fixture and the other
 from today. Give it the **same instant** as the sync services in a test.
 
-Three things keep their own `time.Now`: the repositories (it sets `updated_at`,
-which nothing asserts on), `games.ZoneAbbreviation` (a free function deriving a
-display label), and `cbbdata.GetCurrentSeason` (a `cmd/` flag default resolved
-before any service exists — `SeasonFor(now)` is its testable half).
+Two things keep their own `time.Now`: the repositories (it sets `updated_at`,
+which nothing asserts on) and `cbbdata.GetCurrentSeason` (a `cmd/` flag default
+resolved before any service exists — `SeasonFor(now)` is its testable half).
+
+A display helper that needs "now" takes it as an argument instead.
+`games.ZoneAbbreviation(loc, at)` is the one there is, and it takes the instant
+because a zone's abbreviation is a function of the date: `America/New_York` is
+EDT in September and EST in January. Reading the wall clock there produced the
+worst failure mode available to a test — a page test written in October passing
+until March.
 
 A service method that writes a timestamp reads its own clock rather than taking
 one. `bets.FinalizeGameResult` took an `at` argument and its single caller always
@@ -549,8 +575,8 @@ to forget to set.
 | --- | --- | --- |
 | 1 | Fixture → client | `internal/{cfbdata,cbbdata}/client_fixtures_test.go` |
 | 2 | Fixture → database | `internal/cfbdata/{games_status,convergence,classification}_fixtures_test.go`, `internal/cbbdata/level2_fixtures_test.go` |
-| 3 | Database → page | not built |
-| 4 | Fixture → page | not built |
+| 3 | Database → page | `internal/games/level3_fixtures_test.go`, `internal/bets/level3_fixtures_test.go` |
+| 4 | Fixture → page | `cmd/server/level4_fixtures_test.go` |
 
 Level 2 is where the write rules above get tested, and they need the recorded
 disagreement: `/games` week 1 and the first live scoreboard snapshot contradict
@@ -576,6 +602,42 @@ only `/games` calls `Upsert` and the captured week reports every game
 `completed`, so there is nothing for the OR to protect. That check is kept and
 labelled in the test rather than deleted. Do this to any new write-rule test
 before believing it.
+
+#### Levels 3 and 4
+
+`internal/pagetest` is the shared half: a `testdb` transaction, a renderer over
+the embedded templates, a user with a league and a purse, and one instant every
+clock in the process agrees on. `pagetest.Open(t, at)` and then `SeedFootball`
+or `SeedFootballGames`. It stops where the two levels diverge.
+
+**Level 3 calls a handler directly.** `Env.GET`/`Env.POST` put the user on the
+request context the way `auth.OptionalAuth` would have, so no session is
+involved. A route's path parameters are not parsed by anything at this level —
+`req.SetPathValue("week", ...)` is the caller's job, and forgetting one reads as
+a 400 rather than as a missing step.
+
+**Level 4 goes through `cmd/server`'s own router.** `buildHandler` returns the
+handler `main` serves, so a level-4 test drives the real stack rather than a mux
+it assembled itself — which matters because the wiring is where the interesting
+mistakes are, and *a route is only guarded if it was registered through the
+guard*. The session is minted by posting the real `/register` form and keeping
+the cookie; there is no other way in, and `auth` marks the cookie `Secure` in
+production, which Go's cookie jar then refuses to send over `httptest`'s plain
+HTTP. `pagetest` builds a development config for exactly that reason.
+
+Both levels want `pagetest.Assets`, never `os.DirFS(".")`: the working directory
+under `go test` is the package directory, so the on-disk template tree is not
+where the server would find it.
+
+Two things to know before adding one.
+
+**Subtests share the transaction, so a subtest that seeds changes what the later
+ones count.** Scope a count to the week under test rather than to the table, or
+adding a second week moves an unrelated expectation.
+
+**Read a set once, not a row at a time.** A page holds a hundred cards and a
+week holds four hundred; checking each one with its own query is correct and
+takes twenty seconds. `gamesInTier` and `gamesWithALine` are the shape to copy.
 
 ### Logging
 
@@ -755,3 +817,9 @@ a migration is the wrong place to decide that.
 - Replaying a fixture against the real clock — use `SetClock` or `fixtureseed.At`, or every recorded game reads as long finished
 - A level-2 test in the internal test package — `fixtureseed` imports the sync packages, so it has to be `package cfbdata_test`
 - Trusting a green write-rule test — mutate the rule and confirm it fails, or it is asserting on data that never contested anything
+- Building a router in a test instead of calling `buildHandler` — the wiring is the thing a level-4 test exists to check, and a hand-assembled mux agrees with whatever the test already believes
+- Reading the wall clock in a display helper — `ZoneAbbreviation` takes the instant, because a page test written in October passes until March otherwise
+- `os.DirFS(".")` in a test — the working directory under `go test` is the package directory; use `pagetest.Assets`
+- A production config in a page test — `auth` marks the session cookie `Secure`, and Go's cookie jar then refuses to send it over `httptest`'s plain HTTP, so registration succeeds and every later request reads as logged out
+- Checking a page of a hundred cards one query per card — read the set once; the row-at-a-time version is correct and twenty seconds slower
+- Counting a whole table in a test whose subtests seed — they share the transaction, so a later subtest's week silently moves an earlier subtest's expectation
