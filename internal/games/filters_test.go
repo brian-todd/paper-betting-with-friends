@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/shopspring/decimal"
@@ -408,4 +409,36 @@ func boolPtr(v bool) *bool { return new(v) }
 func decPtr(v string) *decimal.Decimal {
 	d := decimal.RequireFromString(v)
 	return &d
+}
+
+// A zone's abbreviation is a function of the date, not just of the zone:
+// America/New_York is EDT for two-thirds of the year and EST for the rest. The
+// label names the clock the kickoff-window filter is expressed in, so a page
+// rendered against a replayed recording has to label that recording's date --
+// and a test that passes the wall clock cannot tell the difference for whichever
+// half of the year it happens to be written in.
+func TestZoneAbbreviationNamesTheInstantsOffset(t *testing.T) {
+	eastern, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		location *time.Location
+		at       time.Time
+		want     string
+	}{
+		{"a September Saturday is daylight time", eastern, time.Date(2026, 9, 5, 20, 49, 9, 0, time.UTC), "EDT"},
+		{"a January Saturday is standard time", eastern, time.Date(2026, 1, 3, 20, 49, 9, 0, time.UTC), "EST"},
+		{"no location falls back to UTC", nil, time.Date(2026, 9, 5, 20, 49, 9, 0, time.UTC), "UTC"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ZoneAbbreviation(tt.location, tt.at); got != tt.want {
+				t.Errorf("ZoneAbbreviation() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

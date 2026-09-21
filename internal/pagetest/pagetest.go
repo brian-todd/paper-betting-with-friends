@@ -156,6 +156,25 @@ func (e *Env) SeedFootball(year, week int) {
 	}
 }
 
+// SeedFootballGames replays one week of /games alone, on top of the reference
+// data a prior SeedFootball call wrote.
+//
+// It exists because only weeks 1 and 2 have the whole endpoint set captured.
+// Week 6 has /games and nothing else -- no lines, no rankings -- which is
+// exactly what makes it worth having: it is a week the odds feed has not
+// reached, and there is no other way to get one.
+func (e *Env) SeedFootballGames(year, week int) {
+	e.T.Helper()
+
+	rows, err := fixtureseed.FootballGames(context.Background(), e.DB, year, week, fixtureseed.At(e.At))
+	if err != nil {
+		e.T.Fatalf("seeding football %d week %d: %v", year, week, err)
+	}
+	if rows == 0 {
+		e.T.Fatalf("seeding football %d week %d wrote no games", year, week)
+	}
+}
+
 // Register creates a user through the real auth service, so the stored password
 // hash is one Login will actually accept.
 func (e *Env) Register(username, password string) *models.User {

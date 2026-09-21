@@ -42,6 +42,9 @@ import (
 const (
 	fixtureYear = 2026
 	fixtureWeek = 1
+	// unpricedWeek was captured before it was played, so it has games and no
+	// lines at all -- see the subtest that uses it.
+	unpricedWeek = 6
 )
 
 var firstSnapshot = time.Date(2026, 9, 5, 20, 49, 9, 0, time.UTC)
@@ -61,28 +64,44 @@ func TestTheWeekPageRendersARealSlate(t *testing.T) {
 	service.SetClock(env.Now)
 	handler := games.NewHandler(service, env.Renderer, env.DB)
 
-	// show renders one page of the week, with query the filter query string.
-	show := func(t *testing.T, query string) (int, string) {
+	// showWeek renders one page of a week, with query the filter query string.
+	showWeek := func(t *testing.T, week int, query string) (int, string) {
 		t.Helper()
 
-		target := "/games/" + strconv.Itoa(fixtureYear) + "/regular/" + strconv.Itoa(fixtureWeek)
+		target := "/games/" + strconv.Itoa(fixtureYear) + "/regular/" + strconv.Itoa(week)
 		if query != "" {
 			target += "?" + query
 		}
 		rec, req := env.GET(target, user)
 		req.SetPathValue("season", strconv.Itoa(fixtureYear))
 		req.SetPathValue("seasonType", string(models.SeasonTypeRegular))
-		req.SetPathValue("week", strconv.Itoa(fixtureWeek))
+		req.SetPathValue("week", strconv.Itoa(week))
 
 		handler.ShowWeekGames(rec, req)
 		return rec.Code, rec.Body.String()
 	}
 
-	// seeded is what the feed wrote, read straight from the transaction. Every
-	// count below is compared against this rather than against a number typed
-	// into the test, so a recapture moves the expectation with the fixture.
+	// show is showWeek pinned to the fully captured week, which is what every
+	// subtest but the last one is about.
+	show := func(t *testing.T, query string) (int, string) {
+		t.Helper()
+		return showWeek(t, fixtureWeek, query)
+	}
+
+	// seeded is what the feed wrote for this week, read straight from the
+	// transaction. Every count below is compared against it rather than against
+	// a number typed into the test, so a recapture moves the expectation with
+	// the fixture.
+	//
+	// Scoped to the week rather than counting the games table, because the last
+	// subtest seeds a second week into the same transaction and a total would
+	// then depend on subtest order.
 	var seeded int64
-	if err := env.DB.Model(&models.Game{}).Count(&seeded).Error; err != nil {
+	err := env.DB.Raw(`
+		SELECT count(*) FROM games g JOIN weeks w ON w.id = g.week_id
+		WHERE w.season = ? AND w.number = ? AND w.season_type = 'regular'`,
+		fixtureYear, fixtureWeek).Scan(&seeded).Error
+	if err != nil {
 		t.Fatalf("counting seeded games: %v", err)
 	}
 	if seeded == 0 {
@@ -116,9 +135,59 @@ func TestTheWeekPageRendersARealSlate(t *testing.T) {
 			if !fbs[id] {
 				t.Errorf("the default view shows game %s, which is in no FBS matchup", id)
 			}
+			// Kept, and worth knowing that it cannot fail here: every FBS game
+			// in this capture carries a line, which is what AGENTS.md means by
+			// "bettable-only costs nothing on a normal week". Dropping
+			// Bettable from defaultFilter() leaves this subtest green --
+			// confirmed by mutation. The week-6 subtest below is what makes
+			// that half real.
 			if !priced[id] {
 				t.Errorf("the default view shows game %s, which carries no line to bet", id)
 			}
+		}
+	})
+
+	t.Run("a week the odds feed has not reached explains itself", func(t *testing.T) {
+		// Week 6 was captured before it was played: 275 games, no lines, no
+		// rankings, real future kickoffs. It is the one week in the fixture set
+		// where the bettable half of the default filter has anything to do, and
+		// the page state it produces -- a grid with nothing in it -- is one an
+		// operator will meet every time the odds feed runs behind.
+		//
+		// The page has to say why it is empty. An unexplained empty grid and a
+		// broken query look identical.
+		env.SeedFootballGames(fixtureYear, unpricedWeek)
+
+		code, body := showWeek(t, unpricedWeek, "")
+		if code != http.StatusOK {
+			t.Fatalf("status %d, want 200", code)
+		}
+		if ids := gameIDsOn(body); len(ids) != 0 {
+			t.Fatalf("the default view of an unpriced week shows %d games; none of them can be bet", len(ids))
+		}
+
+		var seededSix int64
+		err := env.DB.Raw(`
+			SELECT count(*) FROM games g JOIN weeks w ON w.id = g.week_id
+			WHERE w.season = ? AND w.number = ? AND w.season_type = 'regular'`,
+			fixtureYear, unpricedWeek).Scan(&seededSix).Error
+		if err != nil || seededSix == 0 {
+			t.Fatalf("counting week %d: %v", unpricedWeek, err)
+		}
+
+		if want := "All " + strconv.FormatInt(seededSix, 10) + " games in Week " +
+			strconv.Itoa(unpricedWeek) + " were filtered out"; !strings.Contains(body, want) {
+			t.Errorf("the empty grid does not say %q, so it is indistinguishable from a broken query", want)
+		}
+
+		// Widening the filter has to bring them back, or the message is
+		// advice the page cannot take.
+		code, body = showWeek(t, unpricedWeek, "applied=1")
+		if code != http.StatusOK {
+			t.Fatalf("widened: status %d, want 200", code)
+		}
+		if ids := gameIDsOn(body); len(ids) == 0 {
+			t.Error("clearing the filter on an unpriced week still shows nothing")
 		}
 	})
 
@@ -189,10 +258,13 @@ func TestTheWeekPageRendersARealSlate(t *testing.T) {
 		err := env.DB.Raw(`
 			SELECT g.id
 			FROM games g
+			JOIN weeks w ON w.id = g.week_id
 			JOIN teams home ON home.id = g.home_team_id
 			JOIN teams away ON away.id = g.away_team_id
-			WHERE home.classification IN ('fbs','fcs','ii','iii')
-			   OR away.classification IN ('fbs','fcs','ii','iii')`).Scan(&unreachable).Error
+			WHERE w.season = ? AND w.number = ? AND w.season_type = 'regular'
+			  AND (home.classification IN ('fbs','fcs','ii','iii')
+			       OR away.classification IN ('fbs','fcs','ii','iii'))`,
+			fixtureYear, fixtureWeek).Scan(&unreachable).Error
 		if err != nil {
 			t.Fatalf("listing the classified games: %v", err)
 		}
