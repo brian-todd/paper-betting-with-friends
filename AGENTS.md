@@ -518,6 +518,29 @@ To find out whether a change costs time, read CI — its database is a fresh
 service container and its machine is doing nothing else. If you must compare
 locally, let the machine idle between runs and still expect ±30%.
 
+**There is no leak, and this was checked rather than assumed.** The suite's cost
+is additive in the number of seeded tests, not quadratic — one seeded test does
+not make the next one slower. Two measurements say so:
+
+- Seeding the same week ten times in one process: 1.35, 0.84, 1.03, 0.91, 0.91,
+  1.03, 0.85, 1.07, 1.20, 1.25s. Flat.
+- The scan-heavy level-3 grid test run five times while dead tuples climbed from
+  58k to 66k: 7.07, 7.45, 7.83, 7.32, 7.35s. Also flat.
+
+Inserts do not care about dead tuples, and the seeded tables are small enough
+(412 games, 674 teams) that even 66k dead rows is a few MB living in shared
+buffers. Autovacuum also keeps up *during* a run, not only after it.
+
+So the way this suite becomes an hour long is by someone adding an hour of
+seeds, one deliberate test at a time — not by drift. The numbers to plan with,
+under `-race`: a football week seed ~8s, a basketball season seed ~100s, a page
+render ~0.1-0.2s. Wall clock is roughly the slowest package rather than the sum,
+since packages run in parallel.
+
+`synchronous_commit = off` on the test database was tried and does nothing here,
+which is worth knowing before someone tries it again: `testdb` wraps a whole
+test in one transaction and rolls it back, so there is almost nothing to commit.
+
 What is structurally true and needs no measuring: the basketball season seed is
 the longest pole by a wide margin and everything else finishes inside its
 shadow. So the next seeded test is close to free, and the one that finally
