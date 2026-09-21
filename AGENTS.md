@@ -4,8 +4,9 @@
 
 - `make dev` — Docker Compose with Air hot reload
 - `make test` — run all tests (`go test -v -race -cover ./...`)
-- `make test-db` — the same, against a real PostgreSQL. The repository
-  tests skip without it; see Testing
+- `make test-db` — the same, against a real PostgreSQL, which it drops and
+  recreates first so a local run starts where CI starts. The repository tests
+  skip without it; see Testing
 - `go test -v -race ./internal/bets/...` — run tests for one package
 - `make fmt` — format code
 - `make fmt-check` / `make fix-check` / `make vet` / `make vulncheck` — the
@@ -493,28 +494,41 @@ Seeded tests stay few and shared: a week is thousands of rows written and
 rolled back, about 1.3s — nearer 8s under `-race`. `make test` is unaffected at
 3–4s because these skip without a database.
 
-`make test-db` and CI are a few seconds under two minutes, and **almost all of
-that is one test.** The basketball season seed is ~100s under `-race` against a
-loaded database and is the critical path; every other package finishes inside
-its shadow, so the suite's wall clock is `cbbdata` plus a little. Levels 3 and 4
-added two football seeds and forty page renders and moved the total by nothing
-measurable. Two consequences worth knowing:
+**Do not benchmark this suite on a laptop.** Wall clock for `make test-db`
+measured between 62s and 120s across runs of *identical* code, with the database
+recreated before each one — and the sign of a main-versus-branch difference
+flipped between adjacent pairs. Per-package times are worse: `cmd/server`
+measured 7s, 19s, 34s, 55s and 72s across five runs of one commit.
 
-- **Per-package times are not a budget.** They swing three-fold between runs —
-  `cmd/server` was 7s, 72s, 55s and 19s across four runs of the same commit —
-  because twenty packages share one PostgreSQL. Compare wall clock across runs,
-  not one package's number against another's.
-- **The next seeded test is close to free, until basketball stops being the
-  longest pole.** Then everything changes at once. The lever at that point is
-  to run the seeded tests as their own job, not to make them prove less: the
-  basketball test is also the only thing exercising `seedcbb -fixtures` end to
-  end.
+The cause is contention, not CPU. Load average during a run is ~2.5 on twenty
+cores; the suite is bound on the single PostgreSQL container that twenty test
+binaries hammer in parallel, and how that resolves is chaotic. To find out
+whether a change costs time, read CI — its database is a fresh service container
+and its machine is doing nothing else.
 
-They also couple to the fixture set, so a recapture moves a test that turns on
-"the third FCS game of week 2".
+What is structurally true and needs no measuring: the basketball season seed is
+the longest pole by a wide margin and everything else finishes inside its
+shadow. So the next seeded test is close to free, and the one that finally
+displaces basketball is not — at which point the lever is to run the seeded
+tests as their own CI job, not to make them prove less. That test is also the
+only thing exercising `seedcbb -fixtures` end to end.
 
-Run them with `make test-db`, which starts the compose database and creates
-`betting_tracker_test` beside the development one. Without `TEST_DATABASE_URL`
+One thing that is *not* the explanation, having been chased: dead tuples. Every
+test rolls its transaction back, but a rolled-back transaction has already
+written its heap tuples — rollback only marks them invisible — so immediately
+after a run every seeded table is 100% garbage (`games` at 0 live rows, 4,784
+dead, 5.9 MB). Autovacuum reclaims it within minutes, so it does not survive
+between runs and it is not what makes one run slower than the last.
+
+Seeded tests also couple to the fixture set, so a recapture moves a test that
+turns on "the third FCS game of week 2".
+
+Run them with `make test-db`, which starts the compose database and **drops and
+recreates** `betting_tracker_test` beside the development one. Recreating rather
+than creating-if-absent is so a local run starts where CI starts: CI gets a
+fresh service container every job, and a laptop got whatever the last twenty
+runs left behind. The target refuses a `TEST_DB_NAME` that does not end in
+`_test`, because the development database is on the same server one word away. Without `TEST_DATABASE_URL`
 they **skip** locally so a plain `make test` still passes with nothing running,
 and **fail** when `CI` is set, so renaming the variable out from under them
 cannot turn the suite green by accident.
