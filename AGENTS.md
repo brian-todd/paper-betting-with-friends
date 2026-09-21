@@ -534,8 +534,24 @@ buffers. Autovacuum also keeps up *during* a run, not only after it.
 So the way this suite becomes an hour long is by someone adding an hour of
 seeds, one deliberate test at a time — not by drift. The numbers to plan with,
 under `-race`: a football week seed ~8s, a basketball season seed ~100s, a page
-render ~0.1-0.2s. Wall clock is roughly the slowest package rather than the sum,
-since packages run in parallel.
+render ~0.1-0.2s.
+
+**Cost the change against CI's core count, not a laptop's.** `go test` defaults
+`-p` to GOMAXPROCS, so a 20-core machine runs twenty test binaries at once and
+wall clock is roughly the slowest package — which makes a new seeded test look
+free. GitHub's free-tier `ubuntu-latest` has **2 vCPUs**, so it runs two, and
+wall clock is roughly the *sum* halved. A seeded test that costs nothing locally
+costs half its own duration on every CI run, forever.
+
+The metric that survives the difference is **summed package time**, which is
+parallelism-independent: `go test -race ./... | awk '/^ok/{...}'`. It is 245s on
+this tree against 196s before levels 3 and 4. Reproduce CI's shape locally with
+`go test -p 2`, which turns a 78s run into a 127s one.
+
+Of that 245s, the basketball season seed is ~100s — a single test, 40% of the
+suite. If CI time ever becomes the binding constraint, that is the first lever
+and a separate job is the way to pull it, since the test is also the only thing
+exercising `seedcbb -fixtures` end to end.
 
 `synchronous_commit = off` on the test database was tried and does nothing here,
 which is worth knowing before someone tries it again: `testdb` wraps a whole
