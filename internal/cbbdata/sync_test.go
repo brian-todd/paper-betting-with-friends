@@ -139,3 +139,56 @@ func TestQuotesBySourceFoldsTwoSpellingsOfOneBook(t *testing.T) {
 		t.Errorf("unknown = %q, want only PointsBet", unknown)
 	}
 }
+
+func TestIncrementalWindow(t *testing.T) {
+	newYork, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		now       time.Time
+		wantStart string
+		wantEnd   string
+	}{
+		{
+			// The instant of the run that exposed it: a clock mid-second, whose
+			// hour, minute, second and milliseconds all leaked into the old
+			// layout.
+			name:      "a run at an arbitrary instant",
+			now:       time.Date(2026, 9, 23, 21, 30, 30, 747_000_000, time.UTC),
+			wantStart: "2026-09-22T00:00:00.000Z",
+			wantEnd:   "2026-09-26T23:59:59.000Z",
+		},
+		{
+			name:      "the window crosses a year end",
+			now:       time.Date(2026, 12, 30, 12, 0, 0, 0, time.UTC),
+			wantStart: "2026-12-29T00:00:00.000Z",
+			wantEnd:   "2027-01-02T23:59:59.000Z",
+		},
+		{
+			// 8pm on the 15th in New York is already the 16th in UTC, and the
+			// strings claim UTC.
+			name:      "a clock in another zone is read as its UTC day",
+			now:       time.Date(2026, 1, 15, 20, 0, 0, 0, newYork),
+			wantStart: "2026-01-15T00:00:00.000Z",
+			wantEnd:   "2026-01-19T23:59:59.000Z",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, end := incrementalWindow(tt.now)
+			if start != tt.wantStart || end != tt.wantEnd {
+				t.Errorf("incrementalWindow(%s) = %s .. %s, want %s .. %s",
+					tt.now, start, end, tt.wantStart, tt.wantEnd)
+			}
+			for _, s := range []string{start, end} {
+				if _, err := time.Parse(time.RFC3339, s); err != nil {
+					t.Errorf("%q is not an RFC 3339 instant, which is what CBBD validates: %v", s, err)
+				}
+			}
+		})
+	}
+}
