@@ -111,3 +111,31 @@ func TestMapProviderToSource(t *testing.T) {
 		})
 	}
 }
+
+func TestQuotesBySourceFoldsTwoSpellingsOfOneBook(t *testing.T) {
+	// Basketball's feed spells DraftKings with a space and both spellings map
+	// to one source here, so a response carrying both must still write the
+	// line history once per series per run.
+	quotes, unknown := quotesBySource([]APILineProvider{
+		{Provider: "DraftKings", Spread: new(-3.0), OverUnder: new(141.5)},
+		{Provider: "PointsBet", Spread: new(-2.5)},
+		{Provider: "Draft Kings", OverUnder: new(142.5), HomeMoneyline: new(-150.0), AwayMoneyline: new(130.0)},
+	})
+
+	if len(quotes) != 1 || quotes[0].source != models.OddsSourceDraftKings {
+		t.Fatalf("got %+v, want a single draftkings quote", quotes)
+	}
+	dk := quotes[0].line
+	if dk.OverUnder == nil || *dk.OverUnder != 142.5 {
+		t.Errorf("total = %v, want the later quote's 142.5", dk.OverUnder)
+	}
+	if dk.HomeMoneyline == nil || *dk.HomeMoneyline != -150 {
+		t.Errorf("home money line = %v, want the later quote's -150", dk.HomeMoneyline)
+	}
+	if dk.Spread == nil || *dk.Spread != -3 {
+		t.Errorf("spread = %v, want the earlier quote's -3, which the later one left empty", dk.Spread)
+	}
+	if len(unknown) != 1 || unknown[0] != "PointsBet" {
+		t.Errorf("unknown = %q, want only PointsBet", unknown)
+	}
+}

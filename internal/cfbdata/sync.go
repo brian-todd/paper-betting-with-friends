@@ -37,6 +37,7 @@ type SyncService struct {
 	moneyLineOddsRepo *repository.MoneyLineOddsRepository
 	spreadOddsRepo    *repository.SpreadOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
+	oddsMovementRepo  *repository.OddsMovementRepository
 	rankingRepo       *repository.RankingRepository
 	teamRatingRepo    *repository.TeamRatingRepository
 	teamRecordRepo    *repository.TeamRecordRepository
@@ -72,6 +73,7 @@ func NewSyncService(client *Client, db *gorm.DB) *SyncService {
 		moneyLineOddsRepo: repository.NewMoneyLineOddsRepository(db),
 		spreadOddsRepo:    repository.NewSpreadOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
+		oddsMovementRepo:  repository.NewOddsMovementRepository(db),
 		rankingRepo:       repository.NewRankingRepository(db),
 		teamRatingRepo:    repository.NewTeamRatingRepository(db),
 		teamRecordRepo:    repository.NewTeamRecordRepository(db),
@@ -690,6 +692,29 @@ func (s *SyncService) SyncLines(ctx context.Context, year int, week *int, season
 	// slate, but the run has to end up reporting it -- see syncerr.
 	var failed syncerr.Tally
 
+	// Every line written is offered to the history, which keeps it only if it
+	// moved. One instant for the whole run, so every book's movement from one
+	// response is dated alike. A movement that will not save leaves the run
+	// incomplete, but in its own tally: the lines themselves are stored and
+	// bettable, and an admin page reading "odds writes failed" would send
+	// someone after the wrong fault. The next run writes it instead, since the
+	// history still disagrees with the feed.
+	now := s.clock.Now()
+	moved := 0
+	var failedMoves syncerr.Tally
+	recordMove := func(m models.OddsMovement) {
+		recorded, err := s.oddsMovementRepo.Record(m)
+		if err != nil {
+			s.logger.Error("failed to record odds movement",
+				"game_id", m.GameID, "source", m.Source, "market", m.Market, "error", err)
+			failedMoves.Add(err)
+			return
+		}
+		if recorded {
+			moved++
+		}
+	}
+
 	// A book we do not recognise is worth one line a run, not one a quote. A
 	// new sportsbook pricing the whole slate would otherwise bury the log
 	// under thousands of identical warnings -- and a log nobody can read is
@@ -708,16 +733,17 @@ func (s *SyncService) SyncLines(ctx context.Context, year int, week *int, season
 		homeTeam, _ := s.teamRepo.FindByExternalID(l.HomeTeamID, models.SportFootball)
 		awayTeam, _ := s.teamRepo.FindByExternalID(l.AwayTeamID, models.SportFootball)
 
-		for _, line := range l.Lines {
-			source, known := mapProviderToSource(line.Provider)
-			if !known && !unknownBooks[line.Provider] {
-				unknownBooks[line.Provider] = true
+		quotes, unknown := quotesBySource(l.Lines)
+		for _, provider := range unknown {
+			if !unknownBooks[provider] {
+				unknownBooks[provider] = true
 				s.logger.Warn("skipping odds from an unrecognised sportsbook",
-					"provider", line.Provider, "first_seen_on_game", l.ID)
+					"provider", provider, "first_seen_on_game", l.ID)
 			}
-			if source == "" {
-				continue
-			}
+		}
+
+		for _, quote := range quotes {
+			source, line := quote.source, quote.line
 
 			// Sync money line odds.
 			if line.HomeMoneyline != nil && line.AwayMoneyline != nil {
@@ -730,6 +756,8 @@ func (s *SyncService) SyncLines(ctx context.Context, year int, week *int, season
 				if err := s.moneyLineOddsRepo.Upsert(mlOdds); err != nil {
 					s.logger.Error("failed to upsert money line odds", "game", l.ID, "source", source, "error", err)
 					failed.Add(err)
+				} else {
+					recordMove(models.MoneyLineMovement(*mlOdds, now))
 				}
 			}
 
@@ -748,6 +776,8 @@ func (s *SyncService) SyncLines(ctx context.Context, year int, week *int, season
 				if err := s.spreadOddsRepo.Upsert(spreadOdds); err != nil {
 					s.logger.Error("failed to upsert spread odds", "game", l.ID, "source", source, "error", err)
 					failed.Add(err)
+				} else {
+					recordMove(models.SpreadMovement(*spreadOdds, now))
 				}
 			}
 
@@ -764,6 +794,8 @@ func (s *SyncService) SyncLines(ctx context.Context, year int, week *int, season
 				if err := s.overUnderOddsRepo.Upsert(ouOdds); err != nil {
 					s.logger.Error("failed to upsert over/under odds", "game", l.ID, "source", source, "error", err)
 					failed.Add(err)
+				} else {
+					recordMove(models.OverUnderMovement(*ouOdds, now))
 				}
 			}
 		}
@@ -771,8 +803,58 @@ func (s *SyncService) SyncLines(ctx context.Context, year int, week *int, season
 		syncedCount++
 	}
 
-	s.logger.Info("synced lines for games", "for", syncedCount, "failed_writes", failed.Count())
-	return failed.Err("odds")
+	s.logger.Info("synced lines for games", "for", syncedCount, "moved", moved,
+		"failed_writes", failed.Count(), "failed_history_writes", failedMoves.Count())
+	return errors.Join(failed.Err("odds"), failedMoves.Err("odds history"))
+}
+
+// A sourcedQuote is one book's line for a game, its provider resolved to the
+// source the odds tables are keyed by.
+type sourcedQuote struct {
+	source models.OddsSource
+	line   APILineProvider
+}
+
+// quotesBySource folds a game's quotes to one per source, and names the
+// providers it did not recognise.
+//
+// Two spellings can map to one source -- "ESPN" and "ESPN Bet" both do -- and
+// the odds tables hold one row per source, so the second quote overwrites the
+// first. Writing both in one run would also give the line history two values
+// at one instant: it keeps the later, and the next run's first quote then reads
+// as a move away from it and back, one phantom row per sync. So the fold
+// happens before anything is written, market by market with the later quote
+// winning, which is what the odds rows ended up holding when both were written.
+// A market the later quote leaves empty keeps the earlier quote's number.
+func quotesBySource(lines []APILineProvider) (quotes []sourcedQuote, unknown []string) {
+	index := make(map[models.OddsSource]int)
+	for _, line := range lines {
+		source, known := mapProviderToSource(line.Provider)
+		if !known {
+			unknown = append(unknown, line.Provider)
+		}
+		if source == "" {
+			continue
+		}
+
+		i, seen := index[source]
+		if !seen {
+			index[source] = len(quotes)
+			quotes = append(quotes, sourcedQuote{source: source, line: line})
+			continue
+		}
+		folded := &quotes[i].line
+		if line.HomeMoneyline != nil && line.AwayMoneyline != nil {
+			folded.HomeMoneyline, folded.AwayMoneyline = line.HomeMoneyline, line.AwayMoneyline
+		}
+		if line.Spread != nil && line.FormattedSpread != "" {
+			folded.Spread, folded.FormattedSpread = line.Spread, line.FormattedSpread
+		}
+		if line.OverUnder != nil {
+			folded.OverUnder = line.OverUnder
+		}
+	}
+	return quotes, unknown
 }
 
 // parseSpread parses the formatted spread and returns separate home and away spreads.

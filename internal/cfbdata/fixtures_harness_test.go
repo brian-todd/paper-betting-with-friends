@@ -67,11 +67,12 @@ type feed struct {
 	fake *fixtureserver.Server
 }
 
-// newFeed wires a sync service to the fixtures at a chosen instant.
-func newFeed(t *testing.T, db *gorm.DB, at time.Time) *feed {
+// newFeed wires a sync service to the fixtures at a chosen instant. The options
+// go to the fixture server, for a test replaying a tree of its own.
+func newFeed(t *testing.T, db *gorm.DB, at time.Time, opts ...fixtureserver.Option) *feed {
 	t.Helper()
 
-	base, fake, stop, err := fixtureserver.Listen(fixtures.CFBD)
+	base, fake, stop, err := fixtureserver.Listen(fixtures.CFBD, opts...)
 	if err != nil {
 		t.Fatalf("starting the fake upstream: %v", err)
 	}
