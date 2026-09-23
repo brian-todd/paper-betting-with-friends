@@ -173,9 +173,7 @@ func (s *SyncService) SeedAll(ctx context.Context, season int) error {
 
 // SyncGamesAndLines performs an incremental sync of games and lines for a date window.
 func (s *SyncService) SyncGamesAndLines(ctx context.Context) error {
-	now := s.clock.Now()
-	start := now.AddDate(0, 0, -1).Format("2006-01-02T00:00:00.000Z")
-	end := now.AddDate(0, 0, 3).Format("2006-01-02T23:59:59.000Z")
+	start, end := incrementalWindow(s.clock.Now())
 
 	s.logger.Info("starting incremental sync", "from", start, "to", end)
 
@@ -189,6 +187,25 @@ func (s *SyncService) SyncGamesAndLines(ctx context.Context) error {
 
 	s.logger.Info("incremental sync completed")
 	return nil
+}
+
+// incrementalWindow is the span the incremental sync asks for: from the start
+// of yesterday to the end of three days from now, as UTC days in the ISO 8601
+// form the API validates.
+//
+// The times of day are appended as text rather than written into the layout.
+// Go reads a layout by its reference values, so "T23:59:59.000Z" is not a
+// literal: the 2 is the day, the 3 the hour, the 5 the second and .000 the
+// milliseconds. It rendered as "T269:309:309.747Z", CBBD refused it with a 400,
+// and the job had failed every run since it was written -- the only basketball
+// data in any database came from a manual seed.
+//
+// The instant is taken to UTC first, since the strings say Z.
+func incrementalWindow(now time.Time) (start, end string) {
+	today := now.UTC()
+	start = today.AddDate(0, 0, -1).Format(time.DateOnly) + "T00:00:00.000Z"
+	end = today.AddDate(0, 0, 3).Format(time.DateOnly) + "T23:59:59.000Z"
+	return start, end
 }
 
 func (s *SyncService) syncVenues(ctx context.Context) error {

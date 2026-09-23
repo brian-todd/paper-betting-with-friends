@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newTestClient points a Client at a fake upstream. httptest.NewTestServer
@@ -191,5 +193,41 @@ func TestClientHonorsContextCancellation(t *testing.T) {
 
 	if _, err := c.GetTeams(ctx); err == nil {
 		t.Fatal("GetTeams() error = nil, want a context error")
+	}
+}
+
+// The incremental sync is the only caller that builds its own date window, and
+// it sent a malformed one on every run from the day it was written: CBBD
+// answered 400 and the job never succeeded. This drives the real method so the
+// window is checked where it leaves the process, on both requests.
+func TestSyncGamesAndLinesSendsAValidDateWindow(t *testing.T) {
+	var queries []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Path+"?"+r.URL.RawQuery)
+		w.Write([]byte(`[]`))
+	})
+
+	// An empty answer to both requests means nothing is looked up, so no
+	// database is needed.
+	sync := NewSyncService(c, nil)
+	sync.SetClock(func() time.Time { return time.Date(2026, 9, 23, 21, 30, 30, 747_000_000, time.UTC) })
+	if err := sync.SyncGamesAndLines(context.Background()); err != nil {
+		t.Fatalf("SyncGamesAndLines() error = %v", err)
+	}
+
+	if len(queries) != 2 {
+		t.Fatalf("made %d requests, want /games and /lines: %v", len(queries), queries)
+	}
+	for _, q := range queries {
+		u, err := url.Parse(q)
+		if err != nil {
+			t.Fatalf("parsing %q: %v", q, err)
+		}
+		for _, param := range []string{"startDateRange", "endDateRange"} {
+			v := u.Query().Get(param)
+			if _, err := time.Parse(time.RFC3339, v); err != nil {
+				t.Errorf("%s sent %s=%q, which is not an RFC 3339 instant: %v", u.Path, param, v, err)
+			}
+		}
 	}
 }
