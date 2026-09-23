@@ -655,9 +655,16 @@ to forget to set.
 | Level | Boundary | Where |
 | --- | --- | --- |
 | 1 | Fixture → client | `internal/{cfbdata,cbbdata}/client_fixtures_test.go` |
-| 2 | Fixture → database | `internal/cfbdata/{games_status,convergence,classification}_fixtures_test.go`, `internal/cbbdata/level2_fixtures_test.go` |
-| 3 | Database → page | `internal/games/level3_fixtures_test.go`, `internal/bets/level3_fixtures_test.go` |
-| 4 | Fixture → page | `cmd/server/level4_fixtures_test.go` |
+| 2 | Fixture → database | `internal/cfbdata/{games_status,convergence,classification}_fixtures_test.go`, `internal/cbbdata/sync_fixtures_test.go` |
+| 3 | Database → page | `internal/games/handler_fixtures_test.go`, `internal/bets/edit_fixtures_test.go` |
+| 4 | Fixture → page | `cmd/server/app_fixtures_test.go` |
+
+A test file is named for the source file it exercises, never for its level:
+`<file>_test.go`, `<file>_<topic>_test.go` for a slice of a large one, and
+`<file>_fixtures_test.go` when it runs against the captured feed. Helpers
+shared across a package's tests go in `<subject>_harness_test.go`. The level is
+a property of what a test crosses, which the file's opening comment says; the
+name is what someone looking at `edit.go` searches for.
 
 Level 2 is where the write rules above get tested, and they need the recorded
 disagreement: `/games` week 1 and the first live scoreboard snapshot contradict
