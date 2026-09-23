@@ -272,6 +272,61 @@ keeps out the odds row `FindByID` preloads — a whole-struct `Save` wrote that
 row's ID back over the foreign key, so moving a bet to a different line silently
 kept it pointing at the old one while the snapshot changed.
 
+### Line History
+
+The odds tables hold one row per game and book, overwritten by every lines
+sync, so on their own they only know the current price. `odds_movements` is the
+history behind them: a row each time a series — game, market, source — takes a
+value it did not hold at the previous sync, and nothing when a sync finds the
+line unchanged.
+
+A row carries the **whole value**, not a delta. The row count is the same, but a
+delta log has to be summed from its first entry to read any point in it and one
+lost row corrupts everything after; here the line at an instant is the latest
+row at or before it. Read the series as a step, not a slope — a line moves in
+ticks, and a value between two rows is one no book offered. The move itself
+happened somewhere between the previous sync and `recorded_at`, so the lines
+cadence is the resolution. There is no `away_spread` column: a point spread is
+one number seen from both sides, and both syncs store the away side as the
+negation.
+
+`OddsMovementRepository.Record` decides in one statement, and the sync offers it
+every line it writes after a successful upsert:
+
+- It compares against the **latest movement**, not the odds row. So the odds
+  upsert keeps bumping `updated_at`, which the game page shows as when the line
+  was last checked; an empty series counts as a change, which records every
+  first value with no backfill; and a movement that fails to write is written by
+  the next sync instead, because the history still disagrees with the feed — the
+  two writes need no transaction. A failed history write leaves the run
+  incomplete in its own tally ("odds history writes failed"), not the odds one:
+  the lines themselves were stored.
+- "Latest" is the latest **at or before the incoming instant**. A replay at an
+  earlier time than a stored sync is compared with what came before it, but
+  nothing re-checks the row after it, which may now repeat its value.
+- Values are cast to the column types before comparing, so -110 and -110.00, or
+  a basketball number through `NewFromFloat`, are one line.
+- **A book's quotes are folded to one per run before anything is written**
+  (`quotesBySource` in each sync). "ESPN" and "ESPN Bet" map to one source; written
+  as two quotes, the later one won the odds row and the history's row for that
+  instant, and the next run's first quote then read as a move away and back — a
+  phantom row per series on every sync. The fold is market by market, later quote
+  winning, which is what the odds rows held before. The unique index on
+  (series, instant) and its `ON CONFLICT` are only a backstop.
+- Two lines syncs running at once — a seed job overlapping the scheduled one —
+  can both record the same move. Nothing serialises them, because the cost is a
+  row that repeats the value before it: the line read at any instant is still
+  right, and a lock per series would cost more than the row.
+
+`recorded_at` is the sync service's clock, read once per run, never the
+database's `now()`. A seed of a past week therefore records one row per series
+dated when the seed ran — true as "first seen by us", not a real history.
+
+What it cannot see: a book pulling a line. The sync never deletes an odds row,
+so a withdrawn line reads as unchanged. CFBD's `spreadOpen`/`overUnderOpen` are
+not recorded either — they carry no instant, and inventing one would be worse
+than leaving them out.
+
 ### Game Results
 
 A `GameResult` row is written whenever the provider reports a score, which need
@@ -680,7 +735,7 @@ to forget to set.
 | Level | Boundary | Where |
 | --- | --- | --- |
 | 1 | Fixture → client | `internal/{cfbdata,cbbdata}/client_fixtures_test.go` |
-| 2 | Fixture → database | `internal/cfbdata/{games_status,convergence,classification}_fixtures_test.go`, `internal/cbbdata/sync_fixtures_test.go` |
+| 2 | Fixture → database | `internal/cfbdata/{games_status,convergence,classification,sync_lines}_fixtures_test.go`, `internal/cbbdata/sync_fixtures_test.go` |
 | 3 | Database → page | `internal/games/handler_fixtures_test.go`, `internal/bets/edit_fixtures_test.go` |
 | 4 | Fixture → page | `cmd/server/app_fixtures_test.go` |
 
@@ -755,6 +810,23 @@ adding a second week moves an unrelated expectation.
 **Read a set once, not a row at a time.** A page holds a hundred cards and a
 week holds four hundred; checking each one with its own query is correct and
 takes twenty seconds. `gamesInTier` and `gamesWithALine` are the shape to copy.
+
+**Verify with single-table reads, not joins, when the set is large.** The
+planner's statistics are whatever the last rolled-back run left: once autovacuum
+has cleaned up after one, every table reads as "no tuples in N pages", the
+planner estimates one row for each, and a join picks a nested loop that rescans
+the inner table per outer row. Measured on the basketball season, a LATERAL
+check of spreads against their history took 24 ms on a freshly created database
+and 10.4 s after a previous run — the same query, the same rows. `make test-db`
+recreates the database, so a full run starts fast and a package run straight
+after another does not. `testdb.OddsHistory` reads each table on its own and
+pairs the rows in Go, which has no join order to get wrong.
+
+A check that compares two things built by the same function is not a check. The
+line-history invariant maps odds rows to movements column by column in `testdb`
+rather than through `models.SpreadMovement` and its siblings, because those are
+what the sync records with — mapping both sides through them let a constructor
+reading the wrong column agree with itself.
 
 ### Logging
 
@@ -932,6 +1004,10 @@ a migration is the wrong place to decide that.
 - Re-capturing an *unplayed* week — its value is that the games had not happened, and a refresh destroys it silently
 - Inferring a status from a `startTimeTBD` placeholder or a zero `startDate` — both are instants the feed does not mean, and `advancesFrom` has no edge back from the `in_progress` they produce
 - A unique index on a display string — the one on `teams.abbreviation` cost 107 basketball teams and the 49 games that needed them, because `Upsert` arbitrates a different index and the violation was logged and continued past
+- Deltas in `odds_movements` — store the whole line at each change; a delta log turns one lost row into every later value being wrong
+- Writing a book's quotes one by one in a lines sync — fold them with `quotesBySource` first, or a book under two spellings records a phantom move every run
+- Deciding whether a line moved by comparing against the odds row — the upsert has already overwritten it, and comparing against the latest movement is what lets a failed history write heal on the next sync
+- Dating a movement with the database's `now()` — use the sync's clock, or a replayed fixture records today instead of its capture instant
 - Replaying a fixture against the real clock — use `SetClock` or `fixtureseed.At`, or every recorded game reads as long finished
 - A level-2 test in the internal test package — `fixtureseed` imports the sync packages, so it has to be `package cfbdata_test`
 - Trusting a green write-rule test — mutate the rule and confirm it fails, or it is asserting on data that never contested anything

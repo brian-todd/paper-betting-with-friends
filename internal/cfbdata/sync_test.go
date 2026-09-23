@@ -398,3 +398,44 @@ func TestRankingsFromPollTeamDroppingOutOfPoll(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotesBySourceFoldsTwoSpellingsOfOneBook(t *testing.T) {
+	// "ESPN" and "ESPN Bet" are one source. Written as two quotes they gave the
+	// line history two values at one instant, and every later run a phantom
+	// move -- so they are folded before anything is written.
+	quotes, unknown := quotesBySource([]APILineProvider{
+		{Provider: "ESPN", Spread: new(-3.0), FormattedSpread: "Home -3", OverUnder: new(47.5)},
+		{Provider: "Bovada", Spread: new(-3.5), FormattedSpread: "Home -3.5"},
+		{Provider: "Draft Kings", Spread: new(-4.0), FormattedSpread: "Home -4"},
+		{Provider: "PointsBet", Spread: new(-2.5), FormattedSpread: "Home -2.5"},
+		{Provider: "ESPN Bet", OverUnder: new(48.5), HomeMoneyline: new(-150), AwayMoneyline: new(130)},
+	})
+
+	if len(quotes) != 2 {
+		t.Fatalf("got %d quotes, want one each for espn and bovada: %+v", len(quotes), quotes)
+	}
+	if quotes[0].source != models.OddsSourceESPN || quotes[1].source != models.OddsSourceBovada {
+		t.Errorf("sources are %s, %s; want espn then bovada, in the order each first appears",
+			quotes[0].source, quotes[1].source)
+	}
+
+	espn := quotes[0].line
+	// The later quote wins the market it prices...
+	if espn.OverUnder == nil || *espn.OverUnder != 48.5 {
+		t.Errorf("espn total = %v, want the later quote's 48.5", espn.OverUnder)
+	}
+	if espn.HomeMoneyline == nil || *espn.HomeMoneyline != -150 || espn.AwayMoneyline == nil || *espn.AwayMoneyline != 130 {
+		t.Errorf("espn money line = %v/%v, want the later quote's -150/130", espn.HomeMoneyline, espn.AwayMoneyline)
+	}
+	// ...and a market it leaves empty keeps the earlier quote's number, which
+	// is what the odds row held when both quotes were written.
+	if espn.Spread == nil || *espn.Spread != -3 || espn.FormattedSpread != "Home -3" {
+		t.Errorf("espn spread = %v %q, want the earlier quote's -3", espn.Spread, espn.FormattedSpread)
+	}
+
+	// The spaced DraftKings is dropped knowingly, so only the unknown book is
+	// named for a warning.
+	if !reflect.DeepEqual(unknown, []string{"PointsBet"}) {
+		t.Errorf("unknown = %q, want only PointsBet", unknown)
+	}
+}

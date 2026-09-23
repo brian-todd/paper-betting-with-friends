@@ -33,6 +33,7 @@ type SyncService struct {
 	moneyLineOddsRepo *repository.MoneyLineOddsRepository
 	spreadOddsRepo    *repository.SpreadOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
+	oddsMovementRepo  *repository.OddsMovementRepository
 	betEvaluator      BetEvaluator
 	logger            *slog.Logger
 
@@ -55,6 +56,7 @@ func NewSyncService(client *Client, db *gorm.DB) *SyncService {
 		moneyLineOddsRepo: repository.NewMoneyLineOddsRepository(db),
 		spreadOddsRepo:    repository.NewSpreadOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
+		oddsMovementRepo:  repository.NewOddsMovementRepository(db),
 	}
 }
 
@@ -448,6 +450,29 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 	// slate, but the run has to end up reporting it -- see syncerr.
 	var failed syncerr.Tally
 
+	// Every line written is offered to the history, which keeps it only if it
+	// moved. One instant for the whole run, so every book's movement from one
+	// response is dated alike. A movement that will not save leaves the run
+	// incomplete, but in its own tally: the lines themselves are stored and
+	// bettable, and an admin page reading "odds writes failed" would send
+	// someone after the wrong fault. The next run writes it instead, since the
+	// history still disagrees with the feed.
+	now := s.clock.Now()
+	moved := 0
+	var failedMoves syncerr.Tally
+	recordMove := func(m models.OddsMovement) {
+		recorded, err := s.oddsMovementRepo.Record(m)
+		if err != nil {
+			s.logger.Error("failed to record odds movement",
+				"game_id", m.GameID, "source", m.Source, "market", m.Market, "error", err)
+			failedMoves.Add(err)
+			return
+		}
+		if recorded {
+			moved++
+		}
+	}
+
 	// One warning a run per unrecognised book, not one a quote. A new
 	// sportsbook pricing the slate would otherwise bury the log, and this feed
 	// syncs a month of basketball at a time.
@@ -460,15 +485,16 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 			continue
 		}
 
-		for _, line := range l.Lines {
-			source, known := mapProviderToSource(line.Provider)
-			if !known && !unknownBooks[line.Provider] {
-				unknownBooks[line.Provider] = true
-				s.logger.Warn("skipping odds from an unrecognised sportsbook", "provider", line.Provider)
+		quotes, unknown := quotesBySource(l.Lines)
+		for _, provider := range unknown {
+			if !unknownBooks[provider] {
+				unknownBooks[provider] = true
+				s.logger.Warn("skipping odds from an unrecognised sportsbook", "provider", provider)
 			}
-			if source == "" {
-				continue
-			}
+		}
+
+		for _, quote := range quotes {
+			source, line := quote.source, quote.line
 
 			// Sync money line odds.
 			if line.HomeMoneyline != nil && line.AwayMoneyline != nil {
@@ -481,6 +507,8 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 				if err := s.moneyLineOddsRepo.Upsert(mlOdds); err != nil {
 					s.logger.Error("failed to upsert money line odds", "game", l.GameID, "source", source, "error", err)
 					failed.Add(err)
+				} else {
+					recordMove(models.MoneyLineMovement(*mlOdds, now))
 				}
 			}
 
@@ -501,6 +529,8 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 				if err := s.spreadOddsRepo.Upsert(spreadOdds); err != nil {
 					s.logger.Error("failed to upsert spread odds", "game", l.GameID, "source", source, "error", err)
 					failed.Add(err)
+				} else {
+					recordMove(models.SpreadMovement(*spreadOdds, now))
 				}
 			}
 
@@ -516,6 +546,8 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 				if err := s.overUnderOddsRepo.Upsert(ouOdds); err != nil {
 					s.logger.Error("failed to upsert over/under odds", "game", l.GameID, "source", source, "error", err)
 					failed.Add(err)
+				} else {
+					recordMove(models.OverUnderMovement(*ouOdds, now))
 				}
 			}
 		}
@@ -523,8 +555,9 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 		syncedCount++
 	}
 
-	s.logger.Info("synced lines for games", "for", syncedCount, "failed_writes", failed.Count())
-	return failed.Err("odds")
+	s.logger.Info("synced lines for games", "for", syncedCount, "moved", moved,
+		"failed_writes", failed.Count(), "failed_history_writes", failedMoves.Count())
+	return errors.Join(failed.Err("odds"), failedMoves.Err("odds history"))
 }
 
 // gameResultFrom builds the score row for a game the provider has reported
@@ -571,6 +604,49 @@ func mapGameStatus(status string) models.GameStatus {
 	default:
 		return models.GameStatusScheduled
 	}
+}
+
+// A sourcedQuote is one book's line for a game, its provider resolved to the
+// source the odds tables are keyed by.
+type sourcedQuote struct {
+	source models.OddsSource
+	line   APILineProvider
+}
+
+// quotesBySource folds a game's quotes to one per source, and names the
+// providers it did not recognise. See cfbdata's for why: two spellings mapping
+// to one source would otherwise write the line history twice at one instant,
+// and every later run would record a phantom move. Market by market, the later
+// quote wins, which is what the odds rows held when both were written.
+func quotesBySource(lines []APILineProvider) (quotes []sourcedQuote, unknown []string) {
+	index := make(map[models.OddsSource]int)
+	for _, line := range lines {
+		source, known := mapProviderToSource(line.Provider)
+		if !known {
+			unknown = append(unknown, line.Provider)
+		}
+		if source == "" {
+			continue
+		}
+
+		i, seen := index[source]
+		if !seen {
+			index[source] = len(quotes)
+			quotes = append(quotes, sourcedQuote{source: source, line: line})
+			continue
+		}
+		folded := &quotes[i].line
+		if line.HomeMoneyline != nil && line.AwayMoneyline != nil {
+			folded.HomeMoneyline, folded.AwayMoneyline = line.HomeMoneyline, line.AwayMoneyline
+		}
+		if line.Spread != nil {
+			folded.Spread = line.Spread
+		}
+		if line.OverUnder != nil {
+			folded.OverUnder = line.OverUnder
+		}
+	}
+	return quotes, unknown
 }
 
 // mapProviderToSource maps API provider names to our OddsSource enum.

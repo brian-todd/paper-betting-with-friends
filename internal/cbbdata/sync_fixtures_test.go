@@ -11,6 +11,8 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/fixtureserver"
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/testdb"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
+	"github.com/google/uuid"
 )
 
 // Basketball at level 2. It is the thinner feed -- four endpoints to football's
@@ -111,6 +113,72 @@ func TestBasketballSeedsARealSeason(t *testing.T) {
 		}
 		if seen[models.GameStatusFinal] == 0 {
 			t.Error("no basketball game reads as final across a whole captured season")
+		}
+	})
+
+	// Line history rides on this seed rather than a seed of its own: a
+	// basketball season is the most expensive thing in the suite, and it has
+	// already put every captured quote through the recorder.
+	var gameIDs []uuid.UUID
+	if err := db.Model(&models.Game{}).Where("sport = ?", models.SportBasketball).
+		Pluck("id", &gameIDs).Error; err != nil {
+		t.Fatalf("reading basketball game IDs: %v", err)
+	}
+
+	t.Run("the seed records every line's first value once", func(t *testing.T) {
+		series := testdb.RequireHistoryMatchesOdds(t, db, gameIDs)
+		if len(series) == 0 {
+			t.Fatal("the season stored no sportsbook lines, so the history has nothing to agree with")
+		}
+		if movements := testdb.CountOddsMovements(t, db, gameIDs, time.Time{}); movements != len(series) {
+			t.Errorf("recorded %d movements for %d series; a seed is every series' first sync",
+				movements, len(series))
+		}
+	})
+
+	t.Run("replaying a month's lines records nothing", func(t *testing.T) {
+		// Every basketball number arrives as a float and goes through
+		// NewFromFloat -- the moneyline included, which football reads as an
+		// int. A value that compared unequal to its own stored form would
+		// record every book on every run of the incremental sync.
+		base, fake, stop, err := fixtureserver.Listen(fixtures.CBBD)
+		if err != nil {
+			t.Fatalf("starting the fake upstream: %v", err)
+		}
+		defer stop()
+
+		replayedAt := seededAt.Add(15 * time.Minute)
+		sync := cbbdata.NewSyncService(cbbdata.NewClientAt(base, ""), db)
+		sync.SetClock(timeutil.Fixed(replayedAt))
+
+		// April, the smallest captured month: 13 games and 41 lines. The code
+		// path is the same for every month, and a replay costs a round trip
+		// per quote -- March's 637 games added 7.5s to what is already the
+		// suite's longest test.
+		season := fixtureseed.DefaultSeason
+		start, end := "2026-04-01T00:00:00.000Z", "2026-05-01T00:00:00.000Z"
+		if err := sync.SyncLinesForTest(ctx, cbbdata.LineQueryOpts{
+			Season: &season, StartDateRange: &start, EndDateRange: &end,
+		}); err != nil {
+			t.Fatalf("replaying April's lines: %v", err)
+		}
+		if n := fake.Refusals(); n > 0 {
+			t.Fatalf("the fake upstream refused %d requests; the replay asked for a month nobody captured", n)
+		}
+
+		if n := testdb.CountOddsMovements(t, db, gameIDs, replayedAt); n != 0 {
+			t.Errorf("recorded %d movements replaying lines already stored", n)
+		}
+
+		// Only April's games were written, so only they can have drifted.
+		var april []uuid.UUID
+		if err := db.Model(&models.Game{}).
+			Where("sport = ? AND scheduled_at >= ? AND scheduled_at < ?", models.SportBasketball, start, end).
+			Pluck("id", &april).Error; err != nil {
+			t.Fatalf("reading April's games: %v", err)
+		}
+		if series := testdb.RequireHistoryMatchesOdds(t, db, april); len(series) == 0 {
+			t.Error("April holds no stored lines, so the replay compared nothing")
 		}
 	})
 }
