@@ -390,12 +390,42 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 		cbbSyncService := cbbdata.NewSyncService(cbbdata.NewClient(cfg.CBBDataAPIKey), db)
 		cbbSyncService.SetBetEvaluator(evaluator)
 
+		// Two jobs on one cadence: CBB_SYNC_INTERVAL_MINS through the season,
+		// once a day outside it, with the lines a few minutes behind the games
+		// so a newly listed game is written before its lines look for it. They
+		// were one job, and a /games failure then skipped /lines too -- a lost
+		// line snapshot for every games error. Games is not slowed the way
+		// football's was, because basketball has no scoreboard: /games is where
+		// the score and the settlement come from. See cbbdata.NextGamesSync.
+		//
+		// RunOnStart only out of season, where the slot is a day long and a
+		// process restarting more often than that would never run either. In
+		// season the next slot is minutes away, and a run on every start --
+		// every Air reload, in development -- would be two metered requests
+		// buying nothing. The two startup runs do race each other, so a game
+		// neither had seen can miss its lines until the next day's run; that is
+		// out of season only, and a game three days from tipoff.
+		cbbInterval := time.Duration(cfg.CBBSyncIntervalMins) * time.Minute
+		cbbRunOnStart := !cbbdata.InSeason(time.Now(), location)
 		sched.Add(scheduler.Job{
-			Name:     "cbb-games-and-lines",
-			Label:    "Basketball",
-			Interval: time.Duration(cfg.CBBSyncIntervalMins) * time.Minute,
-			Timeout:  syncRunTimeout,
-			Run:      cbbSyncService.SyncGamesAndLines,
+			Name:  "cbb-games",
+			Label: "Basketball games",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.GamesDelay(now, location, cbbInterval)
+			},
+			RunOnStart: cbbRunOnStart,
+			Timeout:    syncRunTimeout,
+			Run:        cbbSyncService.SyncGames,
+		})
+		sched.Add(scheduler.Job{
+			Name:  "cbb-lines",
+			Label: "Basketball lines",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.LinesDelay(now, location, cbbInterval)
+			},
+			RunOnStart: cbbRunOnStart,
+			Timeout:    syncRunTimeout,
+			Run:        cbbSyncService.SyncLines,
 		})
 
 		// As above, and more so: the basketball incremental sync only looks at

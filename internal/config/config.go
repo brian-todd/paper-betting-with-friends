@@ -34,6 +34,27 @@ const defaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/betting_
 // standing between a forged cookie and the admin portal.
 const minSessionKeyBytes = 32
 
+// The bounds on CBB_SYNC_INTERVAL_MINS.
+//
+// It is the step of a grid laid from midnight, so it has to divide a day: 100
+// would run at 23:20, then 01:00 the next morning, then 01:40, and never land
+// on the midnight where the season changes rate. The floor is the budget: two
+// requests a run at ten minutes is ~8,900 a month, which is what the basketball
+// share of the allowance is planned against (see internal/apibudget). Five
+// would be ~17,900, and with football on the same meter that is most of the
+// 30,000.
+const (
+	MinCBBSyncIntervalMins = 10
+	MaxCBBSyncIntervalMins = 24 * 60
+)
+
+// ValidCBBSyncInterval reports whether mins is an interval the basketball jobs
+// can run on: within the bounds, and dividing a day.
+func ValidCBBSyncInterval(mins int) bool {
+	return mins >= MinCBBSyncIntervalMins && mins <= MaxCBBSyncIntervalMins &&
+		MaxCBBSyncIntervalMins%mins == 0
+}
+
 // Config holds all configuration for the application.
 type Config struct {
 	DatabaseURL         string
@@ -42,7 +63,7 @@ type Config struct {
 	Env                 string
 	CFBDataAPIKey       string // API key for collegefootballdata.com.
 	CBBDataAPIKey       string // API key for collegebasketballdata.com.
-	CBBSyncIntervalMins int    // How often to sync basketball games/lines in minutes.
+	CBBSyncIntervalMins int    // How often the basketball games and lines jobs run in season, in minutes.
 
 	// CFBScoreboardClassifications is the divisions the live scoreboard sync
 	// polls. The endpoint takes one division per call, so each entry is another
@@ -126,6 +147,14 @@ func (c *Config) Validate() error {
 	// passed through to mean "no limit".
 	if c.DBMaxOpenConns < 1 {
 		return fmt.Errorf("DB_MAX_OPEN_CONNS must be at least 1, got %d", c.DBMaxOpenConns)
+	}
+
+	// Only a configured key registers the basketball jobs, and only then is the
+	// interval read. It used to be a plain Interval, where zero quietly disabled
+	// the job; it is a grid step now, and zero divides by it.
+	if c.CBBDataAPIKey != "" && !ValidCBBSyncInterval(c.CBBSyncIntervalMins) {
+		return fmt.Errorf("CBB_SYNC_INTERVAL_MINS must divide a day evenly and be between %d and %d, got %d",
+			MinCBBSyncIntervalMins, MaxCBBSyncIntervalMins, c.CBBSyncIntervalMins)
 	}
 
 	if !c.IsProduction() {

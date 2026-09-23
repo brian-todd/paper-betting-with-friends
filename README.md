@@ -126,24 +126,35 @@ a month of the season, at default configuration (FBS-only scoreboard,
 | `cfb-scoreboard` | 5 min while a game is live, hourly otherwise, one call per division | 1 | ~2,700 |
 | `cfb-calendar` | daily, loops years until the API returns empty | ~25 | ~750 |
 | `cfb-rankings` | every 6 hours | 1 | ~120 |
-| `cbb-games-and-lines` | flat `CBB_SYNC_INTERVAL_MINS` (default 15), no seasonal throttle | 2 (`/games` + `/lines`) | ~5,760 |
+| `cbb-games` | `CBB_SYNC_INTERVAL_MINS` (default 15) Oct 25–Apr 15, daily otherwise | 1 (`/games`) | ~2,900 in season, ~30 out |
+| `cbb-lines` | as `cbb-games`, five minutes behind it | 1 (`/lines`) | ~2,900 in season, ~30 out |
 | `bet-settlement` | every 5 minutes | 0 — database only | 0 |
-| **Total** | | | **~11,300 / 30,000** |
+| **Total** | | | **~11,300 / 30,000** in season, ~3,650 with neither sport in season |
 
-That leaves roughly two thirds of the budget as headroom. Two things to watch
-if this changes:
+That leaves roughly two thirds of the budget as headroom. The plan is written
+down in `internal/apibudget`: football's share (10,000), basketball's (9,500)
+and a reserve for the jobs nothing counts (2,000), with a test that the three
+fit the allowance. Each sport's cadence test holds its own worst month to its
+share:
 
-- `TestFootballCadenceStaysWithinMonthlyCallBudget` (`internal/cfbdata`) only
-  covers the football jobs, capped at 10,000 rather than the real 30,000, to
-  leave room for calendar, rankings, and basketball. It's tested against
-  `CFB_SCOREBOARD_CLASSIFICATIONS` set to two divisions (the widest an operator
-  would plausibly configure) and against a month that is football all the way
-  through, which no year is — so the cap is close to the projection on purpose,
-  and there is no test guarding the combined total across both sports.
-- Unlike football, `cbb-games-and-lines` has no seasonal throttle: it polls
-  flat year-round, including the CBB offseason (spring/summer), so a chunk of
-  its ~5,760/month is spent returning near-empty results outside
-  November–April.
+- `TestFootballCadenceStaysWithinMonthlyCallBudget` (`internal/cfbdata`) is
+  tested against `CFB_SCOREBOARD_CLASSIFICATIONS` set to two divisions (the
+  widest an operator would plausibly configure) and against a month that is
+  football all the way through, which no year is — so the cap is close to the
+  projection on purpose.
+- `TestBasketballCadenceStaysWithinMonthlyCallBudget` (`internal/cbbdata`) is
+  tested at the shortest `CBB_SYNC_INTERVAL_MINS` the server accepts (10,
+  ~9,000 in a season month), and holds an off-season month to a few hundred,
+  which is what notices the seasonal throttle going missing.
+- The calendar and rankings jobs are in neither; they live in the reserve.
+
+Basketball's two jobs share one cadence and are two jobs only so that a
+failing `/games` no longer skips `/lines`; the lines run five minutes behind,
+so a newly listed game is written before its lines look for it. `/games` is not slowed the way
+football's was, because basketball has no live scoreboard: it is where the
+score, the status and therefore settlement come from. Outside the season each
+runs once a day — the sync window only reaches three days ahead, so every
+off-season run used to ask for an empty span.
 
 Every page footer reports when each sync last *succeeded*, deliberately not when
 it last *ran*: a job that ran two minutes ago and errored has refreshed nothing,
@@ -186,6 +197,7 @@ alone and the schema cannot arrive out of step with the code.
 | `ADMIN_PASSWORD` | first boot | Required to create the account; later only to reset a lost password |
 | `CFB_DATA_API_KEY` | per sport | Football sync disabled without it |
 | `CBB_DATA_API_KEY` | per sport | Basketball sync disabled without it |
+| `CBB_SYNC_INTERVAL_MINS` | no | Defaults to 15; the in-season rate of both basketball jobs. With a key set, startup fails unless it divides a day evenly and is between 10 and 1440 |
 | `APP_TIMEZONE` | no | Defaults to `America/New_York` |
 | `DB_MAX_OPEN_CONNS` | no | Defaults to 20; must leave headroom under the database's own limit |
 | `PORT` | no | Defaults to 8080; most platforms inject this |

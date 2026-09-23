@@ -100,3 +100,46 @@ func TestStartOfDaySpansDSTTransition(t *testing.T) {
 		})
 	}
 }
+
+func TestNextOnGrid(t *testing.T) {
+	eastern, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+
+	// The second pass through 1am on the day the clocks go back. Wall-clock
+	// 01:30 resolves to the first pass, an hour before this instant.
+	secondPass := time.Date(2026, 11, 1, 6, 20, 0, 0, time.UTC).In(eastern)
+
+	tests := []struct {
+		name     string
+		at       time.Time
+		interval time.Duration
+		want     time.Time
+	}{
+		{"mid-slot steps to the next slot", time.Date(2026, 9, 23, 14, 7, 30, 0, eastern), 15 * time.Minute,
+			time.Date(2026, 9, 23, 14, 15, 0, 0, eastern)},
+		{"on a slot steps past it", time.Date(2026, 9, 23, 14, 15, 0, 0, eastern), 15 * time.Minute,
+			time.Date(2026, 9, 23, 14, 30, 0, 0, eastern)},
+		{"the last slot of a day steps to midnight", time.Date(2026, 9, 23, 23, 50, 0, 0, eastern), 15 * time.Minute,
+			time.Date(2026, 9, 24, 0, 0, 0, 0, eastern)},
+		{"a day steps to the next midnight", time.Date(2026, 9, 23, 0, 0, 0, 0, eastern), 24 * time.Hour,
+			time.Date(2026, 9, 24, 0, 0, 0, 0, eastern)},
+		{"the repeated hour walks past the first pass", secondPass, 15 * time.Minute,
+			time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC)},
+		{"the skipped hour lands after it", time.Date(2026, 3, 8, 1, 50, 0, 0, eastern), 15 * time.Minute,
+			time.Date(2026, 3, 8, 3, 0, 0, 0, eastern)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NextOnGrid(tt.at, eastern, tt.interval)
+			if !got.Equal(tt.want) {
+				t.Errorf("NextOnGrid(%v, %v) = %v, want %v", tt.at, tt.interval, got, tt.want)
+			}
+			if !got.After(tt.at) {
+				t.Errorf("NextOnGrid(%v, %v) = %v, not after it", tt.at, tt.interval, got)
+			}
+		})
+	}
+}

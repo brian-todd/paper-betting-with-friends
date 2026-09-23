@@ -3,6 +3,8 @@ package cfbdata
 import (
 	"testing"
 	"time"
+
+	"github.com/brian/paper-betting-with-friends/internal/apibudget"
 )
 
 func mustLoad(t *testing.T, name string) *time.Location {
@@ -510,11 +512,12 @@ func slateKickoffs(start, end time.Time, loc *time.Location) []time.Time {
 // it would be an estimate of the old one, and would pass whatever this change
 // did to the new.
 //
-// The cap leaves the rest of the allowance for the calendar job (~800 a month,
-// since each run walks every season since 2002), the rankings job (~120) and
-// the occasional manual seed, none of which are on a fast cadence. It is set
-// close to the projection on purpose: a cap with an order of magnitude of slack
-// passes whatever regression it exists to catch.
+// The cap is football's share in internal/apibudget, which leaves the rest of
+// the allowance to basketball and to the jobs nothing counts -- the calendar
+// (~800 a month, since each run walks every season since 2002), rankings
+// (~120) and the occasional manual seed. It is set close to the projection on
+// purpose: a cap with an order of magnitude of slack passes whatever regression
+// it exists to catch.
 //
 // The daily team stats job is counted here rather than left to the headroom,
 // because it is the one whose request count per run could grow: it is four
@@ -553,7 +556,7 @@ func TestFootballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		// only because the scoreboard came down first -- while it was ~8,900 a
 		// division, a 1.5x rule would have set the cap above the whole 30,000
 		// allowance, which is to say it would not have been a test.
-		monthlyCallsCap = 10000
+		monthlyCallsCap = apibudget.Football
 
 		// The budget is checked at the widest division list an operator is
 		// likely to configure, not at the FBS-only default -- the default

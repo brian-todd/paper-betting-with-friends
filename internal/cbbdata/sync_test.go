@@ -1,6 +1,9 @@
 package cbbdata
 
 import (
+	"context"
+	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -190,5 +193,81 @@ func TestIncrementalWindow(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The incremental syncs are the only callers that build their own date window,
+// and they sent a malformed one on every run from the day it was written: CBBD
+// answered 400 and the job never succeeded. This drives each real job so the
+// window is checked where it leaves the process.
+//
+// It also pins that each job asks only for its own endpoint. They were one job,
+// and a /games failure returned before /lines was ever asked -- so a job that
+// still reached the other endpoint would still be carrying the other's failure.
+func TestIncrementalSyncsSendAValidDateWindow(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		run  func(*SyncService, context.Context) error
+	}{
+		{"games", "/games", (*SyncService).SyncGames},
+		{"lines", "/lines", (*SyncService).SyncLines},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var queries []string
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				queries = append(queries, r.URL.Path+"?"+r.URL.RawQuery)
+				w.Write([]byte(`[]`))
+			})
+
+			// An empty answer means nothing is looked up, so no database is
+			// needed.
+			sync := NewSyncService(c, nil)
+			sync.SetClock(func() time.Time { return time.Date(2026, 9, 23, 21, 30, 30, 747_000_000, time.UTC) })
+			if err := tt.run(sync, context.Background()); err != nil {
+				t.Fatalf("sync error = %v", err)
+			}
+
+			if len(queries) != 1 {
+				t.Fatalf("made %d requests, want one to %s: %v", len(queries), tt.path, queries)
+			}
+			u, err := url.Parse(queries[0])
+			if err != nil {
+				t.Fatalf("parsing %q: %v", queries[0], err)
+			}
+			if u.Path != tt.path {
+				t.Errorf("requested %s, want %s", u.Path, tt.path)
+			}
+			for _, param := range []string{"startDateRange", "endDateRange"} {
+				v := u.Query().Get(param)
+				if _, err := time.Parse(time.RFC3339, v); err != nil {
+					t.Errorf("%s sent %s=%q, which is not an RFC 3339 instant: %v", u.Path, param, v, err)
+				}
+			}
+		})
+	}
+}
+
+// A failing /games no longer costs the lines anything, because it no longer
+// runs in the same call. The upstream here refuses /games and answers /lines.
+func TestLinesSyncDoesNotDependOnGames(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/games" {
+			http.Error(w, "upstream down", http.StatusBadGateway)
+			return
+		}
+		w.Write([]byte(`[]`))
+	})
+
+	sync := NewSyncService(c, nil)
+	sync.SetClock(func() time.Time { return time.Date(2026, 12, 5, 19, 0, 0, 0, time.UTC) })
+
+	if err := sync.SyncGames(context.Background()); err == nil {
+		t.Fatal("SyncGames() error = nil against a failing /games; the test's upstream is not refusing it")
+	}
+	if err := sync.SyncLines(context.Background()); err != nil {
+		t.Errorf("SyncLines() error = %v with /games down; the lines should not be asking for it", err)
 	}
 }

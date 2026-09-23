@@ -171,25 +171,39 @@ func (s *SyncService) SeedAll(ctx context.Context, season int) error {
 	return incomplete
 }
 
-// SyncGamesAndLines performs an incremental sync of games and lines for a date window.
-func (s *SyncService) SyncGamesAndLines(ctx context.Context) error {
+// SyncGames refreshes the games -- schedule, status and score -- in the
+// incremental window, and settles any that finished.
+//
+// It is a job of its own, apart from SyncLines, so that a failure here costs
+// the lines nothing. See NextGamesSync for why the two share a cadence anyway,
+// and NextLinesSync for why the lines run a few minutes behind.
+func (s *SyncService) SyncGames(ctx context.Context) error {
 	start, end := incrementalWindow(s.clock.Now())
-
-	s.logger.Info("starting incremental sync", "from", start, "to", end)
+	s.logger.Info("syncing games", "from", start, "to", end)
 
 	if err := s.syncGames(ctx, GameQueryOpts{StartDateRange: &start, EndDateRange: &end}); err != nil {
 		return fmt.Errorf("syncing games: %w", err)
 	}
+	return nil
+}
+
+// SyncLines refreshes every book's lines for the games in the incremental
+// window, and records the ones that moved.
+//
+// A line for a game SyncGames has not written yet is skipped, and picked up by
+// the first run after it has. The lines schedule sits behind the games one so
+// that is rare -- a games run that failed, or overran the lag.
+func (s *SyncService) SyncLines(ctx context.Context) error {
+	start, end := incrementalWindow(s.clock.Now())
+	s.logger.Info("syncing lines", "from", start, "to", end)
 
 	if err := s.syncLines(ctx, LineQueryOpts{StartDateRange: &start, EndDateRange: &end}); err != nil {
 		return fmt.Errorf("syncing lines: %w", err)
 	}
-
-	s.logger.Info("incremental sync completed")
 	return nil
 }
 
-// incrementalWindow is the span the incremental sync asks for: from the start
+// incrementalWindow is the span the incremental syncs ask for: from the start
 // of yesterday to the end of three days from now, as UTC days in the ISO 8601
 // form the API validates.
 //

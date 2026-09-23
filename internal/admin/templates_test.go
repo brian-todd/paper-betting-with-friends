@@ -194,7 +194,7 @@ func TestAdminSyncPageRenders(t *testing.T) {
 	jobs := []scheduler.Status{
 		{Name: "cfb-lines", Label: "Football lines", LastRun: now, LastSuccess: now, NextRun: now.Add(time.Hour)},
 		{Name: "cfb-calendar", LastRun: now, LastError: "upstream is down"},
-		{Name: "cbb-games-and-lines", Label: "Basketball", Running: true},
+		{Name: "cbb-games", Label: "Basketball games", Running: true},
 	}
 
 	health := SystemHealth{
