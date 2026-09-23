@@ -1,6 +1,7 @@
 package bets
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -132,4 +133,161 @@ func TestDescribeHolyLock(t *testing.T) {
 			}
 		})
 	}
+}
+
+// placeLock places a $10 home spread bet on game as a Holy Lock.
+func (h *harness) placeLock(user *models.User, game *models.Game, spread *models.SpreadOdds) (*models.SpreadBet, error) {
+	return h.svc.CreateSpreadBet(CreateSpreadBetInput{
+		UserID: user.ID, LeagueID: h.league.ID, GameID: game.ID,
+		Pick: models.SpreadPickHome, Stake: dec("10"), OddsID: &spread.ID, HolyLock: true,
+	})
+}
+
+// locked lists the spread bets flagged as a Holy Lock among ids.
+func (h *harness) locked(ids ...uuid.UUID) []uuid.UUID {
+	h.t.Helper()
+
+	var flagged []uuid.UUID
+	if err := h.db.Model(&models.SpreadBet{}).Where("id IN ? AND is_holy_lock", ids).Pluck("id", &flagged).Error; err != nil {
+		h.t.Fatalf("reading holy locks: %v", err)
+	}
+	return flagged
+}
+
+// One Holy Lock per user, league and week is not something the schema can
+// hold -- the week is two joins from the bet -- so every path that writes the
+// flag has to keep it true itself. These are those paths, against real rows.
+func TestHolyLockWrites(t *testing.T) {
+	type setup struct {
+		h                   *harness
+		alice               *models.User
+		early, late         *models.Game
+		earlyLine, lateLine *models.SpreadOdds
+	}
+	// Two games in one week: early kicks off in an hour, late in five.
+	arrange := func(t *testing.T) setup {
+		h := newHarness(t)
+		week := h.week()
+		early, late := h.game(placedAt.Add(time.Hour), week), h.game(placedAt.Add(5*time.Hour), week)
+		earlyLine, _, _ := h.lines(early)
+		lateLine, _, _ := h.lines(late)
+		return setup{h, h.member("alice", "1000"), early, late, earlyLine, lateLine}
+	}
+
+	t.Run("setting a lock moves it off the week's other bet", func(t *testing.T) {
+		s := arrange(t)
+		first := s.h.placeSpread(s.alice, s.early, s.earlyLine, models.SpreadPickHome, "10")
+		second := s.h.placeSpread(s.alice, s.late, s.lateLine, models.SpreadPickHome, "10")
+
+		if err := s.h.svc.SetHolyLock(BetTypeSpread, first.ID, s.alice.ID); err != nil {
+			t.Fatalf("locking first: %v", err)
+		}
+		if err := s.h.svc.SetHolyLock(BetTypeSpread, second.ID, s.alice.ID); err != nil {
+			t.Fatalf("locking second: %v", err)
+		}
+		if got := s.h.locked(first.ID, second.ID); len(got) != 1 || got[0] != second.ID {
+			t.Errorf("locked = %v, want only the second bet", got)
+		}
+
+		if err := s.h.svc.ClearHolyLock(BetTypeSpread, second.ID, s.alice.ID); err != nil {
+			t.Fatalf("clearing: %v", err)
+		}
+		if got := s.h.locked(first.ID, second.ID); len(got) != 0 {
+			t.Errorf("locked after clear = %v, want none", got)
+		}
+	})
+
+	t.Run("a lock whose game has kicked off cannot be moved", func(t *testing.T) {
+		s := arrange(t)
+		first := s.h.placeSpread(s.alice, s.early, s.earlyLine, models.SpreadPickHome, "10")
+		second := s.h.placeSpread(s.alice, s.late, s.lateLine, models.SpreadPickHome, "10")
+		if err := s.h.svc.SetHolyLock(BetTypeSpread, first.ID, s.alice.ID); err != nil {
+			t.Fatalf("locking first: %v", err)
+		}
+
+		// Between the two kickoffs: the late game is still open, but the lock
+		// is riding on a game being played.
+		s.h.now = s.early.ScheduledAt
+		if err := s.h.svc.SetHolyLock(BetTypeSpread, second.ID, s.alice.ID); !errors.Is(err, ErrHolyLockSettled) {
+			t.Fatalf("moving a started lock: error = %v, want ErrHolyLockSettled", err)
+		}
+		if got := s.h.locked(first.ID, second.ID); len(got) != 1 || got[0] != first.ID {
+			t.Errorf("locked = %v, want the first bet still", got)
+		}
+	})
+
+	t.Run("placing into a taken slot is refused and moves no money", func(t *testing.T) {
+		s := arrange(t)
+		if _, err := s.h.placeLock(s.alice, s.early, s.earlyLine); err != nil {
+			t.Fatalf("placing first lock: %v", err)
+		}
+
+		if _, err := s.h.placeLock(s.alice, s.late, s.lateLine); !errors.Is(err, ErrHolyLockExists) {
+			t.Fatalf("second lock: error = %v, want ErrHolyLockExists", err)
+		}
+		var bets int64
+		if err := s.h.db.Model(&models.SpreadBet{}).Where("game_id = ?", s.late.ID).Count(&bets).Error; err != nil {
+			t.Fatalf("counting: %v", err)
+		}
+		if bets != 0 {
+			t.Errorf("refused lock wrote %d bets", bets)
+		}
+		s.h.requireBalance(s.alice, "990")
+	})
+
+	t.Run("a cancelled lock gives the slot back", func(t *testing.T) {
+		s := arrange(t)
+		first, err := s.h.placeLock(s.alice, s.early, s.earlyLine)
+		if err != nil {
+			t.Fatalf("placing first lock: %v", err)
+		}
+		if err := s.h.svc.CancelSpreadBet(first.ID, s.alice.ID); err != nil {
+			t.Fatalf("cancelling: %v", err)
+		}
+		if _, err := s.h.placeLock(s.alice, s.late, s.lateLine); err != nil {
+			t.Errorf("locking after cancel: %v", err)
+		}
+	})
+
+	t.Run("an admin void gives the slot back", func(t *testing.T) {
+		// The admin path knows nothing about Holy Locks; the status <> 'void'
+		// predicate in every slot query is what releases it.
+		s := arrange(t)
+		first, err := s.h.placeLock(s.alice, s.early, s.earlyLine)
+		if err != nil {
+			t.Fatalf("placing first lock: %v", err)
+		}
+		if err := s.h.svc.AdminVoidBet(BetTypeSpread, first.ID); err != nil {
+			t.Fatalf("voiding: %v", err)
+		}
+		if _, err := s.h.placeLock(s.alice, s.late, s.lateLine); err != nil {
+			t.Errorf("locking after void: %v", err)
+		}
+	})
+
+	t.Run("a game with no week has no slot", func(t *testing.T) {
+		s := arrange(t)
+		unweeked := s.h.game(placedAt.Add(time.Hour), nil)
+		line, _, _ := s.h.lines(unweeked)
+
+		if _, err := s.h.placeLock(s.alice, unweeked, line); !errors.Is(err, ErrBetNotFootballWeek) {
+			t.Fatalf("error = %v, want ErrBetNotFootballWeek", err)
+		}
+		bet := s.h.placeSpread(s.alice, unweeked, line, models.SpreadPickHome, "10")
+		if err := s.h.svc.SetHolyLock(BetTypeSpread, bet.ID, s.alice.ID); !errors.Is(err, ErrBetNotFootballWeek) {
+			t.Errorf("SetHolyLock error = %v, want ErrBetNotFootballWeek", err)
+		}
+	})
+
+	t.Run("a member who has left cannot lock", func(t *testing.T) {
+		s := arrange(t)
+		bet := s.h.placeSpread(s.alice, s.early, s.earlyLine, models.SpreadPickHome, "10")
+		if err := s.h.db.Where("league_id = ? AND user_id = ?", s.h.league.ID, s.alice.ID).Delete(&models.LeagueMember{}).Error; err != nil {
+			t.Fatalf("leaving: %v", err)
+		}
+
+		if err := s.h.svc.SetHolyLock(BetTypeSpread, bet.ID, s.alice.ID); !errors.Is(err, ErrNotLeagueMember) {
+			t.Errorf("error = %v, want ErrNotLeagueMember", err)
+		}
+	})
 }

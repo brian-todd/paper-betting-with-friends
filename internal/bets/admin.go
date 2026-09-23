@@ -15,6 +15,12 @@ import (
 // is not one of the five a bet can hold.
 var ErrInvalidBetStatus = errors.New("invalid bet status")
 
+// ErrBetStatusChanged is returned when an admin correction finds the bet no
+// longer in the status it was read in -- settled by the sweep, or cancelled by
+// its owner, in between. The purse delta was computed from the old status, so
+// applying it would move the wrong amount.
+var ErrBetStatusChanged = errors.New("bet status changed since it was read")
+
 // Bet type identifiers shared by the routes and the view models.
 const (
 	BetTypeSpread    = "spread"
@@ -80,11 +86,8 @@ func (s *Service) AdminSetBetStatus(betType string, betID uuid.UUID, to models.B
 		if from == to {
 			return nil
 		}
-		bet.Status = to
-		if err := s.spreadBetRepo.Update(bet); err != nil {
-			return err
-		}
-		return s.applyPurseDelta(bet.UserID, bet.LeagueID, purseDelta(bet.Stake, bet.OddsSnapshot, from, to))
+		return s.correctStatus(func(r txRepos) (bool, error) { return r.spread.TransitionStatus(bet.ID, from, to) },
+			bet.UserID, bet.LeagueID, purseDelta(bet.Stake, bet.OddsSnapshot, from, to))
 
 	case BetTypeMoneyLine:
 		bet, err := s.moneyLineBetRepo.FindByID(betID)
@@ -95,11 +98,8 @@ func (s *Service) AdminSetBetStatus(betType string, betID uuid.UUID, to models.B
 		if from == to {
 			return nil
 		}
-		bet.Status = to
-		if err := s.moneyLineBetRepo.Update(bet); err != nil {
-			return err
-		}
-		return s.applyPurseDelta(bet.UserID, bet.LeagueID, purseDelta(bet.Stake, bet.OddsSnapshot, from, to))
+		return s.correctStatus(func(r txRepos) (bool, error) { return r.moneyLine.TransitionStatus(bet.ID, from, to) },
+			bet.UserID, bet.LeagueID, purseDelta(bet.Stake, bet.OddsSnapshot, from, to))
 
 	case BetTypeOverUnder:
 		bet, err := s.overUnderBetRepo.FindByID(betID)
@@ -110,11 +110,8 @@ func (s *Service) AdminSetBetStatus(betType string, betID uuid.UUID, to models.B
 		if from == to {
 			return nil
 		}
-		bet.Status = to
-		if err := s.overUnderBetRepo.Update(bet); err != nil {
-			return err
-		}
-		return s.applyPurseDelta(bet.UserID, bet.LeagueID, purseDelta(bet.Stake, bet.OddsSnapshot, from, to))
+		return s.correctStatus(func(r txRepos) (bool, error) { return r.overUnder.TransitionStatus(bet.ID, from, to) },
+			bet.UserID, bet.LeagueID, purseDelta(bet.Stake, bet.OddsSnapshot, from, to))
 
 	default:
 		return ErrInvalidBetType
@@ -126,6 +123,23 @@ func (s *Service) AdminVoidBet(betType string, betID uuid.UUID) error {
 	return s.AdminSetBetStatus(betType, betID, models.BetStatusVoid)
 }
 
+// correctStatus moves a bet from the status it was read in and applies the
+// purse delta for that move, atomically. The move is conditional on the bet
+// still being in that status: the delta is only right for the transition it
+// was computed from.
+func (s *Service) correctStatus(transition func(txRepos) (bool, error), userID, leagueID uuid.UUID, delta decimal.Decimal) error {
+	return s.inTx(func(r txRepos) error {
+		moved, err := transition(r)
+		if err != nil {
+			return err
+		}
+		if !moved {
+			return ErrBetStatusChanged
+		}
+		return applyPurseDelta(r.purse, userID, leagueID, delta)
+	})
+}
+
 // applyPurseDelta moves a purse by delta.
 //
 // It credits a negative amount rather than calling DeductStake, whose
@@ -133,11 +147,11 @@ func (s *Service) AdminVoidBet(betType string, betID uuid.UUID) error {
 // has since spent down -- leaving the bet's status and the balance permanently
 // disagreeing. An operator correction has to land, and a purse that goes
 // negative as a result is visible and fixable; a silent no-op is not.
-func (s *Service) applyPurseDelta(userID, leagueID uuid.UUID, delta decimal.Decimal) error {
+func applyPurseDelta(purse *repository.PurseRepository, userID, leagueID uuid.UUID, delta decimal.Decimal) error {
 	if delta.IsZero() {
 		return nil
 	}
-	return s.purseRepo.CreditWinnings(userID, leagueID, delta)
+	return purse.CreditWinnings(userID, leagueID, delta)
 }
 
 // wrapBetLookup turns a missing row into the package's domain error.

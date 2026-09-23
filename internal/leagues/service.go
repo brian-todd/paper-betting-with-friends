@@ -254,13 +254,13 @@ func (s *Service) JoinLeague(leagueID, userID uuid.UUID) error {
 		return err
 	}
 
-	// Create purse for the new member.
+	// Open a purse for the new member, or keep the one a returning member left.
 	purse := &models.Purse{
 		UserID:   userID,
 		LeagueID: leagueID,
 		Balance:  league.StartingBalance,
 	}
-	return s.purseRepo.Create(purse)
+	return s.purseRepo.CreateIfAbsent(purse)
 }
 
 // JoinByCode adds a user to a league using an invite code.
@@ -285,13 +285,13 @@ func (s *Service) JoinByCode(inviteCode string, userID uuid.UUID) (*models.Leagu
 		return nil, err
 	}
 
-	// Create purse for the new member.
+	// Open a purse for the new member, or keep the one a returning member left.
 	purse := &models.Purse{
 		UserID:   userID,
 		LeagueID: league.ID,
 		Balance:  league.StartingBalance,
 	}
-	if err := s.purseRepo.Create(purse); err != nil {
+	if err := s.purseRepo.CreateIfAbsent(purse); err != nil {
 		return nil, err
 	}
 

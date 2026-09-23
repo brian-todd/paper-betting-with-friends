@@ -432,12 +432,5 @@ func (s *Service) DeleteLeague(actor *models.User, leagueID uuid.UUID, confirm s
 
 // ensurePurse creates a purse at balance unless the member already has one.
 func (s *Service) ensurePurse(leagueID, userID uuid.UUID, balance decimal.Decimal) error {
-	_, err := s.purseRepo.FindByUserAndLeague(userID, leagueID)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	return s.purseRepo.Create(&models.Purse{UserID: userID, LeagueID: leagueID, Balance: balance})
+	return s.purseRepo.CreateIfAbsent(&models.Purse{UserID: userID, LeagueID: leagueID, Balance: balance})
 }

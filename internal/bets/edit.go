@@ -47,19 +47,27 @@ func (s *Service) UpdateSpreadBet(input UpdateSpreadBetInput) (*models.SpreadBet
 	}
 
 	previousStake := bet.Stake
-	if err := s.adjustStake(bet.UserID, bet.LeagueID, previousStake, input.Stake); err != nil {
-		return nil, err
-	}
-
 	bet.Pick = input.Pick
 	bet.SpreadOddsID = selection.OddsID
 	bet.SpreadSnapshot = selection.Spread
 	bet.OddsSnapshot = selection.Odds
 	bet.Stake = input.Stake
 
-	if err := s.spreadBetRepo.Update(bet); err != nil {
-		// Put the purse back: the stake moved but the bet did not.
-		_ = s.adjustStake(bet.UserID, bet.LeagueID, input.Stake, previousStake)
+	// The bet and the stake move together. The write is conditional on the bet
+	// still being pending, because it was read before authorizeEdit and a
+	// cancel or a settlement may have landed since; saving over one of those
+	// would put a refunded or paid bet back in play.
+	err = s.inTx(func(r txRepos) error {
+		updated, err := r.spread.UpdateIfPending(bet)
+		if err != nil {
+			return err
+		}
+		if !updated {
+			return ErrBetNotPending
+		}
+		return adjustStake(r.purse, bet.UserID, bet.LeagueID, previousStake, input.Stake)
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -99,17 +107,23 @@ func (s *Service) UpdateMoneyLineBet(input UpdateMoneyLineBetInput) (*models.Mon
 	}
 
 	previousStake := bet.Stake
-	if err := s.adjustStake(bet.UserID, bet.LeagueID, previousStake, input.Stake); err != nil {
-		return nil, err
-	}
-
 	bet.Pick = input.Pick
 	bet.MoneyLineOddsID = selection.OddsID
 	bet.OddsSnapshot = selection.Odds
 	bet.Stake = input.Stake
 
-	if err := s.moneyLineBetRepo.Update(bet); err != nil {
-		_ = s.adjustStake(bet.UserID, bet.LeagueID, input.Stake, previousStake)
+	// See UpdateSpreadBet.
+	err = s.inTx(func(r txRepos) error {
+		updated, err := r.moneyLine.UpdateIfPending(bet)
+		if err != nil {
+			return err
+		}
+		if !updated {
+			return ErrBetNotPending
+		}
+		return adjustStake(r.purse, bet.UserID, bet.LeagueID, previousStake, input.Stake)
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -153,18 +167,24 @@ func (s *Service) UpdateOverUnderBet(input UpdateOverUnderBetInput) (*models.Ove
 	}
 
 	previousStake := bet.Stake
-	if err := s.adjustStake(bet.UserID, bet.LeagueID, previousStake, input.Stake); err != nil {
-		return nil, err
-	}
-
 	bet.Pick = input.Pick
 	bet.OverUnderOddsID = selection.OddsID
 	bet.TotalSnapshot = selection.Total
 	bet.OddsSnapshot = selection.Odds
 	bet.Stake = input.Stake
 
-	if err := s.overUnderBetRepo.Update(bet); err != nil {
-		_ = s.adjustStake(bet.UserID, bet.LeagueID, input.Stake, previousStake)
+	// See UpdateSpreadBet.
+	err = s.inTx(func(r txRepos) error {
+		updated, err := r.overUnder.UpdateIfPending(bet)
+		if err != nil {
+			return err
+		}
+		if !updated {
+			return ErrBetNotPending
+		}
+		return adjustStake(r.purse, bet.UserID, bet.LeagueID, previousStake, input.Stake)
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -208,19 +228,19 @@ func (s *Service) authorizeEdit(ownerID, userID uuid.UUID, status models.BetStat
 //
 // Only the delta moves, so raising a $10 bet to $15 needs $5 free rather than
 // the full $15 that a refund-and-recharge would briefly require.
-func (s *Service) adjustStake(userID, leagueID uuid.UUID, from, to decimal.Decimal) error {
+func adjustStake(purse *repository.PurseRepository, userID, leagueID uuid.UUID, from, to decimal.Decimal) error {
 	delta := to.Sub(from)
 
 	switch {
 	case delta.IsPositive():
-		if err := s.purseRepo.DeductStake(userID, leagueID, delta); err != nil {
+		if err := purse.DeductStake(userID, leagueID, delta); err != nil {
 			if errors.Is(err, repository.ErrInsufficientBalance) {
 				return ErrInsufficientFunds
 			}
 			return err
 		}
 	case delta.IsNegative():
-		return s.purseRepo.CreditWinnings(userID, leagueID, delta.Neg())
+		return purse.CreditWinnings(userID, leagueID, delta.Neg())
 	}
 
 	return nil

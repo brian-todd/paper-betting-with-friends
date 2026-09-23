@@ -7,9 +7,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrInsufficientBalance = errors.New("insufficient balance")
+
+// ErrPurseNotFound is returned when money is credited to a purse that does not
+// exist. It is an error rather than a no-op because the caller has usually
+// just moved a bet: inside a transaction, returning it undoes that move, where
+// a silent no-op would settle or refund the bet and pay nobody.
+var ErrPurseNotFound = errors.New("purse not found")
 
 // PurseRepository provides methods for interacting with purses in the database.
 type PurseRepository struct {
@@ -24,6 +31,17 @@ func NewPurseRepository(db *gorm.DB) *PurseRepository {
 // Create inserts a new purse into the database.
 func (r *PurseRepository) Create(purse *models.Purse) error {
 	return r.db.Create(purse).Error
+}
+
+// CreateIfAbsent opens a purse unless the member already has one in the league,
+// in which case the existing balance is kept.
+//
+// Leaving a league removes the membership and deliberately leaves the purse, so
+// a member who comes back returns to the balance they had rather than to a
+// fresh stake -- which would otherwise be a way to reset a losing season. A
+// plain Create on rejoin collides with the old purse's primary key.
+func (r *PurseRepository) CreateIfAbsent(purse *models.Purse) error {
+	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(purse).Error
 }
 
 // FindByUserAndLeague retrieves a purse by user and league IDs.
@@ -59,9 +77,16 @@ func (r *PurseRepository) DeductStake(userID, leagueID uuid.UUID, amount decimal
 
 // CreditWinnings adds amount to a purse balance.
 func (r *PurseRepository) CreditWinnings(userID, leagueID uuid.UUID, amount decimal.Decimal) error {
-	return r.db.Model(&models.Purse{}).
+	result := r.db.Model(&models.Purse{}).
 		Where("user_id = ? AND league_id = ?", userID, leagueID).
-		Update("balance", gorm.Expr("balance + ?", amount)).Error
+		Update("balance", gorm.Expr("balance + ?", amount))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrPurseNotFound
+	}
+	return nil
 }
 
 // FindByUser retrieves all purses for a user.

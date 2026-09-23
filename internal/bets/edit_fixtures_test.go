@@ -3,11 +3,10 @@ package bets_test
 // Level 3 for the bet slip: place a bet through the real handler, edit it
 // through the real handler, and read the answer off the rendered page.
 //
-// The bug this is built around is a quiet one. Bet repositories save with
-// Omit(clause.Associations) because FindByID preloads the odds row, and a plain
-// Save writes that preloaded row's ID back over the foreign key -- so an edit
-// that moved a bet onto a different line kept it pointing at the old one while
-// the snapshot changed. Nothing errors, the purse moves correctly, the numbers
+// The bug this is built around is a quiet one. FindByID preloads the odds row,
+// and saving the whole bet wrote that preloaded row's ID back over the foreign
+// key -- so an edit that moved a bet onto a different line kept it pointing at
+// the old one while the snapshot changed. Nothing errors, the purse moves correctly, the numbers
 // on the bet are the new ones, and the only visible symptom is on a page: the
 // edit form reopens preselecting the line the bet is no longer on, so the next
 // edit silently moves it back.
