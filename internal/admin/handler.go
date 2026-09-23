@@ -128,6 +128,8 @@ func errorMessage(err error) string {
 		return "Bet not found."
 	case errors.Is(err, bets.ErrInvalidBetType), errors.Is(err, bets.ErrInvalidBetStatus):
 		return "That is not a bet status this app uses."
+	case errors.Is(err, bets.ErrBetStatusChanged):
+		return "That bet changed while you were looking at it. Reload the page and try again."
 	case errors.Is(err, scheduler.ErrUnknownJob):
 		return "No sync job by that name is registered."
 	case errors.Is(err, scheduler.ErrRunPending):

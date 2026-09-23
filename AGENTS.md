@@ -233,11 +233,20 @@ Stake deduction is atomic — `DeductStake` uses a WHERE clause checking `balanc
 
 Editing a bet moves only the *difference* in stake, via `adjustStake`. Raising a
 $10 bet to $15 needs $5 free, not the $15 a refund-and-recharge would briefly
-require. Roll it back the same way if the bet then fails to save.
+require.
 
-A cancel refunds only after winning `CancelIfPending`, the same conditional
-transition settlement uses. It read the bet, saved it void and refunded, so a
-double-clicked cancel button refunded the stake twice.
+**A bet's status and the money it moves change in one transaction, or not at
+all.** Settling, cancelling, editing and the admin correction all run through
+`bets.Service.inTx`, and each changes the bet only through a conditional write:
+`SettleIfPending`, `CancelIfPending`, `UpdateIfPending`, `TransitionStatus`.
+The condition decides which of two concurrent callers moves the money; the
+transaction makes a failed credit undo the move. Before both, a double-clicked
+cancel refunded twice, a payout that failed after the bet was marked won was
+never retried (the sweep reads only pending bets), and an edit saved the status
+it had read over a cancel that landed in between.
+
+`CreditWinnings` returns `ErrPurseNotFound` rather than updating nothing, which
+is what turns a missing purse into a rollback instead of a bet paid to nobody.
 
 Leaving a league removes the membership and keeps the purse, so a returning
 member comes back to the balance they had — otherwise leaving would reset a
@@ -257,15 +266,11 @@ caller.
 edit the service then refuses. Both gate on `game.ScheduledAt`, not
 `game.Status`, because status only advances when the sync runs.
 
-The bet repositories' `Update` omits associations:
-
-```go
-return r.db.Omit(clause.Associations).Save(bet).Error
-```
-
-`FindByID` preloads the odds row, and a plain `Save` writes that preloaded row's
-ID back over the foreign key — so moving a bet to a different line silently kept
-it pointing at the old one while the snapshot changed.
+Bets are never saved whole. An edit goes through `UpdateIfPending`, which
+writes an explicit column list: that keeps the status out of the write, and it
+keeps out the odds row `FindByID` preloads — a whole-struct `Save` wrote that
+row's ID back over the foreign key, so moving a bet to a different line silently
+kept it pointing at the old one while the snapshot changed.
 
 ### Game Results
 
@@ -490,6 +495,16 @@ cannot reach that and an in-memory engine answers a different dialect.
 back when the test ends, so fixtures cannot outlive a run — which matters
 because a developer's database holds real seeded seasons. `InsertTeam`,
 `InsertVenue` and `InsertGame` fill in everything a test did not set.
+
+**What that harness cannot see is concurrency.** One transaction is one
+connection, so two requests can never overlap in it, and a nested
+`db.Transaction` is a savepoint on that same connection. Two consequences: a
+race between two callers can only be tested at the conditional write that
+decides it (`SettleIfPending` refusing the second caller), never end to end;
+and a repository built from the service's `*gorm.DB` instead of the `tx` inside
+`inTx` passes every test here while committing outside the transaction in
+production, where that `*gorm.DB` is a pool. Proving either needs committed rows
+and two connections, which this package does not provide.
 
 There are two ways to fill that transaction, and the choice is by subject.
 A test about **logic** — a predicate refusing an edge, a stake moving a
@@ -894,7 +909,8 @@ a migration is the wrong place to decide that.
 - `hx-on` and other htmx attributes evaluated with `new Function` — the CSP has no `'unsafe-eval'`, so they fail silently in the browser
 - `.Format` on a `time.Time` in a template — use `localTime`, or the server's UTC leaks into the UI
 - `Truncate(24 * time.Hour)` or `Add(24 * time.Hour)` for calendar days — use `timeutil.StartOfDay` and `AddDate`
-- Bare `db.Save(bet)` in a bet repository — a preloaded association overwrites the foreign key; `Omit(clause.Associations)`
+- Saving a whole bet row — a preloaded association overwrites the foreign key and a stale status overwrites a cancel or a settlement; write named columns, conditionally, as `UpdateIfPending` does
+- Moving a bet's status and a purse outside `inTx` — a credit that fails after the status commits leaves the bet settled and unpaid, and nothing retries it
 - Treating a `GameResult` as final — check `IsFinal()`, or bets settle on a live score
 - Crediting a purse for a settled bet without first winning `SettleIfPending` — the settlement sweep is not the only caller, and a bet read as pending twice is paid twice. A cancel's refund is gated the same way, on `CancelIfPending`
 - Assigning `status` or `finalized_at` unconditionally in a football upsert — two feeds write those rows and a plain assignment lets the slower one un-finish a settled game

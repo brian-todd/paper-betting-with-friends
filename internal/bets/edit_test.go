@@ -11,9 +11,9 @@ import (
 )
 
 // editKind extends betKind with an edit, and with the one column an edit is
-// most likely to get silently wrong: the foreign key to the odds row. See
-// AGENTS.md on Omit(clause.Associations) -- the page-level test for that bug
-// covers spread bets alone, and the other two repositories carry the same fix.
+// most likely to get silently wrong: the foreign key to the odds row. A
+// whole-struct save wrote the preloaded odds row's ID back over it; the
+// page-level test for that bug covers spread bets alone.
 type editKind struct {
 	betKind
 	oddsColumn string
@@ -213,5 +213,72 @@ func TestEditBetRefusals(t *testing.T) {
 				h.requireBalance(alice, "900")
 			})
 		}
+	}
+}
+
+// An edit reads the bet before it writes, and a cancel or a settlement can land
+// in between. The write has to find the bet no longer pending and leave it
+// alone: saving the struct it read would put a refunded or paid bet back in
+// play with the stake the edit asked for.
+//
+// The service reads and writes within one call, so a test cannot slip a cancel
+// between the two; this reads the bet the way the service does, voids it the way
+// a concurrent cancel would, and then makes the write.
+func TestUpdateIfPendingLeavesAMovedBetAlone(t *testing.T) {
+	h := newHarness(t)
+	alice := h.member("alice", "1000")
+
+	for _, kind := range editKinds {
+		t.Run(kind.name, func(t *testing.T) {
+			game := h.game(placedAt.Add(time.Hour), nil)
+			betID := kind.place(h, alice, game, "100")
+
+			var write func() (bool, error)
+			switch kind.model.(type) {
+			case *models.SpreadBet:
+				bet, err := h.svc.spreadBetRepo.FindByID(betID)
+				if err != nil {
+					t.Fatalf("reading bet: %v", err)
+				}
+				bet.Stake = dec("500")
+				write = func() (bool, error) { return h.svc.spreadBetRepo.UpdateIfPending(bet) }
+			case *models.MoneyLineBet:
+				bet, err := h.svc.moneyLineBetRepo.FindByID(betID)
+				if err != nil {
+					t.Fatalf("reading bet: %v", err)
+				}
+				bet.Stake = dec("500")
+				write = func() (bool, error) { return h.svc.moneyLineBetRepo.UpdateIfPending(bet) }
+			case *models.OverUnderBet:
+				bet, err := h.svc.overUnderBetRepo.FindByID(betID)
+				if err != nil {
+					t.Fatalf("reading bet: %v", err)
+				}
+				bet.Stake = dec("500")
+				write = func() (bool, error) { return h.svc.overUnderBetRepo.UpdateIfPending(bet) }
+			}
+
+			if err := kind.cancel(h, betID, alice.ID); err != nil {
+				t.Fatalf("cancelling: %v", err)
+			}
+
+			updated, err := write()
+			if err != nil {
+				t.Fatalf("UpdateIfPending: %v", err)
+			}
+			if updated {
+				t.Error("UpdateIfPending wrote to a void bet")
+			}
+			if got := h.status(kind.model, betID); got != models.BetStatusVoid {
+				t.Errorf("status = %s, want void", got)
+			}
+			var stakes []string
+			if err := h.db.Model(kind.model).Where("id = ?", betID).Pluck("stake::text", &stakes).Error; err != nil || len(stakes) != 1 {
+				t.Fatalf("reading stake: %v", err)
+			}
+			if !dec(stakes[0]).Equal(dec("100")) {
+				t.Errorf("stake = %s, want the original 100", stakes[0])
+			}
+		})
 	}
 }

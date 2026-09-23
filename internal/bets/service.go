@@ -89,6 +89,36 @@ func (s *Service) SetClock(now func() time.Time) {
 	s.clock.Set(now)
 }
 
+// txRepos are the repositories that move a bet and its money, bound to one
+// transaction.
+type txRepos struct {
+	purse     *repository.PurseRepository
+	spread    *repository.SpreadBetRepository
+	moneyLine *repository.MoneyLineBetRepository
+	overUnder *repository.OverUnderBetRepository
+}
+
+// inTx runs fn with the bet and purse repositories bound to one transaction.
+//
+// Every change to a bet's status that moves money -- settling, cancelling,
+// editing the stake, an admin correction -- goes through here, so the status
+// and the balance commit together or not at all. As two writes, a status change
+// that committed before its credit failed left a bet settled and unpaid, and
+// nothing would ever retry it: the settlement sweep only looks at pending bets.
+//
+// Repositories are built from a *gorm.DB, so the transaction is threaded by
+// constructing against it rather than by passing it down every call.
+func (s *Service) inTx(fn func(r txRepos) error) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return fn(txRepos{
+			purse:     repository.NewPurseRepository(tx),
+			spread:    repository.NewSpreadBetRepository(tx),
+			moneyLine: repository.NewMoneyLineBetRepository(tx),
+			overUnder: repository.NewOverUnderBetRepository(tx),
+		})
+	})
+}
+
 // CreateSpreadBetInput contains the input for creating a spread bet.
 type CreateSpreadBetInput struct {
 	UserID   uuid.UUID
@@ -428,16 +458,16 @@ func (s *Service) CancelSpreadBet(betID, userID uuid.UUID) error {
 
 	// Voiding also gives the week's Holy Lock slot back. Only the call that
 	// wins the transition refunds, or a double submit refunds twice.
-	cancelled, err := s.spreadBetRepo.CancelIfPending(bet.ID)
-	if err != nil {
-		return err
-	}
-	if !cancelled {
-		return ErrBetNotPending
-	}
-
-	// Refund stake to purse.
-	return s.purseRepo.CreditWinnings(bet.UserID, bet.LeagueID, bet.Stake)
+	return s.inTx(func(r txRepos) error {
+		cancelled, err := r.spread.CancelIfPending(bet.ID)
+		if err != nil {
+			return err
+		}
+		if !cancelled {
+			return ErrBetNotPending
+		}
+		return r.purse.CreditWinnings(bet.UserID, bet.LeagueID, bet.Stake)
+	})
 }
 
 // CancelMoneyLineBet cancels a pending money line bet.
@@ -468,16 +498,16 @@ func (s *Service) CancelMoneyLineBet(betID, userID uuid.UUID) error {
 
 	// Voiding also gives the week's Holy Lock slot back. Only the call that
 	// wins the transition refunds, or a double submit refunds twice.
-	cancelled, err := s.moneyLineBetRepo.CancelIfPending(bet.ID)
-	if err != nil {
-		return err
-	}
-	if !cancelled {
-		return ErrBetNotPending
-	}
-
-	// Refund stake to purse.
-	return s.purseRepo.CreditWinnings(bet.UserID, bet.LeagueID, bet.Stake)
+	return s.inTx(func(r txRepos) error {
+		cancelled, err := r.moneyLine.CancelIfPending(bet.ID)
+		if err != nil {
+			return err
+		}
+		if !cancelled {
+			return ErrBetNotPending
+		}
+		return r.purse.CreditWinnings(bet.UserID, bet.LeagueID, bet.Stake)
+	})
 }
 
 // CancelOverUnderBet cancels a pending over/under bet.
@@ -508,16 +538,16 @@ func (s *Service) CancelOverUnderBet(betID, userID uuid.UUID) error {
 
 	// Voiding also gives the week's Holy Lock slot back. Only the call that
 	// wins the transition refunds, or a double submit refunds twice.
-	cancelled, err := s.overUnderBetRepo.CancelIfPending(bet.ID)
-	if err != nil {
-		return err
-	}
-	if !cancelled {
-		return ErrBetNotPending
-	}
-
-	// Refund stake to purse.
-	return s.purseRepo.CreditWinnings(bet.UserID, bet.LeagueID, bet.Stake)
+	return s.inTx(func(r txRepos) error {
+		cancelled, err := r.overUnder.CancelIfPending(bet.ID)
+		if err != nil {
+			return err
+		}
+		if !cancelled {
+			return ErrBetNotPending
+		}
+		return r.purse.CreditWinnings(bet.UserID, bet.LeagueID, bet.Stake)
+	})
 }
 
 // minTimeToPlay is how long after kickoff a game must be before its bets may
@@ -609,22 +639,10 @@ func (s *Service) EvaluateBetsForGame(gameID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	for i := range spreadBets {
-		status := evaluateSpreadBet(&spreadBets[i], result)
-
-		settled, err := s.spreadBetRepo.SettleIfPending(spreadBets[i].ID, status)
-		if err != nil {
-			return err
-		}
-		if !settled {
-			// Someone else settled it between the read and the write.
-			// Crediting the purse now would pay the bet a second time.
-			continue
-		}
-		spreadBets[i].Status = status
-
-		// Update purse based on outcome.
-		if err := s.updatePurseForBet(spreadBets[i].UserID, spreadBets[i].LeagueID, spreadBets[i].Stake, spreadBets[i].OddsSnapshot, status); err != nil {
+	for _, bet := range spreadBets {
+		status := evaluateSpreadBet(&bet, result)
+		settle := func(r txRepos) (bool, error) { return r.spread.SettleIfPending(bet.ID, status) }
+		if err := s.settleBet(settle, bet.UserID, bet.LeagueID, bet.Stake, bet.OddsSnapshot, status); err != nil {
 			return err
 		}
 	}
@@ -634,22 +652,10 @@ func (s *Service) EvaluateBetsForGame(gameID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	for i := range moneyLineBets {
-		status := evaluateMoneyLineBet(&moneyLineBets[i], result)
-
-		settled, err := s.moneyLineBetRepo.SettleIfPending(moneyLineBets[i].ID, status)
-		if err != nil {
-			return err
-		}
-		if !settled {
-			// Someone else settled it between the read and the write.
-			// Crediting the purse now would pay the bet a second time.
-			continue
-		}
-		moneyLineBets[i].Status = status
-
-		// Update purse based on outcome.
-		if err := s.updatePurseForBet(moneyLineBets[i].UserID, moneyLineBets[i].LeagueID, moneyLineBets[i].Stake, moneyLineBets[i].OddsSnapshot, status); err != nil {
+	for _, bet := range moneyLineBets {
+		status := evaluateMoneyLineBet(&bet, result)
+		settle := func(r txRepos) (bool, error) { return r.moneyLine.SettleIfPending(bet.ID, status) }
+		if err := s.settleBet(settle, bet.UserID, bet.LeagueID, bet.Stake, bet.OddsSnapshot, status); err != nil {
 			return err
 		}
 	}
@@ -659,22 +665,10 @@ func (s *Service) EvaluateBetsForGame(gameID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	for i := range overUnderBets {
-		status := evaluateOverUnderBet(&overUnderBets[i], result)
-
-		settled, err := s.overUnderBetRepo.SettleIfPending(overUnderBets[i].ID, status)
-		if err != nil {
-			return err
-		}
-		if !settled {
-			// Someone else settled it between the read and the write.
-			// Crediting the purse now would pay the bet a second time.
-			continue
-		}
-		overUnderBets[i].Status = status
-
-		// Update purse based on outcome.
-		if err := s.updatePurseForBet(overUnderBets[i].UserID, overUnderBets[i].LeagueID, overUnderBets[i].Stake, overUnderBets[i].OddsSnapshot, status); err != nil {
+	for _, bet := range overUnderBets {
+		status := evaluateOverUnderBet(&bet, result)
+		settle := func(r txRepos) (bool, error) { return r.overUnder.SettleIfPending(bet.ID, status) }
+		if err := s.settleBet(settle, bet.UserID, bet.LeagueID, bet.Stake, bet.OddsSnapshot, status); err != nil {
 			return err
 		}
 	}
@@ -682,16 +676,33 @@ func (s *Service) EvaluateBetsForGame(gameID uuid.UUID) error {
 	return nil
 }
 
-// updatePurseForBet updates the purse based on bet outcome.
-func (s *Service) updatePurseForBet(userID, leagueID uuid.UUID, stake, odds decimal.Decimal, status models.BetStatus) error {
+// settleBet moves one bet off pending and pays its outcome, atomically.
+//
+// Only the caller that wins settle credits the purse: another caller that read
+// the same bet as pending finds it already moved, and crediting then would pay
+// the bet a second time. And the move and the credit share a transaction, so a
+// credit that fails puts the bet back to pending for the next sweep rather than
+// leaving it settled and unpaid.
+func (s *Service) settleBet(settle func(txRepos) (bool, error), userID, leagueID uuid.UUID, stake, odds decimal.Decimal, status models.BetStatus) error {
+	return s.inTx(func(r txRepos) error {
+		settled, err := settle(r)
+		if err != nil || !settled {
+			return err
+		}
+		return payOutcome(r.purse, userID, leagueID, stake, odds, status)
+	})
+}
+
+// payOutcome credits the purse for a settled bet.
+func payOutcome(purse *repository.PurseRepository, userID, leagueID uuid.UUID, stake, odds decimal.Decimal, status models.BetStatus) error {
 	switch status {
 	case models.BetStatusWon:
 		// Credit stake + winnings.
 		payout := calculatePayout(stake, odds)
-		return s.purseRepo.CreditWinnings(userID, leagueID, payout)
+		return purse.CreditWinnings(userID, leagueID, payout)
 	case models.BetStatusPush:
 		// Refund stake only.
-		return s.purseRepo.CreditWinnings(userID, leagueID, stake)
+		return purse.CreditWinnings(userID, leagueID, stake)
 	case models.BetStatusLost:
 		// Stake already deducted, nothing to do.
 		return nil

@@ -12,6 +12,12 @@ import (
 
 var ErrInsufficientBalance = errors.New("insufficient balance")
 
+// ErrPurseNotFound is returned when money is credited to a purse that does not
+// exist. It is an error rather than a no-op because the caller has usually
+// just moved a bet: inside a transaction, returning it undoes that move, where
+// a silent no-op would settle or refund the bet and pay nobody.
+var ErrPurseNotFound = errors.New("purse not found")
+
 // PurseRepository provides methods for interacting with purses in the database.
 type PurseRepository struct {
 	db *gorm.DB
@@ -71,9 +77,16 @@ func (r *PurseRepository) DeductStake(userID, leagueID uuid.UUID, amount decimal
 
 // CreditWinnings adds amount to a purse balance.
 func (r *PurseRepository) CreditWinnings(userID, leagueID uuid.UUID, amount decimal.Decimal) error {
-	return r.db.Model(&models.Purse{}).
+	result := r.db.Model(&models.Purse{}).
 		Where("user_id = ? AND league_id = ?", userID, leagueID).
-		Update("balance", gorm.Expr("balance + ?", amount)).Error
+		Update("balance", gorm.Expr("balance + ?", amount))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrPurseNotFound
+	}
+	return nil
 }
 
 // FindByUser retrieves all purses for a user.

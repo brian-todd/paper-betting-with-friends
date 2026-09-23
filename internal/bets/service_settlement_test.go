@@ -2,10 +2,12 @@ package bets
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
+	"github.com/brian/paper-betting-with-friends/internal/repository"
 )
 
 // Settlement is the one path that pays money out, and every guard on it exists
@@ -243,4 +245,38 @@ func TestSettleIfPendingMovesABetOnlyOnce(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Settling a bet and paying it are one act. When the payout cannot land, the
+// bet has to stay pending -- the sweep only ever looks at pending bets, so one
+// left settled and unpaid would never be looked at again.
+func TestSettlementThatCannotPayLeavesTheBetForTheNextSweep(t *testing.T) {
+	h := newHarness(t)
+	alice := h.member("alice", "1000")
+
+	kickoff := placedAt.Add(time.Hour)
+	game := h.game(kickoff, nil)
+	_, moneyLine, _ := h.lines(game)
+	bet := h.placeMoneyLine(alice, game, moneyLine, models.MoneyLinePickAway, "100")
+
+	finalized := kickoff.Add(4 * time.Hour)
+	h.score(game, 10, 17, &finalized)
+	h.now = finalized
+
+	h.dropPurse(alice)
+	if err := h.svc.SettleFinalGames(context.Background()); !errors.Is(err, repository.ErrPurseNotFound) {
+		t.Fatalf("SettleFinalGames error = %v, want ErrPurseNotFound", err)
+	}
+	if got := h.status(&models.MoneyLineBet{}, bet.ID); got != models.BetStatusPending {
+		t.Fatalf("status after a failed payout = %s, want pending", got)
+	}
+
+	h.restorePurse(alice, "900")
+	if err := h.svc.SettleFinalGames(context.Background()); err != nil {
+		t.Fatalf("retrying the sweep: %v", err)
+	}
+	if got := h.status(&models.MoneyLineBet{}, bet.ID); got != models.BetStatusWon {
+		t.Errorf("status after the retry = %s, want won", got)
+	}
+	h.requireBalance(alice, "1130")
 }

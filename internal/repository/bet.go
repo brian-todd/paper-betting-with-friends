@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // SpreadBetRepository provides methods for interacting with spread bets.
@@ -56,13 +55,42 @@ func (r *SpreadBetRepository) FindPendingByGame(gameID uuid.UUID) ([]models.Spre
 	return bets, nil
 }
 
-// Update saves changes to an existing spread bet.
+// spreadEditColumns are the columns an edit may change. Status is not among
+// them: an edit reads the bet, and writing back the status it read would undo
+// a cancel or a settlement that landed in between.
+var spreadEditColumns = []string{"pick", "spread_odds_id", "spread_snapshot", "odds_snapshot", "stake", "updated_at"}
+
+// UpdateIfPending writes an edit to a bet that is still pending, reporting
+// whether it did.
 //
-// Associations are omitted deliberately. FindByID preloads SpreadOdds, and a
-// plain Save would write the preloaded row's ID back over SpreadOddsID -- so
-// moving a bet to a different line silently kept it pointing at the old one.
-func (r *SpreadBetRepository) Update(bet *models.SpreadBet) error {
-	return r.db.Omit(clause.Associations).Save(bet).Error
+// The column list does two jobs. It keeps the status out of the write, and it
+// keeps the preloaded SpreadOdds out of it: FindByID preloads that row, and a
+// whole-struct Save wrote its ID back over SpreadOddsID -- so moving a bet to a
+// different line silently kept it pointing at the old one.
+func (r *SpreadBetRepository) UpdateIfPending(bet *models.SpreadBet) (bool, error) {
+	result := r.db.Model(&models.SpreadBet{}).
+		Where("id = ? AND status = ?", bet.ID, models.BetStatusPending).
+		Select(spreadEditColumns).
+		Updates(bet)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
+// TransitionStatus moves a bet from one status to another, reporting whether
+// this call is the one that moved it. It is the only way a bet's status
+// changes: SettleIfPending and the admin correction both go through it, so
+// whichever of two callers reads a bet second finds it already moved rather
+// than writing over it.
+func (r *SpreadBetRepository) TransitionStatus(betID uuid.UUID, from, to models.BetStatus) (bool, error) {
+	result := r.db.Model(&models.SpreadBet{}).
+		Where("id = ? AND status = ?", betID, from).
+		Updates(map[string]any{"status": to, "updated_at": time.Now()})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // SettleIfPending moves a pending spread bet to status, reporting whether this
@@ -75,17 +103,10 @@ func (r *SpreadBetRepository) Update(bet *models.SpreadBet) error {
 // makes the transition atomic, the same way PurseRepository.DeductStake makes
 // spending one.
 //
-// It is a targeted update rather than Update so a caller cannot write anything
-// else through it: settlement changes a bet's status and nothing more.
+// It changes the status and nothing more, so a caller cannot write anything
+// else through it.
 func (r *SpreadBetRepository) SettleIfPending(betID uuid.UUID, status models.BetStatus) (bool, error) {
-	result := r.db.Model(&models.SpreadBet{}).
-		Where("id = ? AND status = ?", betID, models.BetStatusPending).
-		Updates(map[string]any{"status": status, "updated_at": time.Now()})
-
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected == 1, nil
+	return r.TransitionStatus(betID, models.BetStatusPending, status)
 }
 
 // CancelIfPending voids a pending bet and releases its Holy Lock, reporting
@@ -224,10 +245,32 @@ func (r *MoneyLineBetRepository) FindPendingByGame(gameID uuid.UUID) ([]models.M
 	return bets, nil
 }
 
-// Update saves changes to an existing money line bet. See SpreadBetRepository
-// .Update for why associations are omitted.
-func (r *MoneyLineBetRepository) Update(bet *models.MoneyLineBet) error {
-	return r.db.Omit(clause.Associations).Save(bet).Error
+// moneyLineEditColumns are the columns an edit may change. See spreadEditColumns.
+var moneyLineEditColumns = []string{"pick", "money_line_odds_id", "odds_snapshot", "stake", "updated_at"}
+
+// UpdateIfPending writes an edit to a bet that is still pending, reporting
+// whether it did. See SpreadBetRepository.UpdateIfPending.
+func (r *MoneyLineBetRepository) UpdateIfPending(bet *models.MoneyLineBet) (bool, error) {
+	result := r.db.Model(&models.MoneyLineBet{}).
+		Where("id = ? AND status = ?", bet.ID, models.BetStatusPending).
+		Select(moneyLineEditColumns).
+		Updates(bet)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
+// TransitionStatus moves a bet from one status to another, reporting whether
+// this call is the one that moved it. See SpreadBetRepository.TransitionStatus.
+func (r *MoneyLineBetRepository) TransitionStatus(betID uuid.UUID, from, to models.BetStatus) (bool, error) {
+	result := r.db.Model(&models.MoneyLineBet{}).
+		Where("id = ? AND status = ?", betID, from).
+		Updates(map[string]any{"status": to, "updated_at": time.Now()})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // SettleIfPending moves a pending money line bet to status, reporting whether this
@@ -240,17 +283,10 @@ func (r *MoneyLineBetRepository) Update(bet *models.MoneyLineBet) error {
 // makes the transition atomic, the same way PurseRepository.DeductStake makes
 // spending one.
 //
-// It is a targeted update rather than Update so a caller cannot write anything
-// else through it: settlement changes a bet's status and nothing more.
+// It changes the status and nothing more, so a caller cannot write anything
+// else through it.
 func (r *MoneyLineBetRepository) SettleIfPending(betID uuid.UUID, status models.BetStatus) (bool, error) {
-	result := r.db.Model(&models.MoneyLineBet{}).
-		Where("id = ? AND status = ?", betID, models.BetStatusPending).
-		Updates(map[string]any{"status": status, "updated_at": time.Now()})
-
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected == 1, nil
+	return r.TransitionStatus(betID, models.BetStatusPending, status)
 }
 
 // CancelIfPending voids a pending bet and releases its Holy Lock, reporting
@@ -372,10 +408,32 @@ func (r *OverUnderBetRepository) FindPendingByGame(gameID uuid.UUID) ([]models.O
 	return bets, nil
 }
 
-// Update saves changes to an existing over/under bet. See SpreadBetRepository
-// .Update for why associations are omitted.
-func (r *OverUnderBetRepository) Update(bet *models.OverUnderBet) error {
-	return r.db.Omit(clause.Associations).Save(bet).Error
+// overUnderEditColumns are the columns an edit may change. See spreadEditColumns.
+var overUnderEditColumns = []string{"pick", "over_under_odds_id", "total_snapshot", "odds_snapshot", "stake", "updated_at"}
+
+// UpdateIfPending writes an edit to a bet that is still pending, reporting
+// whether it did. See SpreadBetRepository.UpdateIfPending.
+func (r *OverUnderBetRepository) UpdateIfPending(bet *models.OverUnderBet) (bool, error) {
+	result := r.db.Model(&models.OverUnderBet{}).
+		Where("id = ? AND status = ?", bet.ID, models.BetStatusPending).
+		Select(overUnderEditColumns).
+		Updates(bet)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
+// TransitionStatus moves a bet from one status to another, reporting whether
+// this call is the one that moved it. See SpreadBetRepository.TransitionStatus.
+func (r *OverUnderBetRepository) TransitionStatus(betID uuid.UUID, from, to models.BetStatus) (bool, error) {
+	result := r.db.Model(&models.OverUnderBet{}).
+		Where("id = ? AND status = ?", betID, from).
+		Updates(map[string]any{"status": to, "updated_at": time.Now()})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // SettleIfPending moves a pending over/under bet to status, reporting whether this
@@ -388,17 +446,10 @@ func (r *OverUnderBetRepository) Update(bet *models.OverUnderBet) error {
 // makes the transition atomic, the same way PurseRepository.DeductStake makes
 // spending one.
 //
-// It is a targeted update rather than Update so a caller cannot write anything
-// else through it: settlement changes a bet's status and nothing more.
+// It changes the status and nothing more, so a caller cannot write anything
+// else through it.
 func (r *OverUnderBetRepository) SettleIfPending(betID uuid.UUID, status models.BetStatus) (bool, error) {
-	result := r.db.Model(&models.OverUnderBet{}).
-		Where("id = ? AND status = ?", betID, models.BetStatusPending).
-		Updates(map[string]any{"status": status, "updated_at": time.Now()})
-
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected == 1, nil
+	return r.TransitionStatus(betID, models.BetStatusPending, status)
 }
 
 // CancelIfPending voids a pending bet and releases its Holy Lock, reporting

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
+	"github.com/brian/paper-betting-with-friends/internal/repository"
 )
 
 // betKind adapts the three bet tables to one shape, so a rule that holds for
@@ -263,6 +264,34 @@ func TestCancelIfPendingLeavesASettledBetAlone(t *testing.T) {
 			if got := h.status(kind.model, betID); got != models.BetStatusWon {
 				t.Errorf("status = %s, want won", got)
 			}
+		})
+	}
+}
+
+// Voiding a bet and refunding it are one act: a refund that cannot land leaves
+// the bet pending, so the owner can cancel again rather than holding a void bet
+// and no money.
+func TestCancelThatCannotRefundLeavesTheBetPending(t *testing.T) {
+	for _, kind := range betKinds {
+		t.Run(kind.name, func(t *testing.T) {
+			h := newHarness(t)
+			owner := h.member("alice", "1000")
+			game := h.game(placedAt.Add(time.Hour), nil)
+			betID := kind.place(h, owner, game, "100")
+
+			h.dropPurse(owner)
+			if err := kind.cancel(h, betID, owner.ID); !errors.Is(err, repository.ErrPurseNotFound) {
+				t.Fatalf("cancel error = %v, want ErrPurseNotFound", err)
+			}
+			if got := h.status(kind.model, betID); got != models.BetStatusPending {
+				t.Errorf("status = %s, want pending", got)
+			}
+
+			h.restorePurse(owner, "900")
+			if err := kind.cancel(h, betID, owner.ID); err != nil {
+				t.Fatalf("cancelling again: %v", err)
+			}
+			h.requireBalance(owner, "1000")
 		})
 	}
 }

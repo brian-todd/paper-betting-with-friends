@@ -232,3 +232,24 @@ func (h *harness) placeOverUnder(user *models.User, game *models.Game, odds *mod
 }
 
 func dec(s string) decimal.Decimal { return decimal.RequireFromString(s) }
+
+// dropPurse deletes user's purse, so the next credit to it fails. It is the one
+// failure a test can cause on demand, and every path that moves a bet and then
+// credits a purse has to roll the bet back when it happens.
+func (h *harness) dropPurse(user *models.User) {
+	h.t.Helper()
+
+	if err := h.db.Where("user_id = ? AND league_id = ?", user.ID, h.league.ID).Delete(&models.Purse{}).Error; err != nil {
+		h.t.Fatalf("dropping purse: %v", err)
+	}
+}
+
+// restorePurse puts a dropped purse back at balance.
+func (h *harness) restorePurse(user *models.User, balance string) {
+	h.t.Helper()
+
+	purse := &models.Purse{UserID: user.ID, LeagueID: h.league.ID, Balance: dec(balance)}
+	if err := h.db.Create(purse).Error; err != nil {
+		h.t.Fatalf("restoring purse: %v", err)
+	}
+}

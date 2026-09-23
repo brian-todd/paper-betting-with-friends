@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
+	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -225,5 +226,62 @@ func TestFinalizeGameResultSettlesAProvisionalScore(t *testing.T) {
 
 	if err := h.svc.FinalizeGameResult(h.game(placedAt, nil).ID); !errors.Is(err, ErrGameNotFound) {
 		t.Errorf("finalizing a game with no score: error = %v, want ErrGameNotFound", err)
+	}
+}
+
+// A correction's purse delta is computed from the status the admin page read.
+// If the bet has moved since -- the sweep settled it, or its owner cancelled --
+// that delta is for a transition that is no longer the one happening, so the
+// correction is refused rather than applied.
+func TestTransitionStatusRefusesAStaleFromStatus(t *testing.T) {
+	h := newHarness(t)
+	alice := h.member("alice", "1000")
+
+	for _, kind := range betKinds {
+		t.Run(kind.name, func(t *testing.T) {
+			game := h.game(placedAt.Add(time.Hour), nil)
+			betID := kind.place(h, alice, game, "100")
+			if err := h.db.Model(kind.model).Where("id = ?", betID).Update("status", models.BetStatusLost).Error; err != nil {
+				t.Fatalf("settling: %v", err)
+			}
+
+			var moved bool
+			var err error
+			switch kind.model.(type) {
+			case *models.SpreadBet:
+				moved, err = h.svc.spreadBetRepo.TransitionStatus(betID, models.BetStatusPending, models.BetStatusWon)
+			case *models.MoneyLineBet:
+				moved, err = h.svc.moneyLineBetRepo.TransitionStatus(betID, models.BetStatusPending, models.BetStatusWon)
+			case *models.OverUnderBet:
+				moved, err = h.svc.overUnderBetRepo.TransitionStatus(betID, models.BetStatusPending, models.BetStatusWon)
+			}
+			if err != nil {
+				t.Fatalf("TransitionStatus: %v", err)
+			}
+			if moved {
+				t.Error("TransitionStatus moved a bet out of a status it was not in")
+			}
+			if got := h.status(kind.model, betID); got != models.BetStatusLost {
+				t.Errorf("status = %s, want lost", got)
+			}
+		})
+	}
+}
+
+// A correction that cannot move the purse must not move the bet either, or the
+// two disagree for good.
+func TestAdminCorrectionThatCannotMoveThePurseLeavesTheBet(t *testing.T) {
+	h := newHarness(t)
+	alice := h.member("alice", "1000")
+	game := h.game(placedAt.Add(time.Hour), nil)
+	_, moneyLine, _ := h.lines(game)
+	bet := h.placeMoneyLine(alice, game, moneyLine, models.MoneyLinePickAway, "100")
+
+	h.dropPurse(alice)
+	if err := h.svc.AdminSetBetStatus(BetTypeMoneyLine, bet.ID, models.BetStatusWon); !errors.Is(err, repository.ErrPurseNotFound) {
+		t.Fatalf("error = %v, want ErrPurseNotFound", err)
+	}
+	if got := h.status(&models.MoneyLineBet{}, bet.ID); got != models.BetStatusPending {
+		t.Errorf("status = %s, want pending", got)
 	}
 }
