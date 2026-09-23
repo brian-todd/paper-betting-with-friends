@@ -79,3 +79,6 @@ samples/
 
 # Ignore spec docs.
 docs/
+
+# Analysis related code for offline work.
+analysis/
