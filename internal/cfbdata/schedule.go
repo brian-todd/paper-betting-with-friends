@@ -1,6 +1,10 @@
 package cfbdata
 
-import "time"
+import (
+	"time"
+
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
+)
 
 // Lines cadence.
 //
@@ -104,7 +108,7 @@ func NextSync(now time.Time, loc *time.Location) time.Time {
 	}
 
 	t := now.In(loc)
-	return nextOnGrid(t, loc, intervalAt(t))
+	return timeutil.NextOnGrid(t, loc, intervalAt(t))
 }
 
 // NextScoreboardSync returns the next instant the live scoreboard sync should
@@ -125,14 +129,14 @@ func NextScoreboardSync(now time.Time, loc *time.Location, state ScoreboardState
 
 	t := now.In(loc)
 	if state.Active {
-		return nextOnGrid(t, loc, scoreboardLiveInterval)
+		return timeutil.NextOnGrid(t, loc, scoreboardLiveInterval)
 	}
 
 	// The idle wait stays on the wall-clock grid rather than being computed as
 	// now.Add(interval), for the reason given on NextSync: a restart must not
 	// shift the whole schedule onto an arbitrary offset. A kickoff sooner than
 	// the next grid point brings the run forward to it.
-	next := nextOnGrid(t, loc, scoreboardIdleInterval)
+	next := timeutil.NextOnGrid(t, loc, scoreboardIdleInterval)
 	if state.NextKickoff != nil {
 		if kickoff := state.NextKickoff.In(loc); kickoff.After(t) && kickoff.Before(next) {
 			return kickoff
@@ -150,37 +154,6 @@ func ScoreboardDelay(now time.Time, loc *time.Location, state ScoreboardState) t
 	return minDelay
 }
 
-// nextOnGrid advances t, which is already expressed in loc, to the next
-// multiple of interval since midnight.
-//
-// Every point where a cadence changes — midnight, 2am, 6am — is a whole hour,
-// and so is already on the grid of every interval used here, which is what
-// keeps this single step from jumping over a transition.
-func nextOnGrid(t time.Time, loc *time.Location, interval time.Duration) time.Time {
-	step := int(interval / time.Minute)
-
-	minutes := t.Hour()*60 + t.Minute()
-	next := (minutes/step + 1) * step
-
-	// time.Date normalises the minute overflow past midnight into the next day,
-	// and resolves the result against loc's offset for that date — which is what
-	// keeps the grid on the wall clock across a DST change rather than drifting
-	// by an hour.
-	//
-	// The walk forward is for the other kind of transition. When the clocks go
-	// back, an hour of wall-clock readings happens twice, and Go resolves the
-	// ambiguous ones to the first pass; during the second pass the next grid
-	// point by wall clock is therefore still in the past. Left alone that hands
-	// the scheduler a negative delay and polls flat out until the hour clears.
-	for {
-		candidate := time.Date(t.Year(), t.Month(), t.Day(), 0, next, 0, 0, loc)
-		if candidate.After(t) {
-			return candidate
-		}
-		next += step
-	}
-}
-
 // SyncDelay returns how long to wait after now before the next lines sync.
 func SyncDelay(now time.Time, loc *time.Location) time.Duration {
 	if delay := NextSync(now, loc).Sub(now); delay > minDelay {
@@ -190,6 +163,10 @@ func SyncDelay(now time.Time, loc *time.Location) time.Duration {
 }
 
 // intervalAt is the polling interval in force at t.
+//
+// Every point where it changes -- midnight, 2am, 6am -- is a whole hour, and so
+// is already on the grid of every interval it returns, which is what keeps
+// timeutil.NextOnGrid's single step from jumping over a transition.
 func intervalAt(t time.Time) time.Duration {
 	day, hour := t.Weekday(), t.Hour()
 
@@ -242,16 +219,16 @@ const (
 // after now.
 //
 // One flat interval on the same wall-clock grid the other jobs use, so a
-// redeploy cannot shift it onto an arbitrary offset. nextOnGrid's note about
-// cadence-change points falling on the grid is about intervalAt; there is no
-// transition here to step over.
+// redeploy cannot shift it onto an arbitrary offset. timeutil.NextOnGrid's note
+// about cadence-change points falling on the grid is about intervalAt; there is
+// no transition here to step over.
 func NextGamesSync(now time.Time, loc *time.Location) time.Time {
 	if loc == nil {
 		loc = time.UTC
 	}
 
 	t := now.In(loc)
-	return nextOnGrid(t, loc, gamesInterval)
+	return timeutil.NextOnGrid(t, loc, gamesInterval)
 }
 
 // GamesDelay returns how long to wait after now before the next schedule sync.

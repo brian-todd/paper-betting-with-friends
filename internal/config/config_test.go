@@ -271,6 +271,51 @@ func TestValidateRejectsUnusablePoolSize(t *testing.T) {
 	}
 }
 
+// The interval is a grid step, so zero is a division by zero rather than the
+// disabled job it used to be, a step that does not divide a day misses
+// midnight and runs at irregular spacing across it, and below the floor the basketball jobs outspend
+// their share of the allowance. Without a key neither job exists, so nothing
+// reads it.
+func TestValidateBoundsTheBasketballInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		interval int
+		wantErr  bool
+	}{
+		{"the default", "key", 15, false},
+		{"the floor", "key", MinCBBSyncIntervalMins, false},
+		{"a day", "key", MaxCBBSyncIntervalMins, false},
+		{"zero", "key", 0, true},
+		{"negative", "key", -15, true},
+		{"under the floor", "key", MinCBBSyncIntervalMins - 1, true},
+		{"over a day", "key", MaxCBBSyncIntervalMins + 1, true},
+		{"twenty divides a day", "key", 20, false},
+		{"a hundred does not", "key", 100, true},
+		{"seven hundred does not", "key", 700, true},
+		{"zero with no key", "", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{
+				Env: EnvDevelopment, SessionKey: defaultSessionKey, DBMaxOpenConns: 20,
+				CBBDataAPIKey: tt.key, CBBSyncIntervalMins: tt.interval,
+			}
+			err := cfg.Validate()
+			if tt.wantErr && err == nil {
+				t.Error("Validate() = nil, want an error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("Validate() = %v, want nil", err)
+			}
+			if err != nil && !strings.Contains(err.Error(), "CBB_SYNC_INTERVAL_MINS") {
+				t.Errorf("error = %q, want it to name CBB_SYNC_INTERVAL_MINS", err)
+			}
+		})
+	}
+}
+
 // The defaults Load produces must themselves pass validation, or a fresh
 // checkout cannot run.
 func TestLoadDefaultsAreValidForDevelopment(t *testing.T) {

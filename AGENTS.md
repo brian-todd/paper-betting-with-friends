@@ -894,6 +894,30 @@ requests a month and the football jobs are most of it:
   covers the case the six-hour grid cannot: `NextDelay` is recomputed on every
   start, so a process restarting faster than its interval never reaches the
   timer, and this job would never run at all
+- `cbb-games` and `cbb-lines` share one cadence (`cbbdata.NextGamesSync`):
+  `CBB_SYNC_INTERVAL_MINS` from October 25 to April 15, once a day outside it,
+  ~5,800 a month between them in season and ~60 out. They are two jobs so a
+  failing `/games` no longer skips `/lines` and a line snapshot with it — not
+  to slow `/games` the way football's was. Basketball has no scoreboard, so
+  `/games` is its only source of scores, statuses and settlement. The lines
+  run `linesLag` (five minutes) behind the games: `syncLines` skips a game it
+  cannot find, so racing the games run in one slot drops a new game's lines
+  until the next — a day, out of season. `RunOnStart` is set only when the
+  process starts out of season, where the slot is a day long; in season it
+  would be two metered requests on every Air reload for nothing. The interval
+  is a grid step, so when a basketball key is set `Config.Validate` refuses
+  one that does not divide a day or lies outside 10–1440: zero divides by it,
+  100 runs at irregular spacing across midnight, and under ten the pair
+  outspend their share
+
+The allowance is split in `internal/apibudget` — a share for each sport and a
+reserve for the jobs no test counts — and each sport's cadence test holds its
+worst month to its own share. `apibudget`'s own test checks the shares still fit
+the allowance, so neither sport can pass by raising its number.
+`TestBasketballCadenceStaysWithinMonthlyCallBudget` counts at the ten-minute
+floor rather than the default, and holds an off-season month to a few hundred —
+which is what notices the throttle going missing, since a July at the in-season
+rate still fits under the share.
 
 `TestFootballCadenceStaysWithinMonthlyCallBudget` walks real months at all
 three schedules and fails if a change to any of them overruns the plan, capped
@@ -1004,6 +1028,8 @@ a migration is the wrong place to decide that.
 - Re-capturing an *unplayed* week — its value is that the games had not happened, and a refresh destroys it silently
 - Inferring a status from a `startTimeTBD` placeholder or a zero `startDate` — both are instants the feed does not mean, and `advancesFrom` has no edge back from the `in_progress` they produce
 - A unique index on a display string — the one on `teams.abbreviation` cost 107 basketball teams and the 49 games that needed them, because `Upsert` arbitrates a different index and the violation was logged and continued past
+- Slowing basketball's `/games` to football's schedule rate — there is no basketball scoreboard behind it, so it is the score feed and the settlement trigger
+- Raising a share in `internal/apibudget` to make a cadence test pass — the shares are the plan; overrunning one is the finding
 - Deltas in `odds_movements` — store the whole line at each change; a delta log turns one lost row into every later value being wrong
 - Writing a book's quotes one by one in a lines sync — fold them with `quotesBySource` first, or a book under two spellings records a phantom move every run
 - Deciding whether a line moved by comparing against the odds row — the upsert has already overwritten it, and comparing against the latest movement is what lets a failed history write heal on the next sync
