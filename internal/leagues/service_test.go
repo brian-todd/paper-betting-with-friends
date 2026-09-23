@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
+	"github.com/brian/paper-betting-with-friends/internal/testdb"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -247,4 +249,205 @@ func TestValidateLeagueName(t *testing.T) {
 			}
 		})
 	}
+}
+
+// membershipFixture is a public and a private league, each owned by one user,
+// and a second user who belongs to neither.
+type membershipFixture struct {
+	t              *testing.T
+	svc            *Service
+	owner, alice   *models.User
+	public, secret *models.League
+}
+
+func newMembershipFixture(t *testing.T) *membershipFixture {
+	t.Helper()
+
+	db := testdb.Open(t)
+	f := &membershipFixture{t: t, svc: NewService(db)}
+	for _, u := range []**models.User{&f.owner, &f.alice} {
+		*u = &models.User{Username: "member-" + uuid.NewString()[:8], PasswordHash: "unused"}
+		if err := db.Create(*u).Error; err != nil {
+			t.Fatalf("creating user: %v", err)
+		}
+	}
+
+	var err error
+	if f.public, err = f.svc.CreateLeague("Public", f.owner.ID, true, decimal.RequireFromString("1000")); err != nil {
+		t.Fatalf("creating public league: %v", err)
+	}
+	if f.secret, err = f.svc.CreateLeague("Secret", f.owner.ID, false, decimal.RequireFromString("500")); err != nil {
+		t.Fatalf("creating private league: %v", err)
+	}
+	return f
+}
+
+func (f *membershipFixture) requireBalance(league *models.League, user *models.User, want string) {
+	f.t.Helper()
+
+	got, err := f.svc.GetPurseBalance(league.ID, user.ID)
+	if err != nil {
+		f.t.Fatalf("reading purse: %v", err)
+	}
+	if !got.Equal(decimal.RequireFromString(want)) {
+		f.t.Errorf("balance = %s, want %s", got, want)
+	}
+}
+
+func TestLeagueMembership(t *testing.T) {
+	t.Run("the creator is the league's admin and holds its starting balance", func(t *testing.T) {
+		f := newMembershipFixture(t)
+
+		details, err := f.svc.GetLeagueDetails(f.secret.ID, f.owner.ID)
+		if err != nil {
+			t.Fatalf("GetLeagueDetails: %v", err)
+		}
+		if !details.IsMember || !details.IsAdmin || !details.IsCreator {
+			t.Errorf("creator details = member %v, admin %v, creator %v; want all true",
+				details.IsMember, details.IsAdmin, details.IsCreator)
+		}
+		f.requireBalance(f.secret, f.owner, "500")
+
+		if err := f.svc.LeaveLeague(f.secret.ID, f.owner.ID); !errors.Is(err, ErrCannotLeave) {
+			t.Errorf("creator leaving: error = %v, want ErrCannotLeave", err)
+		}
+	})
+
+	t.Run("joining a public league opens a purse, once", func(t *testing.T) {
+		f := newMembershipFixture(t)
+
+		if err := f.svc.JoinLeague(f.public.ID, f.alice.ID); err != nil {
+			t.Fatalf("joining: %v", err)
+		}
+		f.requireBalance(f.public, f.alice, "1000")
+
+		if err := f.svc.JoinLeague(f.public.ID, f.alice.ID); !errors.Is(err, ErrAlreadyMember) {
+			t.Errorf("joining twice: error = %v, want ErrAlreadyMember", err)
+		}
+	})
+
+	t.Run("a private league is joined by its code, not by its id", func(t *testing.T) {
+		f := newMembershipFixture(t)
+
+		if err := f.svc.JoinLeague(f.secret.ID, f.alice.ID); !errors.Is(err, ErrLeagueNotPublic) {
+			t.Fatalf("joining by id: error = %v, want ErrLeagueNotPublic", err)
+		}
+		if _, err := f.svc.JoinByCode("not-a-code", f.alice.ID); !errors.Is(err, ErrInvalidCode) {
+			t.Errorf("bad code: error = %v, want ErrInvalidCode", err)
+		}
+		joined, err := f.svc.JoinByCode(f.secret.InviteCode, f.alice.ID)
+		if err != nil {
+			t.Fatalf("joining by code: %v", err)
+		}
+		if joined.ID != f.secret.ID {
+			t.Errorf("joined %s, want %s", joined.ID, f.secret.ID)
+		}
+		f.requireBalance(f.secret, f.alice, "500")
+	})
+
+	t.Run("only public leagues the user is not in are offered", func(t *testing.T) {
+		f := newMembershipFixture(t)
+
+		available, err := f.svc.GetAvailableLeagues(f.alice.ID)
+		if err != nil {
+			t.Fatalf("GetAvailableLeagues: %v", err)
+		}
+		if len(available) != 1 || available[0].ID != f.public.ID {
+			t.Errorf("offered %v, want only the public league", available)
+		}
+
+		available, err = f.svc.GetAvailableLeagues(f.owner.ID)
+		if err != nil {
+			t.Fatalf("GetAvailableLeagues: %v", err)
+		}
+		if len(available) != 0 {
+			t.Errorf("owner offered %d leagues they are already in", len(available))
+		}
+	})
+
+	// Leaving keeps the purse so a returning member comes back to the balance
+	// they had -- otherwise leaving would be a way to reset a losing season.
+	// Rejoining used to fail outright: the new purse collided with the old one.
+	for _, rejoin := range []struct {
+		name string
+		join func(f *membershipFixture, league *models.League) error
+	}{
+		{"by id", func(f *membershipFixture, league *models.League) error {
+			return f.svc.JoinLeague(league.ID, f.alice.ID)
+		}},
+		{"by code", func(f *membershipFixture, league *models.League) error {
+			_, err := f.svc.JoinByCode(league.InviteCode, f.alice.ID)
+			return err
+		}},
+	} {
+		t.Run("a member who leaves and rejoins "+rejoin.name+" keeps their balance", func(t *testing.T) {
+			f := newMembershipFixture(t)
+
+			if err := rejoin.join(f, f.public); err != nil {
+				t.Fatalf("joining: %v", err)
+			}
+			if err := f.svc.purseRepo.CreditWinnings(f.alice.ID, f.public.ID, decimal.RequireFromString("-750")); err != nil {
+				t.Fatalf("losing money: %v", err)
+			}
+			if err := f.svc.LeaveLeague(f.public.ID, f.alice.ID); err != nil {
+				t.Fatalf("leaving: %v", err)
+			}
+			if err := f.svc.LeaveLeague(f.public.ID, f.alice.ID); !errors.Is(err, ErrNotMember) {
+				t.Errorf("leaving twice: error = %v, want ErrNotMember", err)
+			}
+
+			if err := rejoin.join(f, f.public); err != nil {
+				t.Fatalf("rejoining: %v", err)
+			}
+			f.requireBalance(f.public, f.alice, "250")
+		})
+	}
+
+	t.Run("only the league's admin may delete it", func(t *testing.T) {
+		f := newMembershipFixture(t)
+		if err := f.svc.JoinLeague(f.public.ID, f.alice.ID); err != nil {
+			t.Fatalf("joining: %v", err)
+		}
+
+		if err := f.svc.DeleteLeague(f.public.ID, f.alice.ID); !errors.Is(err, ErrNotAuthorized) {
+			t.Fatalf("member deleting: error = %v, want ErrNotAuthorized", err)
+		}
+		if err := f.svc.DeleteLeague(f.public.ID, f.owner.ID); err != nil {
+			t.Fatalf("owner deleting: %v", err)
+		}
+		if _, err := f.svc.GetLeagueByID(f.public.ID); !errors.Is(err, ErrLeagueNotFound) {
+			t.Errorf("deleted league lookup: error = %v, want ErrLeagueNotFound", err)
+		}
+		purses, err := f.svc.GetUserPurses(f.alice.ID)
+		if err != nil {
+			t.Fatalf("GetUserPurses: %v", err)
+		}
+		if len(purses) != 0 {
+			t.Errorf("deleting the league left %d purses behind", len(purses))
+		}
+	})
+
+	t.Run("only the creator may rename, and the name is validated", func(t *testing.T) {
+		f := newMembershipFixture(t)
+		if err := f.svc.JoinLeague(f.public.ID, f.alice.ID); err != nil {
+			t.Fatalf("joining: %v", err)
+		}
+
+		if _, err := f.svc.RenameLeague(f.public.ID, f.alice.ID, "Mine now"); !errors.Is(err, ErrNotAuthorized) {
+			t.Errorf("member renaming: error = %v, want ErrNotAuthorized", err)
+		}
+		if _, err := f.svc.RenameLeague(f.public.ID, f.owner.ID, "   "); !errors.Is(err, ErrInvalidName) {
+			t.Errorf("blank name: error = %v, want ErrInvalidName", err)
+		}
+		if _, err := f.svc.RenameLeague(f.public.ID, f.owner.ID, "  Sunday Club  "); err != nil {
+			t.Fatalf("renaming: %v", err)
+		}
+		league, err := f.svc.GetLeagueByID(f.public.ID)
+		if err != nil {
+			t.Fatalf("GetLeagueByID: %v", err)
+		}
+		if league.Name != "Sunday Club" {
+			t.Errorf("name = %q, want the trimmed %q", league.Name, "Sunday Club")
+		}
+	})
 }

@@ -108,6 +108,12 @@ type CreateSpreadBetInput struct {
 
 // CreateSpreadBet creates a new spread bet.
 func (s *Service) CreateSpreadBet(input CreateSpreadBetInput) (*models.SpreadBet, error) {
+	// The handler checks this too, but the purse cannot rely on it: a negative
+	// stake passes DeductStake's balance >= amount guard and credits the purse.
+	if input.Stake.LessThanOrEqual(decimal.Zero) {
+		return nil, ErrInvalidStake
+	}
+
 	// Validate game exists and hasn't started.
 	game, err := s.gameRepo.FindByID(input.GameID)
 	if err != nil {
@@ -117,7 +123,11 @@ func (s *Service) CreateSpreadBet(input CreateSpreadBetInput) (*models.SpreadBet
 		return nil, err
 	}
 
-	if game.ScheduledAt.Before(s.clock.Now()) {
+	// Not Before: the kickoff instant itself counts as started, the same
+	// boundary editing, cancelling and the Holy Lock use. A bet placeable at a
+	// moment it could no longer be cancelled is the disagreement editable and
+	// authorizeEdit exist to prevent.
+	if !game.ScheduledAt.After(s.clock.Now()) {
 		return nil, ErrGameStarted
 	}
 
@@ -194,6 +204,11 @@ type CreateMoneyLineBetInput struct {
 
 // CreateMoneyLineBet creates a new money line bet.
 func (s *Service) CreateMoneyLineBet(input CreateMoneyLineBetInput) (*models.MoneyLineBet, error) {
+	// See CreateSpreadBet: a negative stake would credit the purse.
+	if input.Stake.LessThanOrEqual(decimal.Zero) {
+		return nil, ErrInvalidStake
+	}
+
 	// Validate game exists and hasn't started.
 	game, err := s.gameRepo.FindByID(input.GameID)
 	if err != nil {
@@ -203,7 +218,7 @@ func (s *Service) CreateMoneyLineBet(input CreateMoneyLineBetInput) (*models.Mon
 		return nil, err
 	}
 
-	if game.ScheduledAt.Before(s.clock.Now()) {
+	if !game.ScheduledAt.After(s.clock.Now()) {
 		return nil, ErrGameStarted
 	}
 
@@ -280,6 +295,11 @@ type CreateOverUnderBetInput struct {
 
 // CreateOverUnderBet creates a new over/under bet.
 func (s *Service) CreateOverUnderBet(input CreateOverUnderBetInput) (*models.OverUnderBet, error) {
+	// See CreateSpreadBet: a negative stake would credit the purse.
+	if input.Stake.LessThanOrEqual(decimal.Zero) {
+		return nil, ErrInvalidStake
+	}
+
 	// Validate game exists and hasn't started.
 	game, err := s.gameRepo.FindByID(input.GameID)
 	if err != nil {
@@ -289,7 +309,7 @@ func (s *Service) CreateOverUnderBet(input CreateOverUnderBetInput) (*models.Ove
 		return nil, err
 	}
 
-	if game.ScheduledAt.Before(s.clock.Now()) {
+	if !game.ScheduledAt.After(s.clock.Now()) {
 		return nil, ErrGameStarted
 	}
 
@@ -406,11 +426,14 @@ func (s *Service) CancelSpreadBet(betID, userID uuid.UUID) error {
 		return err
 	}
 
-	bet.Status = models.BetStatusVoid
-	// A cancelled bet gives its week's Holy Lock slot back.
-	bet.IsHolyLock = false
-	if err := s.spreadBetRepo.Update(bet); err != nil {
+	// Voiding also gives the week's Holy Lock slot back. Only the call that
+	// wins the transition refunds, or a double submit refunds twice.
+	cancelled, err := s.spreadBetRepo.CancelIfPending(bet.ID)
+	if err != nil {
 		return err
+	}
+	if !cancelled {
+		return ErrBetNotPending
 	}
 
 	// Refund stake to purse.
@@ -443,11 +466,14 @@ func (s *Service) CancelMoneyLineBet(betID, userID uuid.UUID) error {
 		return err
 	}
 
-	bet.Status = models.BetStatusVoid
-	// A cancelled bet gives its week's Holy Lock slot back.
-	bet.IsHolyLock = false
-	if err := s.moneyLineBetRepo.Update(bet); err != nil {
+	// Voiding also gives the week's Holy Lock slot back. Only the call that
+	// wins the transition refunds, or a double submit refunds twice.
+	cancelled, err := s.moneyLineBetRepo.CancelIfPending(bet.ID)
+	if err != nil {
 		return err
+	}
+	if !cancelled {
+		return ErrBetNotPending
 	}
 
 	// Refund stake to purse.
@@ -480,11 +506,14 @@ func (s *Service) CancelOverUnderBet(betID, userID uuid.UUID) error {
 		return err
 	}
 
-	bet.Status = models.BetStatusVoid
-	// A cancelled bet gives its week's Holy Lock slot back.
-	bet.IsHolyLock = false
-	if err := s.overUnderBetRepo.Update(bet); err != nil {
+	// Voiding also gives the week's Holy Lock slot back. Only the call that
+	// wins the transition refunds, or a double submit refunds twice.
+	cancelled, err := s.overUnderBetRepo.CancelIfPending(bet.ID)
+	if err != nil {
 		return err
+	}
+	if !cancelled {
+		return ErrBetNotPending
 	}
 
 	// Refund stake to purse.

@@ -88,6 +88,24 @@ func (r *SpreadBetRepository) SettleIfPending(betID uuid.UUID, status models.Bet
 	return result.RowsAffected == 1, nil
 }
 
+// CancelIfPending voids a pending bet and releases its Holy Lock, reporting
+// whether this call is the one that voided it.
+//
+// It is SettleIfPending's twin for the owner's cancel, and the guard matters for
+// the same reason: the caller refunds the stake when this returns true, so two
+// cancels that both read the bet as pending -- a double-clicked button is
+// enough -- would otherwise both refund it.
+func (r *SpreadBetRepository) CancelIfPending(betID uuid.UUID) (bool, error) {
+	result := r.db.Model(&models.SpreadBet{}).
+		Where("id = ? AND status = ?", betID, models.BetStatusPending).
+		Updates(map[string]any{"status": models.BetStatusVoid, "is_holy_lock": false, "updated_at": time.Now()})
+
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
 // BetFilter contains optional filters for querying bets. Every field is
 // optional; a zero BetFilter matches every bet, which is what the admin bet
 // browser starts from.
@@ -235,6 +253,20 @@ func (r *MoneyLineBetRepository) SettleIfPending(betID uuid.UUID, status models.
 	return result.RowsAffected == 1, nil
 }
 
+// CancelIfPending voids a pending bet and releases its Holy Lock, reporting
+// whether this call is the one that voided it. See
+// SpreadBetRepository.CancelIfPending.
+func (r *MoneyLineBetRepository) CancelIfPending(betID uuid.UUID) (bool, error) {
+	result := r.db.Model(&models.MoneyLineBet{}).
+		Where("id = ? AND status = ?", betID, models.BetStatusPending).
+		Updates(map[string]any{"status": models.BetStatusVoid, "is_holy_lock": false, "updated_at": time.Now()})
+
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
 // FindFiltered retrieves money line bets matching filter, newest first. Every filter
 // field is optional, so this serves both a single user's bet list and the
 // admin browser over all users.
@@ -362,6 +394,20 @@ func (r *OverUnderBetRepository) SettleIfPending(betID uuid.UUID, status models.
 	result := r.db.Model(&models.OverUnderBet{}).
 		Where("id = ? AND status = ?", betID, models.BetStatusPending).
 		Updates(map[string]any{"status": status, "updated_at": time.Now()})
+
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
+// CancelIfPending voids a pending bet and releases its Holy Lock, reporting
+// whether this call is the one that voided it. See
+// SpreadBetRepository.CancelIfPending.
+func (r *OverUnderBetRepository) CancelIfPending(betID uuid.UUID) (bool, error) {
+	result := r.db.Model(&models.OverUnderBet{}).
+		Where("id = ? AND status = ?", betID, models.BetStatusPending).
+		Updates(map[string]any{"status": models.BetStatusVoid, "is_holy_lock": false, "updated_at": time.Now()})
 
 	if result.Error != nil {
 		return false, result.Error

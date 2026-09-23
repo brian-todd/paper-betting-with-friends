@@ -235,6 +235,16 @@ Editing a bet moves only the *difference* in stake, via `adjustStake`. Raising a
 $10 bet to $15 needs $5 free, not the $15 a refund-and-recharge would briefly
 require. Roll it back the same way if the bet then fails to save.
 
+A cancel refunds only after winning `CancelIfPending`, the same conditional
+transition settlement uses. It read the bet, saved it void and refunded, so a
+double-clicked cancel button refunded the stake twice.
+
+Leaving a league removes the membership and keeps the purse, so a returning
+member comes back to the balance they had — otherwise leaving would reset a
+losing season. Every path that opens a purse goes through
+`PurseRepository.CreateIfAbsent`; a plain `Create` on rejoin collides with the
+old purse's primary key, which is how rejoining used to fail outright.
+
 ### Bets
 
 A bet stores both the odds row it came from and a snapshot of the numbers at
@@ -659,6 +669,10 @@ to forget to set.
 | 3 | Database → page | `internal/games/handler_fixtures_test.go`, `internal/bets/edit_fixtures_test.go` |
 | 4 | Fixture → page | `cmd/server/app_fixtures_test.go` |
 
+`cmd/server/app_test.go` is level 4 without a fixture: sessions and the admin
+portal through the real router, where the wiring is the thing under test and no
+feed data is needed.
+
 A test file is named for the source file it exercises, never for its level:
 `<file>_test.go`, `<file>_<topic>_test.go` for a slice of a large one, and
 `<file>_fixtures_test.go` when it runs against the captured feed. Helpers
@@ -882,7 +896,7 @@ a migration is the wrong place to decide that.
 - `Truncate(24 * time.Hour)` or `Add(24 * time.Hour)` for calendar days — use `timeutil.StartOfDay` and `AddDate`
 - Bare `db.Save(bet)` in a bet repository — a preloaded association overwrites the foreign key; `Omit(clause.Associations)`
 - Treating a `GameResult` as final — check `IsFinal()`, or bets settle on a live score
-- Crediting a purse for a settled bet without first winning `SettleIfPending` — the settlement sweep is not the only caller, and a bet read as pending twice is paid twice
+- Crediting a purse for a settled bet without first winning `SettleIfPending` — the settlement sweep is not the only caller, and a bet read as pending twice is paid twice. A cancel's refund is gated the same way, on `CancelIfPending`
 - Assigning `status` or `finalized_at` unconditionally in a football upsert — two feeds write those rows and a plain assignment lets the slower one un-finish a settled game
 - Guarding `scheduled_at` in `GameRepository.Upsert` the way `status` is guarded — `/games` is the only feed for every division the scoreboard does not poll, and the guard would freeze their kickoffs permanently
 - Guarding a kickoff correction on `status = 'scheduled'` — `/games` infers `in_progress` from the old start time, so that is precisely the row that needs correcting

@@ -1,9 +1,12 @@
 package bets
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -98,5 +101,129 @@ func TestValidBetStatus(t *testing.T) {
 				t.Errorf("validBetStatus(%q) = %v, want %v", tt.status, got, tt.want)
 			}
 		})
+	}
+}
+
+// An admin correction walks a bet through statuses in any order, and the purse
+// has to track every step -- including the backwards ones, which purseDelta
+// computes but only a database can show landing. A $100 money line bet at +130
+// makes each position a round number: pending and lost hold nothing back, push
+// and void return 100, won returns 230.
+func TestAdminSetBetStatusMovesThePurse(t *testing.T) {
+	h := newHarness(t)
+	alice := h.member("alice", "1000")
+	game := h.game(placedAt.Add(time.Hour), nil)
+	_, moneyLine, _ := h.lines(game)
+	bet := h.placeMoneyLine(alice, game, moneyLine, models.MoneyLinePickAway, "100")
+
+	// After the game, as a real correction would be.
+	h.now = placedAt.Add(6 * time.Hour)
+
+	for _, step := range []struct {
+		to          models.BetStatus
+		wantBalance string
+	}{
+		{models.BetStatusWon, "1130"},
+		{models.BetStatusWon, "1130"}, // setting the same status again moves nothing
+		{models.BetStatusLost, "900"},
+		{models.BetStatusPush, "1000"},
+		{models.BetStatusVoid, "1000"},
+		{models.BetStatusPending, "900"},
+	} {
+		if err := h.svc.AdminSetBetStatus(BetTypeMoneyLine, bet.ID, step.to); err != nil {
+			t.Fatalf("setting %s: %v", step.to, err)
+		}
+		if got := h.status(&models.MoneyLineBet{}, bet.ID); got != step.to {
+			t.Errorf("status = %s, want %s", got, step.to)
+		}
+		if got := h.balance(alice); !got.Equal(dec(step.wantBalance)) {
+			t.Errorf("after %s: balance = %s, want %s", step.to, got, step.wantBalance)
+		}
+	}
+}
+
+// A correction has to land even against a purse spent down since the payout,
+// or the bet's status and the balance disagree for good. A negative balance is
+// visible and fixable; a refused correction is neither.
+func TestAdminSetBetStatusCanOverdrawAPurse(t *testing.T) {
+	h := newHarness(t)
+	alice := h.member("alice", "1000")
+	game := h.game(placedAt.Add(time.Hour), nil)
+	_, moneyLine, _ := h.lines(game)
+	bet := h.placeMoneyLine(alice, game, moneyLine, models.MoneyLinePickAway, "100")
+
+	if err := h.svc.AdminSetBetStatus(BetTypeMoneyLine, bet.ID, models.BetStatusWon); err != nil {
+		t.Fatalf("paying out: %v", err)
+	}
+	if err := h.db.Model(&models.Purse{}).Where("user_id = ?", alice.ID).Update("balance", dec("30")).Error; err != nil {
+		t.Fatalf("spending down: %v", err)
+	}
+
+	if err := h.svc.AdminSetBetStatus(BetTypeMoneyLine, bet.ID, models.BetStatusLost); err != nil {
+		t.Fatalf("correcting to lost: %v", err)
+	}
+	h.requireBalance(alice, "-200")
+}
+
+func TestAdminSetBetStatusRefusals(t *testing.T) {
+	h := newHarness(t)
+	alice := h.member("alice", "1000")
+	game := h.game(placedAt.Add(time.Hour), nil)
+	_, moneyLine, _ := h.lines(game)
+	bet := h.placeMoneyLine(alice, game, moneyLine, models.MoneyLinePickAway, "100")
+
+	for _, tc := range []struct {
+		name    string
+		betType string
+		betID   func() uuid.UUID
+		to      models.BetStatus
+		wantErr error
+	}{
+		{"an unknown status", BetTypeMoneyLine, func() uuid.UUID { return bet.ID }, "cashed_out", ErrInvalidBetStatus},
+		{"an unknown bet type", "parlay", func() uuid.UUID { return bet.ID }, models.BetStatusWon, ErrInvalidBetType},
+		// The id is real but belongs to another table: the type decides where
+		// to look, so this is a missing bet, not a money line one.
+		{"the wrong table for the id", BetTypeSpread, func() uuid.UUID { return bet.ID }, models.BetStatusWon, ErrBetNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := h.svc.AdminSetBetStatus(tc.betType, tc.betID(), tc.to); !errors.Is(err, tc.wantErr) {
+				t.Errorf("error = %v, want %v", err, tc.wantErr)
+			}
+			h.requireBalance(alice, "900")
+		})
+	}
+}
+
+// FinalizeGameResult is the operator's answer to a feed that reports a score
+// and never calls the game over. It stamps finality from the service's clock
+// and settles in the same act.
+func TestFinalizeGameResultSettlesAProvisionalScore(t *testing.T) {
+	h := newHarness(t)
+	alice := h.member("alice", "1000")
+	game := h.game(placedAt.Add(time.Hour), nil)
+	_, moneyLine, _ := h.lines(game)
+	bet := h.placeMoneyLine(alice, game, moneyLine, models.MoneyLinePickAway, "100")
+
+	h.score(game, 10, 17, nil)
+	h.now = placedAt.Add(8 * time.Hour)
+
+	if err := h.svc.FinalizeGameResult(game.ID); err != nil {
+		t.Fatalf("FinalizeGameResult: %v", err)
+	}
+
+	result, err := h.svc.FindGameResult(game.ID)
+	if err != nil || result == nil {
+		t.Fatalf("FindGameResult = %v, %v", result, err)
+	}
+	if result.FinalizedAt == nil || !result.FinalizedAt.Equal(h.now) {
+		t.Errorf("finalized_at = %v, want the service clock %v", result.FinalizedAt, h.now)
+	}
+	if got := h.status(&models.MoneyLineBet{}, bet.ID); got != models.BetStatusWon {
+		t.Errorf("status = %s, want won", got)
+	}
+	h.requireBalance(alice, "1130")
+
+	if err := h.svc.FinalizeGameResult(h.game(placedAt, nil).ID); !errors.Is(err, ErrGameNotFound) {
+		t.Errorf("finalizing a game with no score: error = %v, want ErrGameNotFound", err)
 	}
 }

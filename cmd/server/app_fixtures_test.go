@@ -19,7 +19,6 @@ package main
 
 import (
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -32,7 +31,6 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/pagetest"
-	"github.com/brian/paper-betting-with-friends/internal/scheduler"
 )
 
 // The season and week the committed football fixtures cover in full, and the
@@ -53,29 +51,7 @@ func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 	env := pagetest.Open(t, firstSnapshot)
 	env.SeedFootball(fixtureYear, fixtureWeek)
 
-	// Quiet: every request through the stack logs a line, and a week of page
-	// renders is a wall of them with nothing in it.
-	logger := slog.New(slog.DiscardHandler)
-
-	// The scheduler is built but never started, and no job is registered on it.
-	// main registers the sync jobs, and this process has no API key and wants
-	// no metered request; the admin service holds the scheduler only to report
-	// on it.
-	//
-	// pagetest's config says development, which is load-bearing for the session
-	// cookie -- production marks it Secure and Go's jar then refuses to send it
-	// over plain HTTP. The cost is that buildHandler's renderer runs in dev mode
-	// and re-parses every template on every render. That is the real behaviour
-	// for that config and is left alone rather than worked around; it is a
-	// second or two across this whole test.
-	app, err := buildHandler(env.Config, env.DB, env.Location, pagetest.Assets, scheduler.New(logger), logger)
-	if err != nil {
-		t.Fatalf("building the application: %v", err)
-	}
-	app.SetClock(env.Now)
-
-	server := httptest.NewServer(app.Handler)
-	t.Cleanup(server.Close)
+	_, server := serve(t, env)
 
 	t.Run("an anonymous reader is sent to the login page", func(t *testing.T) {
 		// Before minting a session, because a guard that is not there is

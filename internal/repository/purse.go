@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrInsufficientBalance = errors.New("insufficient balance")
@@ -24,6 +25,17 @@ func NewPurseRepository(db *gorm.DB) *PurseRepository {
 // Create inserts a new purse into the database.
 func (r *PurseRepository) Create(purse *models.Purse) error {
 	return r.db.Create(purse).Error
+}
+
+// CreateIfAbsent opens a purse unless the member already has one in the league,
+// in which case the existing balance is kept.
+//
+// Leaving a league removes the membership and deliberately leaves the purse, so
+// a member who comes back returns to the balance they had rather than to a
+// fresh stake -- which would otherwise be a way to reset a losing season. A
+// plain Create on rejoin collides with the old purse's primary key.
+func (r *PurseRepository) CreateIfAbsent(purse *models.Purse) error {
+	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(purse).Error
 }
 
 // FindByUserAndLeague retrieves a purse by user and league IDs.
