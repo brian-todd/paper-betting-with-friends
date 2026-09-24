@@ -44,7 +44,7 @@
                     <th></th>
                     <th>Week</th>
                     <th>Bet Date</th>
-                    <th>Game Date</th>
+                    <th>Kickoff</th>
                     <th>Matchup</th>
                     <th>Type</th>
                     <th>Pick</th>
@@ -63,7 +63,7 @@
                     </td>
                     <td>{{if $bet.Game.Week}}{{$bet.Game.Week.Number}}{{else}}—{{end}}</td>
                     <td class="text-muted">{{localTime $bet.CreatedAt "date"}}</td>
-                    <td class="text-muted">{{localTime $bet.Game.ScheduledAt "date"}}</td>
+                    <td class="text-muted">{{localTime $bet.Game.ScheduledAt "shortdatetime"}}</td>
                     <td class="matchup-cell">
                         <div class="matchup-mini">
                             {{if $bet.Game.AwayTeam.LogoURL}}<img src="{{$bet.Game.AwayTeam.LogoURL}}" class="team-logo-mini" alt="">{{end}}
@@ -109,6 +109,10 @@
                                         <dd>{{$bet.Game.AwayTeam.Name}}</dd>
                                         <dt>Venue</dt>
                                         <dd>{{$bet.Game.Venue.Name}}</dd>
+                                        <dt>Date</dt>
+                                        <dd>{{localTime $bet.Game.ScheduledAt "longdate"}}</dd>
+                                        <dt>Start Time</dt>
+                                        <dd>{{localTime $bet.Game.ScheduledAt "time"}}</dd>
                                         <dt>Game Status</dt>
                                         <dd>
                                             <span class="badge badge-game-{{$bet.Game.Status}}">

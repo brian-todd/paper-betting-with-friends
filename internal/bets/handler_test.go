@@ -292,3 +292,25 @@ func TestBetsPageRendersBetOnGameWithNoWeek(t *testing.T) {
 		t.Error("the bets table was truncated")
 	}
 }
+
+// The kickoff shows in the table and, in full, in the game details -- all
+// through localTime so the reader sees it in their own zone, not the server's.
+func TestBetsPageShowsKickoffDateAndTime(t *testing.T) {
+	bet, _, _ := editableBet(t)
+	bet.Game.ScheduledAt = time.Date(2026, 10, 3, 19, 30, 0, 0, time.UTC)
+
+	html := renderBetsPage(t, bet)
+
+	for _, want := range []string{
+		`<time datetime="2026-10-03T19:30:00Z" data-format="longdate">`,
+		`<time datetime="2026-10-03T19:30:00Z" data-format="time">`,
+		`<dt>Start Time</dt>`,
+		// The table's own column, so the kickoff reads without expanding.
+		`<th>Kickoff</th>`,
+		`<time datetime="2026-10-03T19:30:00Z" data-format="shortdatetime">`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("game details are missing %q", want)
+		}
+	}
+}
