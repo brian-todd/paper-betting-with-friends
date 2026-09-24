@@ -70,6 +70,49 @@ func TestLeaguePageRendersHolyLockRecord(t *testing.T) {
 	}
 }
 
+func TestLeaguePageMarksTheActiveSort(t *testing.T) {
+	leaderboard := []LeaderboardEntry{
+		{Rank: 1, Username: "tester", Balance: decimal.RequireFromString("1200"), Wins: 5, Losses: 3},
+		{Rank: 2, Username: "alice", Balance: decimal.RequireFromString("1000"), Pushes: 2},
+	}
+
+	for _, by := range []LeaderboardSort{SortByWins, SortByWinPct, SortByBalance} {
+		t.Run(string(by), func(t *testing.T) {
+			html := renderLeagueDetail(t, map[string]any{"Leaderboard": leaderboard, "SortBy": by})
+
+			for _, link := range []LeaderboardSort{SortByWins, SortByWinPct, SortByBalance} {
+				if !strings.Contains(html, `href="?sort=`+string(link)+`#leaderboard"`) {
+					t.Errorf("no sort link for %q", link)
+				}
+			}
+			if n := strings.Count(html, `aria-sort="descending"`); n != 1 {
+				t.Errorf("%d columns marked as sorted, want 1", n)
+			}
+			if !strings.Contains(html, `href="?sort=`+string(by)+`#leaderboard" class="sort-link is-active"`) {
+				t.Errorf("the %q column is not marked active", by)
+			}
+		})
+	}
+}
+
+func TestLeaguePageRendersWinPct(t *testing.T) {
+	html := renderLeagueDetail(t, map[string]any{
+		"Leaderboard": []LeaderboardEntry{
+			{Rank: 1, Username: "tester", Balance: decimal.RequireFromString("1200"), Wins: 5, Losses: 3},
+			{Rank: 2, Username: "alice", Balance: decimal.RequireFromString("1000"), Pushes: 2},
+		},
+		"SortBy": SortByWins,
+	})
+
+	if !strings.Contains(html, `<td class="pct-col">62.5%</td>`) {
+		t.Error("a 5-3 record should render 62.5%")
+	}
+	// A record of pushes alone has no percentage, and must not claim 0%.
+	if !strings.Contains(html, `<td class="pct-col"><span class="text-muted">—</span></td>`) {
+		t.Error("a member with no decided bets should render a dash for win %")
+	}
+}
+
 func TestLeaguePageRendersHolyLockSection(t *testing.T) {
 	html := renderLeagueDetail(t, map[string]any{
 		"HolyLocks": []HolyLockWeek{{

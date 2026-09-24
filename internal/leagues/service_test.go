@@ -2,6 +2,7 @@ package leagues
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -217,6 +218,119 @@ func TestHolyLockWeekLabel(t *testing.T) {
 	for _, tt := range tests {
 		if got := holyLockWeekLabel(tt.season, tt.week, tt.seasonType); got != tt.want {
 			t.Errorf("holyLockWeekLabel(%d, %d, %q) = %q, want %q", tt.season, tt.week, tt.seasonType, got, tt.want)
+		}
+	}
+}
+
+func TestRankLeaderboard(t *testing.T) {
+	entry := func(name string, wins, losses, pushes int, balance string) LeaderboardEntry {
+		return LeaderboardEntry{Username: name, Wins: wins, Losses: losses, Pushes: pushes, Balance: decimal.RequireFromString(balance)}
+	}
+	// Each sort puts a different member first, so a comparator that ignores
+	// the requested column cannot pass all three.
+	members := []LeaderboardEntry{
+		entry("rich", 3, 5, 0, "1500"),    // most money, 37.5%
+		entry("grinder", 6, 6, 0, "950"),  // most wins, 50%
+		entry("sharp", 4, 1, 0, "1100"),   // best percentage, 80%
+		entry("pusher", 0, 0, 3, "1000"),  // nothing decided: no percentage
+		entry("winless", 0, 2, 0, "1000"), // 0%, which is still a percentage
+	}
+
+	tests := []struct {
+		by   LeaderboardSort
+		want []string
+	}{
+		{SortByWins, []string{"grinder", "sharp", "rich", "winless", "pusher"}},
+		// 0% outranks no record at all; the pusher has not lost anything but
+		// has not won anything either.
+		{SortByWinPct, []string{"sharp", "grinder", "rich", "winless", "pusher"}},
+		// pusher and winless tie on balance and on wins; winless has a
+		// percentage, even 0%, and the pusher has none.
+		{SortByBalance, []string{"rich", "sharp", "winless", "pusher", "grinder"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.by), func(t *testing.T) {
+			entries := slices.Clone(members)
+			rankLeaderboard(entries, tt.by)
+
+			var got []string
+			for i, e := range entries {
+				got = append(got, e.Username)
+				if e.Rank != i+1 {
+					t.Errorf("%s is at position %d but ranked %d", e.Username, i+1, e.Rank)
+				}
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("order = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Ties on every column fall to the username, so two members level on
+// everything do not swap places between page loads.
+func TestRankLeaderboardBreaksFullTiesByName(t *testing.T) {
+	entries := []LeaderboardEntry{
+		{Username: "zed", Balance: decimal.RequireFromString("1000")},
+		{Username: "Amy", Balance: decimal.RequireFromString("1000")},
+		{Username: "bob", Balance: decimal.RequireFromString("1000")},
+	}
+	rankLeaderboard(entries, SortByWins)
+
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Username)
+	}
+	if want := []string{"Amy", "bob", "zed"}; !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+// Percentages that are equal as fractions but not as floats must tie, which
+// is why compareWinPct cross-multiplies instead of dividing.
+func TestCompareWinPctIsExact(t *testing.T) {
+	a := LeaderboardEntry{Wins: 1, Losses: 2}
+	b := LeaderboardEntry{Wins: 3, Losses: 6}
+	if n := compareWinPct(a, b); n != 0 {
+		t.Errorf("1-2 vs 3-6 compared %d, want a tie", n)
+	}
+}
+
+func TestLeaderboardWinPct(t *testing.T) {
+	tests := []struct {
+		wins, losses, pushes int
+		want                 string
+	}{
+		{5, 3, 0, "62.5"},
+		// Pushes are neither wins nor losses.
+		{5, 3, 4, "62.5"},
+		{2, 1, 0, "66.7"},
+		{0, 4, 0, "0.0"},
+		{7, 0, 0, "100.0"},
+		{0, 0, 2, ""},
+		{0, 0, 0, ""},
+	}
+	for _, tt := range tests {
+		e := LeaderboardEntry{Wins: tt.wins, Losses: tt.losses, Pushes: tt.pushes}
+		if got := e.WinPct(); got != tt.want {
+			t.Errorf("%d-%d-%d WinPct() = %q, want %q", tt.wins, tt.losses, tt.pushes, got, tt.want)
+		}
+	}
+}
+
+func TestParseLeaderboardSort(t *testing.T) {
+	tests := map[string]LeaderboardSort{
+		"":        SortByWins,
+		"wins":    SortByWins,
+		"pct":     SortByWinPct,
+		"balance": SortByBalance,
+		"BALANCE": SortByWins,
+		"rank":    SortByWins,
+	}
+	for in, want := range tests {
+		if got := ParseLeaderboardSort(in); got != want {
+			t.Errorf("ParseLeaderboardSort(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

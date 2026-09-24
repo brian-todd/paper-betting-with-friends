@@ -160,7 +160,8 @@ func (h *Handler) ShowLeague(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get leaderboard data.
-	leaderboard, err := h.service.GetLeaderboard(leagueID)
+	leaderboardSort := ParseLeaderboardSort(r.URL.Query().Get("sort"))
+	leaderboard, err := h.service.GetLeaderboard(leagueID, leaderboardSort)
 	if err != nil {
 		slog.Error("failed to fetching leaderboard", "error", err)
 		// Continue without leaderboard data.
@@ -190,6 +191,7 @@ func (h *Handler) ShowLeague(w http.ResponseWriter, r *http.Request) {
 		"IsCreator":    details.IsCreator,
 		"PurseBalance": purseBalance,
 		"Leaderboard":  leaderboard,
+		"SortBy":       leaderboardSort,
 		"WeeklyStats":  weeklyStats,
 		"HolyLocks":    holyLocks,
 		"Success":      r.URL.Query().Get("success"),

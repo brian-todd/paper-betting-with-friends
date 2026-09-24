@@ -90,18 +90,27 @@
             {{end}}
         </div>
 
-        <div class="card leaderboard-card">
+        <div class="card leaderboard-card" id="leaderboard">
             <h3>Leaderboard</h3>
             {{if .Leaderboard}}
             <div class="leaderboard-table-container">
+                {{/* Sorting is a plain link back to this page, so it works without
+                     JavaScript and the rank column always matches the order shown. */}}
                 <table class="leaderboard-table">
                     <thead>
                         <tr>
                             <th class="rank-col">#</th>
                             <th class="player-col">Player</th>
-                            <th class="record-col">Record</th>
+                            <th class="record-col"{{if eq .SortBy "wins"}} aria-sort="descending"{{end}}>
+                                <a href="?sort=wins#leaderboard" class="sort-link{{if eq .SortBy "wins"}} is-active{{end}}" title="Sort by wins">Record</a>
+                            </th>
+                            <th class="pct-col"{{if eq .SortBy "pct"}} aria-sort="descending"{{end}}>
+                                <a href="?sort=pct#leaderboard" class="sort-link{{if eq .SortBy "pct"}} is-active{{end}}" title="Sort by win percentage">Win %</a>
+                            </th>
                             <th class="record-col">Locks</th>
-                            <th class="balance-col">Balance</th>
+                            <th class="balance-col"{{if eq .SortBy "balance"}} aria-sort="descending"{{end}}>
+                                <a href="?sort=balance#leaderboard" class="sort-link{{if eq .SortBy "balance"}} is-active{{end}}" title="Sort by balance">Balance</a>
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
@@ -117,6 +126,7 @@
                                 <span class="record-losses">{{.Losses}}L</span>
                                 {{if .Pushes}}<span class="record-separator">-</span><span class="record-pushes">{{.Pushes}}P</span>{{end}}
                             </td>
+                            <td class="pct-col">{{if .HasWinPct}}{{.WinPct}}%{{else}}<span class="text-muted">—</span>{{end}}</td>
                             <td class="record-col lock-record">
                                 {{if or .LockWins .LockLosses .LockPushes}}
                                 <span class="record-wins">{{.LockWins}}W</span><span class="record-separator">-</span><span class="record-losses">{{.LockLosses}}L</span>{{if .LockPushes}}<span class="record-separator">-</span><span class="record-pushes">{{.LockPushes}}P</span>{{end}}
