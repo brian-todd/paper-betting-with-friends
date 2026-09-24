@@ -2,8 +2,10 @@ package leagues
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
@@ -114,6 +116,53 @@ func TestBuildWeeklyStats(t *testing.T) {
 	})
 }
 
+// Each member's weekly row lists the bets it was counted from, so the numbers
+// and the list under them always describe the same bets.
+func TestBuildWeeklyStatsListsEachMembersBets(t *testing.T) {
+	me := uuid.New()
+	kickoff := time.Date(2026, 10, 3, 16, 0, 0, 0, time.UTC)
+
+	row := func(betType, status, pick string, line *string, odds string, at time.Time, lock bool) repository.LeagueBetRow {
+		return repository.LeagueBetRow{
+			UserID: me, Username: "Me", Season: new(2026), Week: new(6),
+			BetType: betType, Status: status, Pick: pick, LineValue: line,
+			Stake: decimal.RequireFromString("25"), OddsSnapshot: decimal.RequireFromString(odds),
+			IsHolyLock: lock, HomeAbbr: "GT", AwayAbbr: "CLEM", ScheduledAt: at,
+		}
+	}
+
+	rows := []repository.LeagueBetRow{
+		// Out of kickoff order on purpose.
+		row("overunder", "lost", "under", new("54.5"), "-110", kickoff.Add(4*time.Hour), false),
+		row("spread", "won", "home", new("-7.0"), "-110", kickoff, true),
+		row("moneyline", "pending", "away", nil, "150", kickoff.Add(2*time.Hour), false),
+		// Cancelled: not counted, so not listed either.
+		row("spread", "void", "away", new("7.0"), "-110", kickoff, false),
+	}
+
+	weeks := buildWeeklyStats(rows, me)
+	if len(weeks) != 1 || len(weeks[0].Rows) != 1 {
+		t.Fatalf("got %d weeks, want one week with one member", len(weeks))
+	}
+	got := weeks[0].Rows[0].Bets
+
+	want := []LeagueBet{
+		{Matchup: "CLEM @ GT", Type: "spread", Pick: "GT -7", Status: models.BetStatusWon, IsHolyLock: true, ScheduledAt: kickoff},
+		{Matchup: "CLEM @ GT", Type: "moneyline", Pick: "CLEM +150", Status: models.BetStatusPending, ScheduledAt: kickoff.Add(2 * time.Hour)},
+		{Matchup: "CLEM @ GT", Type: "overunder", Pick: "Under 54.5", Status: models.BetStatusLost, ScheduledAt: kickoff.Add(4 * time.Hour)},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("listed %d bets, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		g, w := got[i], want[i]
+		if g.Matchup != w.Matchup || g.Type != w.Type || g.Pick != w.Pick || g.Status != w.Status ||
+			g.IsHolyLock != w.IsHolyLock || !g.ScheduledAt.Equal(w.ScheduledAt) || !g.Stake.Equal(decimal.RequireFromString("25")) {
+			t.Errorf("bet %d = %+v, want %+v", i, g, w)
+		}
+	}
+}
+
 func TestBuildHolyLockWeeks(t *testing.T) {
 	me := uuid.New()
 	alice := uuid.New()
@@ -217,6 +266,119 @@ func TestHolyLockWeekLabel(t *testing.T) {
 	for _, tt := range tests {
 		if got := holyLockWeekLabel(tt.season, tt.week, tt.seasonType); got != tt.want {
 			t.Errorf("holyLockWeekLabel(%d, %d, %q) = %q, want %q", tt.season, tt.week, tt.seasonType, got, tt.want)
+		}
+	}
+}
+
+func TestRankLeaderboard(t *testing.T) {
+	entry := func(name string, wins, losses, pushes int, balance string) LeaderboardEntry {
+		return LeaderboardEntry{Username: name, Wins: wins, Losses: losses, Pushes: pushes, Balance: decimal.RequireFromString(balance)}
+	}
+	// Each sort puts a different member first, so a comparator that ignores
+	// the requested column cannot pass all three.
+	members := []LeaderboardEntry{
+		entry("rich", 3, 5, 0, "1500"),    // most money, 37.5%
+		entry("grinder", 6, 6, 0, "950"),  // most wins, 50%
+		entry("sharp", 4, 1, 0, "1100"),   // best percentage, 80%
+		entry("pusher", 0, 0, 3, "1000"),  // nothing decided: no percentage
+		entry("winless", 0, 2, 0, "1000"), // 0%, which is still a percentage
+	}
+
+	tests := []struct {
+		by   LeaderboardSort
+		want []string
+	}{
+		{SortByWins, []string{"grinder", "sharp", "rich", "winless", "pusher"}},
+		// 0% outranks no record at all; the pusher has not lost anything but
+		// has not won anything either.
+		{SortByWinPct, []string{"sharp", "grinder", "rich", "winless", "pusher"}},
+		// pusher and winless tie on balance and on wins; winless has a
+		// percentage, even 0%, and the pusher has none.
+		{SortByBalance, []string{"rich", "sharp", "winless", "pusher", "grinder"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.by), func(t *testing.T) {
+			entries := slices.Clone(members)
+			rankLeaderboard(entries, tt.by)
+
+			var got []string
+			for i, e := range entries {
+				got = append(got, e.Username)
+				if e.Rank != i+1 {
+					t.Errorf("%s is at position %d but ranked %d", e.Username, i+1, e.Rank)
+				}
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("order = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Ties on every column fall to the username, so two members level on
+// everything do not swap places between page loads.
+func TestRankLeaderboardBreaksFullTiesByName(t *testing.T) {
+	entries := []LeaderboardEntry{
+		{Username: "zed", Balance: decimal.RequireFromString("1000")},
+		{Username: "Amy", Balance: decimal.RequireFromString("1000")},
+		{Username: "bob", Balance: decimal.RequireFromString("1000")},
+	}
+	rankLeaderboard(entries, SortByWins)
+
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Username)
+	}
+	if want := []string{"Amy", "bob", "zed"}; !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+// Percentages that are equal as fractions but not as floats must tie, which
+// is why compareWinPct cross-multiplies instead of dividing.
+func TestCompareWinPctIsExact(t *testing.T) {
+	a := LeaderboardEntry{Wins: 1, Losses: 2}
+	b := LeaderboardEntry{Wins: 3, Losses: 6}
+	if n := compareWinPct(a, b); n != 0 {
+		t.Errorf("1-2 vs 3-6 compared %d, want a tie", n)
+	}
+}
+
+func TestLeaderboardWinPct(t *testing.T) {
+	tests := []struct {
+		wins, losses, pushes int
+		want                 string
+	}{
+		{5, 3, 0, "62.5"},
+		// Pushes are neither wins nor losses.
+		{5, 3, 4, "62.5"},
+		{2, 1, 0, "66.7"},
+		{0, 4, 0, "0.0"},
+		{7, 0, 0, "100.0"},
+		{0, 0, 2, ""},
+		{0, 0, 0, ""},
+	}
+	for _, tt := range tests {
+		e := LeaderboardEntry{Wins: tt.wins, Losses: tt.losses, Pushes: tt.pushes}
+		if got := e.WinPct(); got != tt.want {
+			t.Errorf("%d-%d-%d WinPct() = %q, want %q", tt.wins, tt.losses, tt.pushes, got, tt.want)
+		}
+	}
+}
+
+func TestParseLeaderboardSort(t *testing.T) {
+	tests := map[string]LeaderboardSort{
+		"":        SortByWins,
+		"wins":    SortByWins,
+		"pct":     SortByWinPct,
+		"balance": SortByBalance,
+		"BALANCE": SortByWins,
+		"rank":    SortByWins,
+	}
+	for in, want := range tests {
+		if got := ParseLeaderboardSort(in); got != want {
+			t.Errorf("ParseLeaderboardSort(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

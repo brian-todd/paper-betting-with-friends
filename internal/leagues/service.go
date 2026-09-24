@@ -1,8 +1,10 @@
 package leagues
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -394,6 +396,19 @@ type WeeklyUserStats struct {
 	Staked        decimal.Decimal
 	Winnings      decimal.Decimal
 	Net           decimal.Decimal
+	// Bets are the ones the counts above are made of, earliest kickoff first.
+	Bets []LeagueBet
+}
+
+// LeagueBet is one bet as the weekly breakdown lists it under its member.
+type LeagueBet struct {
+	Matchup     string // "CLEM @ GT"
+	Type        string // "spread", "moneyline" or "overunder"
+	Pick        string // "GT -7" / "GT +150" / "Over 54.5"
+	Stake       decimal.Decimal
+	Status      models.BetStatus
+	IsHolyLock  bool
+	ScheduledAt time.Time
 }
 
 // WeekStats groups the per-user rows for a single season week.
@@ -461,11 +476,38 @@ func buildWeeklyStats(rows []repository.LeagueBetRow, currentUserID uuid.UUID) [
 			continue
 		}
 		entry.Staked = entry.Staked.Add(row.Stake)
+		entry.Bets = append(entry.Bets, LeagueBet{
+			Matchup: row.AwayAbbr + " @ " + row.HomeAbbr,
+			Type:    row.BetType,
+			Pick: bets.HolyLockPick(repository.LeagueHolyLockRow{
+				BetType:      row.BetType,
+				Pick:         row.Pick,
+				LineValue:    row.LineValue,
+				OddsSnapshot: row.OddsSnapshot,
+				HomeAbbr:     row.HomeAbbr,
+				AwayAbbr:     row.AwayAbbr,
+			}),
+			Stake:       row.Stake,
+			Status:      models.BetStatus(row.Status),
+			IsHolyLock:  row.IsHolyLock,
+			ScheduledAt: row.ScheduledAt,
+		})
 	}
 
 	// Group user entries under their week.
 	grouped := make(map[weekKey][]WeeklyUserStats)
 	for key, entry := range stats {
+		// The rows arrive in no particular order; the pick breaks a tie
+		// between two bets on one game so a reload never reshuffles them.
+		slices.SortFunc(entry.Bets, func(a, b LeagueBet) int {
+			if n := a.ScheduledAt.Compare(b.ScheduledAt); n != 0 {
+				return n
+			}
+			if n := strings.Compare(a.Matchup, b.Matchup); n != 0 {
+				return n
+			}
+			return strings.Compare(a.Type+a.Pick, b.Type+b.Pick)
+		})
 		grouped[key.week] = append(grouped[key.week], *entry)
 	}
 
@@ -507,9 +549,47 @@ func weekLabel(season, week int) string {
 	}
 }
 
-// GetLeaderboard retrieves the leaderboard for a league, sorted by balance.
-func (s *Service) GetLeaderboard(leagueID uuid.UUID) ([]LeaderboardEntry, error) {
-	// Get all purses for this league, ordered by balance.
+// LeaderboardSort names the column a league's standings are ordered by.
+type LeaderboardSort string
+
+const (
+	SortByWins    LeaderboardSort = "wins"
+	SortByWinPct  LeaderboardSort = "pct"
+	SortByBalance LeaderboardSort = "balance"
+)
+
+// ParseLeaderboardSort reads a sort from a query parameter. Anything it does
+// not recognise, including an empty string, is the default: wins.
+func ParseLeaderboardSort(s string) LeaderboardSort {
+	switch LeaderboardSort(s) {
+	case SortByWinPct, SortByBalance:
+		return LeaderboardSort(s)
+	default:
+		return SortByWins
+	}
+}
+
+// HasWinPct reports whether the member has a decided bet to take a percentage
+// over. Pushes are not decided, so a record of pushes alone has none.
+func (e LeaderboardEntry) HasWinPct() bool {
+	return e.Wins+e.Losses > 0
+}
+
+// WinPct is wins over decided bets as a percentage, "62.5". Pushes count as
+// neither, the usual convention for a betting record. Empty when HasWinPct is
+// false: 0% would read as a member who has lost everything.
+func (e LeaderboardEntry) WinPct() string {
+	if !e.HasWinPct() {
+		return ""
+	}
+	return decimal.NewFromInt(int64(e.Wins)).
+		Mul(decimal.NewFromInt(100)).
+		Div(decimal.NewFromInt(int64(e.Wins + e.Losses))).
+		StringFixed(1)
+}
+
+// GetLeaderboard retrieves the leaderboard for a league in the given order.
+func (s *Service) GetLeaderboard(leagueID uuid.UUID, by LeaderboardSort) ([]LeaderboardEntry, error) {
 	purses, err := s.purseRepo.FindByLeague(leagueID)
 	if err != nil {
 		return nil, err
@@ -523,9 +603,8 @@ func (s *Service) GetLeaderboard(leagueID uuid.UUID) ([]LeaderboardEntry, error)
 
 	// Compose leaderboard entries.
 	entries := make([]LeaderboardEntry, 0, len(purses))
-	for i, purse := range purses {
+	for _, purse := range purses {
 		entry := LeaderboardEntry{
-			Rank:     i + 1,
 			Username: purse.User.Username,
 			Balance:  purse.Balance,
 		}
@@ -540,7 +619,54 @@ func (s *Service) GetLeaderboard(leagueID uuid.UUID) ([]LeaderboardEntry, error)
 		entries = append(entries, entry)
 	}
 
+	rankLeaderboard(entries, by)
 	return entries, nil
+}
+
+// rankLeaderboard orders entries by the chosen column, best first, and numbers
+// them. Ties on that column fall through to the other two, then to the
+// username, so the order never depends on what the database returned first.
+func rankLeaderboard(entries []LeaderboardEntry, by LeaderboardSort) {
+	byWins := func(a, b LeaderboardEntry) int { return cmp.Compare(b.Wins, a.Wins) }
+	byPct := func(a, b LeaderboardEntry) int { return compareWinPct(b, a) }
+	byBalance := func(a, b LeaderboardEntry) int { return b.Balance.Cmp(a.Balance) }
+
+	var order []func(a, b LeaderboardEntry) int
+	switch by {
+	case SortByWinPct:
+		order = []func(a, b LeaderboardEntry) int{byPct, byWins, byBalance}
+	case SortByBalance:
+		order = []func(a, b LeaderboardEntry) int{byBalance, byWins, byPct}
+	default:
+		order = []func(a, b LeaderboardEntry) int{byWins, byPct, byBalance}
+	}
+
+	slices.SortFunc(entries, func(a, b LeaderboardEntry) int {
+		for _, compare := range order {
+			if n := compare(a, b); n != 0 {
+				return n
+			}
+		}
+		return strings.Compare(strings.ToLower(a.Username), strings.ToLower(b.Username))
+	})
+	for i := range entries {
+		entries[i].Rank = i + 1
+	}
+}
+
+// compareWinPct compares two win percentages exactly, by cross-multiplying
+// rather than dividing. A member with no decided bet ranks below any member
+// with one, even one at 0%.
+func compareWinPct(a, b LeaderboardEntry) int {
+	switch {
+	case !a.HasWinPct() && !b.HasWinPct():
+		return 0
+	case !a.HasWinPct():
+		return -1
+	case !b.HasWinPct():
+		return 1
+	}
+	return cmp.Compare(a.Wins*(b.Wins+b.Losses), b.Wins*(a.Wins+a.Losses))
 }
 
 // HolyLockEntry is one member's Holy Lock for a week, as displayed.

@@ -70,6 +70,90 @@ func TestLeaguePageRendersHolyLockRecord(t *testing.T) {
 	}
 }
 
+func TestLeaguePageMarksTheActiveSort(t *testing.T) {
+	leaderboard := []LeaderboardEntry{
+		{Rank: 1, Username: "tester", Balance: decimal.RequireFromString("1200"), Wins: 5, Losses: 3},
+		{Rank: 2, Username: "alice", Balance: decimal.RequireFromString("1000"), Pushes: 2},
+	}
+
+	for _, by := range []LeaderboardSort{SortByWins, SortByWinPct, SortByBalance} {
+		t.Run(string(by), func(t *testing.T) {
+			html := renderLeagueDetail(t, map[string]any{"Leaderboard": leaderboard, "SortBy": by})
+
+			for _, link := range []LeaderboardSort{SortByWins, SortByWinPct, SortByBalance} {
+				if !strings.Contains(html, `href="?sort=`+string(link)+`#leaderboard"`) {
+					t.Errorf("no sort link for %q", link)
+				}
+			}
+			if n := strings.Count(html, `aria-sort="descending"`); n != 1 {
+				t.Errorf("%d columns marked as sorted, want 1", n)
+			}
+			if !strings.Contains(html, `href="?sort=`+string(by)+`#leaderboard" class="sort-link is-active"`) {
+				t.Errorf("the %q column is not marked active", by)
+			}
+		})
+	}
+}
+
+func TestLeaguePageRendersWinPct(t *testing.T) {
+	html := renderLeagueDetail(t, map[string]any{
+		"Leaderboard": []LeaderboardEntry{
+			{Rank: 1, Username: "tester", Balance: decimal.RequireFromString("1200"), Wins: 5, Losses: 3},
+			{Rank: 2, Username: "alice", Balance: decimal.RequireFromString("1000"), Pushes: 2},
+		},
+		"SortBy": SortByWins,
+	})
+
+	if !strings.Contains(html, `<td class="pct-col">62.5%</td>`) {
+		t.Error("a 5-3 record should render 62.5%")
+	}
+	// A record of pushes alone has no percentage, and must not claim 0%.
+	if !strings.Contains(html, `<td class="pct-col"><span class="text-muted">—</span></td>`) {
+		t.Error("a member with no decided bets should render a dash for win %")
+	}
+}
+
+func TestLeaguePageListsEachMembersBetsInTheWeeklyBreakdown(t *testing.T) {
+	html := renderLeagueDetail(t, map[string]any{
+		"WeeklyStats": []WeekStats{{
+			Label: "2026 · Week 6",
+			Rows: []WeeklyUserStats{
+				{Username: "tester", IsCurrentUser: true, Wins: 1, Bets: []LeagueBet{{
+					Matchup: "CLEM @ GT", Type: "spread", Pick: "GT -7", IsHolyLock: true,
+					Stake: decimal.RequireFromString("25"), Status: models.BetStatusWon,
+					ScheduledAt: time.Date(2026, 10, 3, 16, 0, 0, 0, time.UTC),
+				}}},
+				{Username: "alice", Losses: 1, Bets: []LeagueBet{{
+					Matchup: "UGA @ BAMA", Type: "overunder", Pick: "Over 48.5",
+					Stake: decimal.RequireFromString("40"), Status: models.BetStatusLost,
+					ScheduledAt: time.Date(2026, 10, 3, 19, 30, 0, 0, time.UTC),
+				}}},
+			},
+		}},
+	})
+
+	for _, want := range []string{
+		// Each name controls the hidden row directly beneath it.
+		`aria-controls="member-bets-0-0"`,
+		`<tr class="member-bets-row" id="member-bets-0-0" hidden>`,
+		`aria-controls="member-bets-0-1"`,
+		`<tr class="member-bets-row" id="member-bets-0-1" hidden>`,
+		`<strong>GT -7</strong>`,
+		`<strong>Over 48.5</strong>`,
+		`<span class="badge badge-type-overunder">O/U</span>`,
+		`<span class="badge badge-status-lost">Lost</span>`,
+		`$40.00`,
+		`<time datetime="2026-10-03T19:30:00Z" data-format="shortdatetime">`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("weekly breakdown is missing %q", want)
+		}
+	}
+	if n := strings.Count(html, `title="Holy Lock"`); n != 1 {
+		t.Errorf("%d bets marked as a Holy Lock, want 1", n)
+	}
+}
+
 func TestLeaguePageRendersHolyLockSection(t *testing.T) {
 	html := renderLeagueDetail(t, map[string]any{
 		"HolyLocks": []HolyLockWeek{{
