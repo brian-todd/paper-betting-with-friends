@@ -164,9 +164,14 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {{range $week.Rows}}
+                        {{range $j, $row := $week.Rows}}
                         <tr{{if .IsCurrentUser}} class="current-user-row"{{end}}>
-                            <td class="player-col">{{.Username}}</td>
+                            <td class="player-col">
+                                <button type="button" class="member-bets-toggle" aria-expanded="false"
+                                        aria-controls="member-bets-{{$i}}-{{$j}}">
+                                    <span class="expand-icon" aria-hidden="true">▶</span>{{.Username}}
+                                </button>
+                            </td>
                             <td class="record-col">
                                 <span class="record-wins">{{.Wins}}W</span><span class="record-separator">-</span><span class="record-losses">{{.Losses}}L</span>{{if .Pushes}}<span class="record-separator">-</span><span class="record-pushes">{{.Pushes}}P</span>{{end}}
                                 {{if .Pending}}<span class="pending-note">{{.Pending}} pending</span>{{end}}
@@ -175,6 +180,44 @@
                             <td class="num-col">${{.Winnings.StringFixed 2}}</td>
                             <td class="num-col {{if .Net.IsPositive}}net-positive{{else if .Net.IsNegative}}net-negative{{end}}">
                                 {{- if .Net.IsNegative}}−${{.Net.Abs.StringFixed 2}}{{else}}${{.Net.StringFixed 2}}{{end -}}
+                            </td>
+                        </tr>
+                        <tr class="member-bets-row" id="member-bets-{{$i}}-{{$j}}" hidden>
+                            <td colspan="5">
+                                <table class="member-bets-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Kickoff</th>
+                                            <th>Matchup</th>
+                                            <th>Type</th>
+                                            <th>Pick</th>
+                                            <th class="num-col">Stake</th>
+                                            <th>Result</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {{range .Bets}}
+                                        <tr>
+                                            <td class="text-muted">{{localTime .ScheduledAt "shortdatetime"}}</td>
+                                            <td>{{.Matchup}}</td>
+                                            <td>
+                                                <span class="badge badge-type-{{.Type}}">
+                                                    {{- if eq .Type "spread"}}Spread{{else if eq .Type "moneyline"}}ML{{else if eq .Type "overunder"}}O/U{{end -}}
+                                                </span>
+                                            </td>
+                                            <td class="pick-cell">
+                                                {{if .IsHolyLock}}<span class="badge badge-holy-lock" title="Holy Lock">🔒</span> {{end}}<strong>{{.Pick}}</strong>
+                                            </td>
+                                            <td class="num-col">${{.Stake.StringFixed 2}}</td>
+                                            <td>
+                                                <span class="badge badge-status-{{.Status}}">
+                                                    {{- if eq .Status "pending"}}Pending{{else if eq .Status "won"}}Won{{else if eq .Status "lost"}}Lost{{else if eq .Status "push"}}Push{{end -}}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                        {{end}}
+                                    </tbody>
+                                </table>
                             </td>
                         </tr>
                         {{end}}
@@ -232,4 +275,21 @@
     </details>
     {{end}}
 </div>
+
+<script>
+// A member's name in the weekly breakdown opens the list of their bets that
+// week, in the row directly below it.
+document.addEventListener('click', function (event) {
+    const toggle = event.target.closest('.member-bets-toggle');
+    if (!toggle) return;
+
+    const row = document.getElementById(toggle.getAttribute('aria-controls'));
+    if (!row) return;
+
+    const open = row.hidden;
+    row.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.querySelector('.expand-icon').textContent = open ? '▼' : '▶';
+});
+</script>
 {{end}}

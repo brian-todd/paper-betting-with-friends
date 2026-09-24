@@ -396,6 +396,19 @@ type WeeklyUserStats struct {
 	Staked        decimal.Decimal
 	Winnings      decimal.Decimal
 	Net           decimal.Decimal
+	// Bets are the ones the counts above are made of, earliest kickoff first.
+	Bets []LeagueBet
+}
+
+// LeagueBet is one bet as the weekly breakdown lists it under its member.
+type LeagueBet struct {
+	Matchup     string // "CLEM @ GT"
+	Type        string // "spread", "moneyline" or "overunder"
+	Pick        string // "GT -7" / "GT +150" / "Over 54.5"
+	Stake       decimal.Decimal
+	Status      models.BetStatus
+	IsHolyLock  bool
+	ScheduledAt time.Time
 }
 
 // WeekStats groups the per-user rows for a single season week.
@@ -463,11 +476,38 @@ func buildWeeklyStats(rows []repository.LeagueBetRow, currentUserID uuid.UUID) [
 			continue
 		}
 		entry.Staked = entry.Staked.Add(row.Stake)
+		entry.Bets = append(entry.Bets, LeagueBet{
+			Matchup: row.AwayAbbr + " @ " + row.HomeAbbr,
+			Type:    row.BetType,
+			Pick: bets.HolyLockPick(repository.LeagueHolyLockRow{
+				BetType:      row.BetType,
+				Pick:         row.Pick,
+				LineValue:    row.LineValue,
+				OddsSnapshot: row.OddsSnapshot,
+				HomeAbbr:     row.HomeAbbr,
+				AwayAbbr:     row.AwayAbbr,
+			}),
+			Stake:       row.Stake,
+			Status:      models.BetStatus(row.Status),
+			IsHolyLock:  row.IsHolyLock,
+			ScheduledAt: row.ScheduledAt,
+		})
 	}
 
 	// Group user entries under their week.
 	grouped := make(map[weekKey][]WeeklyUserStats)
 	for key, entry := range stats {
+		// The rows arrive in no particular order; the pick breaks a tie
+		// between two bets on one game so a reload never reshuffles them.
+		slices.SortFunc(entry.Bets, func(a, b LeagueBet) int {
+			if n := a.ScheduledAt.Compare(b.ScheduledAt); n != 0 {
+				return n
+			}
+			if n := strings.Compare(a.Matchup, b.Matchup); n != 0 {
+				return n
+			}
+			return strings.Compare(a.Type+a.Pick, b.Type+b.Pick)
+		})
 		grouped[key.week] = append(grouped[key.week], *entry)
 	}
 

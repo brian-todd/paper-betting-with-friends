@@ -602,34 +602,59 @@ func (r *BetRecordRepository) GetRecordsByLeague(leagueID uuid.UUID) (map[uuid.U
 // LeagueBetRow is one bet in a league, flattened across the three bet tables
 // and tagged with the game's season and week. Season and Week are nil when the
 // game is missing that calendar data.
+//
+// It carries the pick, the line and the teams as well as the money, because
+// the weekly breakdown lists each member's bets under their totals. LineValue
+// is the spread or the total as text, and nil for a money line -- the same
+// shape LeagueHolyLockRow uses, so bets.HolyLockPick can describe either.
 type LeagueBetRow struct {
 	UserID       uuid.UUID
 	Username     string
 	Season       *int
 	Week         *int
+	BetType      string
 	Status       string
+	Pick         string
+	LineValue    *string
 	Stake        decimal.Decimal
 	OddsSnapshot decimal.Decimal
+	IsHolyLock   bool
+	HomeAbbr     string
+	AwayAbbr     string
+	ScheduledAt  time.Time
 }
 
 // FindLeagueBets returns every bet in a league as flat rows, for aggregation
-// into per-week, per-user statistics. Payout math stays in Go
-// (models.PayoutForOdds) so the sums match what settlement actually credited.
+// into per-week, per-user statistics and for listing under them. Payout math
+// stays in Go (models.PayoutForOdds) so the sums match what settlement
+// actually credited.
+//
+// The branch order is load-bearing: Postgres takes a UNION's output column
+// names from the first branch alone, and only that branch aliases bet_type and
+// line_value. Promote either of the others to the top and the outer
+// b.bet_type and b.line_value fail at runtime.
 func (r *BetRecordRepository) FindLeagueBets(leagueID uuid.UUID) ([]LeagueBetRow, error) {
 	const leagueBets = `
-		SELECT user_id, game_id, status, stake, odds_snapshot FROM spread_bets WHERE league_id = ?
+		SELECT user_id, game_id, 'spread' AS bet_type, status, pick, spread_snapshot::text AS line_value, stake, odds_snapshot, is_holy_lock
+		FROM spread_bets WHERE league_id = ?
 		UNION ALL
-		SELECT user_id, game_id, status, stake, odds_snapshot FROM money_line_bets WHERE league_id = ?
+		SELECT user_id, game_id, 'moneyline', status, pick, NULL, stake, odds_snapshot, is_holy_lock
+		FROM money_line_bets WHERE league_id = ?
 		UNION ALL
-		SELECT user_id, game_id, status, stake, odds_snapshot FROM over_under_bets WHERE league_id = ?`
+		SELECT user_id, game_id, 'overunder', status, pick, total_snapshot::text, stake, odds_snapshot, is_holy_lock
+		FROM over_under_bets WHERE league_id = ?`
 
 	var rows []LeagueBetRow
 	err := r.db.
 		Table("(?) AS b", r.db.Raw(leagueBets, leagueID, leagueID, leagueID)).
-		Select("b.user_id, users.username, games.season AS season, weeks.number AS week, b.status, b.stake, b.odds_snapshot").
+		Select("b.user_id, users.username, games.season AS season, weeks.number AS week, " +
+			"b.bet_type, b.status, b.pick, b.line_value, b.stake, b.odds_snapshot, b.is_holy_lock, " +
+			"home.abbreviation AS home_abbr, away.abbreviation AS away_abbr, games.scheduled_at").
 		Joins("JOIN users ON users.id = b.user_id").
 		Joins("JOIN games ON games.id = b.game_id").
 		Joins("LEFT JOIN weeks ON weeks.id = games.week_id").
+		Joins("JOIN teams AS home ON home.id = games.home_team_id").
+		Joins("JOIN teams AS away ON away.id = games.away_team_id").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err

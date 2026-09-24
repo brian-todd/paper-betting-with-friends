@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
@@ -113,6 +114,53 @@ func TestBuildWeeklyStats(t *testing.T) {
 			t.Errorf("Net = %s, want %s", zedRow.Net, want)
 		}
 	})
+}
+
+// Each member's weekly row lists the bets it was counted from, so the numbers
+// and the list under them always describe the same bets.
+func TestBuildWeeklyStatsListsEachMembersBets(t *testing.T) {
+	me := uuid.New()
+	kickoff := time.Date(2026, 10, 3, 16, 0, 0, 0, time.UTC)
+
+	row := func(betType, status, pick string, line *string, odds string, at time.Time, lock bool) repository.LeagueBetRow {
+		return repository.LeagueBetRow{
+			UserID: me, Username: "Me", Season: new(2026), Week: new(6),
+			BetType: betType, Status: status, Pick: pick, LineValue: line,
+			Stake: decimal.RequireFromString("25"), OddsSnapshot: decimal.RequireFromString(odds),
+			IsHolyLock: lock, HomeAbbr: "GT", AwayAbbr: "CLEM", ScheduledAt: at,
+		}
+	}
+
+	rows := []repository.LeagueBetRow{
+		// Out of kickoff order on purpose.
+		row("overunder", "lost", "under", new("54.5"), "-110", kickoff.Add(4*time.Hour), false),
+		row("spread", "won", "home", new("-7.0"), "-110", kickoff, true),
+		row("moneyline", "pending", "away", nil, "150", kickoff.Add(2*time.Hour), false),
+		// Cancelled: not counted, so not listed either.
+		row("spread", "void", "away", new("7.0"), "-110", kickoff, false),
+	}
+
+	weeks := buildWeeklyStats(rows, me)
+	if len(weeks) != 1 || len(weeks[0].Rows) != 1 {
+		t.Fatalf("got %d weeks, want one week with one member", len(weeks))
+	}
+	got := weeks[0].Rows[0].Bets
+
+	want := []LeagueBet{
+		{Matchup: "CLEM @ GT", Type: "spread", Pick: "GT -7", Status: models.BetStatusWon, IsHolyLock: true, ScheduledAt: kickoff},
+		{Matchup: "CLEM @ GT", Type: "moneyline", Pick: "CLEM +150", Status: models.BetStatusPending, ScheduledAt: kickoff.Add(2 * time.Hour)},
+		{Matchup: "CLEM @ GT", Type: "overunder", Pick: "Under 54.5", Status: models.BetStatusLost, ScheduledAt: kickoff.Add(4 * time.Hour)},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("listed %d bets, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		g, w := got[i], want[i]
+		if g.Matchup != w.Matchup || g.Type != w.Type || g.Pick != w.Pick || g.Status != w.Status ||
+			g.IsHolyLock != w.IsHolyLock || !g.ScheduledAt.Equal(w.ScheduledAt) || !g.Stake.Equal(decimal.RequireFromString("25")) {
+			t.Errorf("bet %d = %+v, want %+v", i, g, w)
+		}
+	}
 }
 
 func TestBuildHolyLockWeeks(t *testing.T) {

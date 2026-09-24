@@ -177,10 +177,10 @@ const leagueLocks = `
 // FindLeagueLocks returns every Holy Lock in a league, with the game and teams
 // joined on for display.
 //
-// This is a separate query from FindLeagueBets rather than an extension of it:
-// FindLeagueBets returns every bet in the league to feed a pure aggregation and
-// deliberately carries no team or pick data. WHERE is_holy_lock is what makes
-// the result here small enough to afford five joins.
+// This is a separate query from FindLeagueBets, which carries much the same
+// display columns for the weekly breakdown, because the two group differently:
+// a Holy Lock is filed under its week's season type, and exists only on a game
+// that has a week row at all, which the inner join here enforces.
 //
 // Season comes from games and week from weeks, matching the split FindLeagueBets
 // uses, so the two league-page sections group under identical headings even in

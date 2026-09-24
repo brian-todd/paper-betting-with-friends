@@ -113,6 +113,47 @@ func TestLeaguePageRendersWinPct(t *testing.T) {
 	}
 }
 
+func TestLeaguePageListsEachMembersBetsInTheWeeklyBreakdown(t *testing.T) {
+	html := renderLeagueDetail(t, map[string]any{
+		"WeeklyStats": []WeekStats{{
+			Label: "2026 · Week 6",
+			Rows: []WeeklyUserStats{
+				{Username: "tester", IsCurrentUser: true, Wins: 1, Bets: []LeagueBet{{
+					Matchup: "CLEM @ GT", Type: "spread", Pick: "GT -7", IsHolyLock: true,
+					Stake: decimal.RequireFromString("25"), Status: models.BetStatusWon,
+					ScheduledAt: time.Date(2026, 10, 3, 16, 0, 0, 0, time.UTC),
+				}}},
+				{Username: "alice", Losses: 1, Bets: []LeagueBet{{
+					Matchup: "UGA @ BAMA", Type: "overunder", Pick: "Over 48.5",
+					Stake: decimal.RequireFromString("40"), Status: models.BetStatusLost,
+					ScheduledAt: time.Date(2026, 10, 3, 19, 30, 0, 0, time.UTC),
+				}}},
+			},
+		}},
+	})
+
+	for _, want := range []string{
+		// Each name controls the hidden row directly beneath it.
+		`aria-controls="member-bets-0-0"`,
+		`<tr class="member-bets-row" id="member-bets-0-0" hidden>`,
+		`aria-controls="member-bets-0-1"`,
+		`<tr class="member-bets-row" id="member-bets-0-1" hidden>`,
+		`<strong>GT -7</strong>`,
+		`<strong>Over 48.5</strong>`,
+		`<span class="badge badge-type-overunder">O/U</span>`,
+		`<span class="badge badge-status-lost">Lost</span>`,
+		`$40.00`,
+		`<time datetime="2026-10-03T19:30:00Z" data-format="shortdatetime">`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("weekly breakdown is missing %q", want)
+		}
+	}
+	if n := strings.Count(html, `title="Holy Lock"`); n != 1 {
+		t.Errorf("%d bets marked as a Holy Lock, want 1", n)
+	}
+}
+
 func TestLeaguePageRendersHolyLockSection(t *testing.T) {
 	html := renderLeagueDetail(t, map[string]any{
 		"HolyLocks": []HolyLockWeek{{
