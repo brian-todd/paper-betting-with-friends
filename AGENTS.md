@@ -1019,7 +1019,7 @@ a migration is the wrong place to decide that.
 - Keying a job's missed-slot catch-up on its last *success* — a run that keeps failing never advances it, so an endpoint returning 502s is retried every minute forever; key it on the last attempt, if at all
 - `.Format`-style mtime cache busting for assets — every embedded file reports the zero mtime; hash the contents
 - Unbounded database pools — `database.Connect` sets the limits, and `DB_MAX_OPEN_CONNS` has to stay under the server's own cap
-- Assuming a route is admin-only because it lives in `internal/admin` — it is only guarded if it was registered through `guard` in `RegisterRoutes`
+- Registering an admin route on the parent mux — `admin.RegisterRoutes` builds its own mux and mounts it on `GET`/`POST` `/admin` and `/admin/` behind `RequireAuth` and `RequireAdmin`, so a route is guarded by being on that mux. Mount points need their methods: a method-less `/admin/` conflicts with `GET /` and `ServeMux` panics
 - `//go:embed testdata` without the `all:` prefix for fixtures — it silently drops the `_` directory, which is where the unfiltered endpoints live
 - Answering an unrouted fixture path with `[]` — it is indistinguishable from a successful sync with nothing to write
 - Appending a fresh capture beside an old one on a single-shot endpoint — the server replays oldest-first, so the new one is never reached

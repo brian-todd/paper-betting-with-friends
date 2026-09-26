@@ -29,43 +29,54 @@ func NewHandler(service *Service, renderer *templates.Renderer) *Handler {
 	return &Handler{service: service, templates: renderer}
 }
 
-// RegisterRoutes registers admin routes on the provided mux.
+// RegisterRoutes mounts the admin portal on parent, behind the guard.
 //
-// Every route goes through guard, which is the whole access control story for
-// this package: authMiddleware resolves the session and puts the user in the
-// context, and RequireAdmin refuses anyone without the flag. A route registered
-// outside guard would be public, so there is a test asserting none is.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, authMiddleware func(http.Handler) http.Handler) {
-	guard := func(fn http.HandlerFunc) http.Handler {
-		return authMiddleware(auth.RequireAdmin()(fn))
+// The routes live on a mux of their own, and parent reaches that mux only
+// through authMiddleware and RequireAdmin, which is the whole access control
+// story for this package. The guard is applied to the /admin prefix rather than
+// to each route, so a route added below is guarded by being here -- there is no
+// per-route wrapper to forget. The flip side is that the guard runs before
+// routing: an anonymous request for a path that does not exist is refused, not
+// told it is a 404.
+//
+// The mount points name their methods because a method-less "/admin/" conflicts
+// with the site's "GET /" -- neither is more specific than the other -- and
+// ServeMux panics on registration.
+func (h *Handler) RegisterRoutes(parent *http.ServeMux, authMiddleware func(http.Handler) http.Handler) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /admin", h.Dashboard)
+
+	mux.HandleFunc("GET /admin/users", h.ListUsers)
+	mux.HandleFunc("POST /admin/users/{id}/password", h.UpdatePassword)
+	mux.HandleFunc("POST /admin/users/{id}/username", h.UpdateUsername)
+	mux.HandleFunc("POST /admin/users/{id}/delete", h.DeleteUser)
+
+	mux.HandleFunc("GET /admin/leagues", h.ListLeagues)
+	mux.HandleFunc("POST /admin/leagues", h.CreateLeague)
+	mux.HandleFunc("POST /admin/leagues/{id}/delete", h.DeleteLeague)
+	mux.HandleFunc("POST /admin/leagues/{id}/members", h.AddMember)
+	mux.HandleFunc("POST /admin/leagues/{id}/members/{userId}/remove", h.RemoveMember)
+	mux.HandleFunc("POST /admin/leagues/{id}/members/{userId}/balance", h.SetBalance)
+
+	mux.HandleFunc("GET /admin/bets", h.ListBets)
+	mux.HandleFunc("POST /admin/bets/{type}/{id}/status", h.SetBetStatus)
+
+	mux.HandleFunc("GET /admin/sync", h.ShowSync)
+	mux.HandleFunc("POST /admin/sync/{job}/run", h.RunSync)
+
+	mux.HandleFunc("GET /admin/games", h.SearchGames)
+	mux.HandleFunc("GET /admin/games/{id}", h.ShowGame)
+	mux.HandleFunc("POST /admin/games/{id}/evaluate", h.EvaluateGame)
+	mux.HandleFunc("POST /admin/games/{id}/finalize", h.FinalizeGame)
+
+	mux.HandleFunc("GET /admin/audit", h.ListAudit)
+
+	guarded := authMiddleware(auth.RequireAdmin()(mux))
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		parent.Handle(method+" /admin", guarded)
+		parent.Handle(method+" /admin/", guarded)
 	}
-
-	mux.Handle("GET /admin", guard(h.Dashboard))
-
-	mux.Handle("GET /admin/users", guard(h.ListUsers))
-	mux.Handle("POST /admin/users/{id}/password", guard(h.UpdatePassword))
-	mux.Handle("POST /admin/users/{id}/username", guard(h.UpdateUsername))
-	mux.Handle("POST /admin/users/{id}/delete", guard(h.DeleteUser))
-
-	mux.Handle("GET /admin/leagues", guard(h.ListLeagues))
-	mux.Handle("POST /admin/leagues", guard(h.CreateLeague))
-	mux.Handle("POST /admin/leagues/{id}/delete", guard(h.DeleteLeague))
-	mux.Handle("POST /admin/leagues/{id}/members", guard(h.AddMember))
-	mux.Handle("POST /admin/leagues/{id}/members/{userId}/remove", guard(h.RemoveMember))
-	mux.Handle("POST /admin/leagues/{id}/members/{userId}/balance", guard(h.SetBalance))
-
-	mux.Handle("GET /admin/bets", guard(h.ListBets))
-	mux.Handle("POST /admin/bets/{type}/{id}/status", guard(h.SetBetStatus))
-
-	mux.Handle("GET /admin/sync", guard(h.ShowSync))
-	mux.Handle("POST /admin/sync/{job}/run", guard(h.RunSync))
-
-	mux.Handle("GET /admin/games", guard(h.SearchGames))
-	mux.Handle("GET /admin/games/{id}", guard(h.ShowGame))
-	mux.Handle("POST /admin/games/{id}/evaluate", guard(h.EvaluateGame))
-	mux.Handle("POST /admin/games/{id}/finalize", guard(h.FinalizeGame))
-
-	mux.Handle("GET /admin/audit", guard(h.ListAudit))
 }
 
 // successMessages maps the code carried by a post-redirect-get back to the
