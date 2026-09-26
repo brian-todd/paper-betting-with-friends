@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -107,6 +111,7 @@ func recoverPanics(logger *slog.Logger) func(http.Handler) http.Handler {
 				}
 
 				logger.Error("panic serving request",
+					"request_id", requestIDFrom(r.Context()),
 					"method", r.Method,
 					"path", r.URL.Path,
 					"panic", v,
@@ -137,6 +142,7 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(rec, r)
 
 			logger.Info("request",
+				"request_id", requestIDFrom(r.Context()),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", rec.status,
@@ -144,4 +150,120 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			)
 		})
 	}
+}
+
+type requestIDKey struct{}
+
+// requestID gives each request an identifier, puts it on the context and
+// returns it as X-Request-ID.
+//
+// Without it a panic's stack trace and the 500 the request logger records for
+// it are two unrelated lines. The header is so someone reporting a broken page
+// can quote the one line worth reading.
+//
+// Only the middleware in this file reads it. Handlers and services log through
+// slog.Default without the request context, so their lines do not carry it yet;
+// that needs a context-aware slog.Handler and the *Context logging calls.
+//
+// An incoming X-Request-ID is ignored rather than adopted: the caller controls
+// it, and nothing upstream of this server is known to set one.
+//
+// It must sit outside the request logger, or the logger reads an empty ID.
+func requestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b [8]byte
+		_, _ = rand.Read(b[:]) // crypto/rand never returns an error; it crashes instead.
+		id := hex.EncodeToString(b[:])
+
+		w.Header().Set("X-Request-ID", id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id)))
+	})
+}
+
+// requestIDFrom returns the ID requestID assigned, or "" outside that middleware.
+func requestIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
+}
+
+// immutableAssetCache is one year, the conventional ceiling for immutable.
+const immutableAssetCache = "public, max-age=31536000, immutable"
+
+// cacheVersionedAssets marks a static file requested with a ?v= version as
+// cacheable forever.
+//
+// The templates' asset function puts a hash of the file's contents in v, so the
+// URL changes whenever the file does and a cached copy can never be stale.
+// Without this the embedded files are served with no Cache-Control and, since
+// every file in an embed.FS reports the zero mtime, no Last-Modified either --
+// nothing for a browser to cache against, so every page fetched htmx again.
+//
+// It trusts that v names the content being served, which holds while one
+// version of the binary is serving. Under a rolling deploy an old process could
+// answer a new page's URL with old content and pin it; checking v against the
+// file's hash is the fix if that ever becomes the setup.
+//
+// Only a file is marked. FileServerFS answers some paths with a redirect (a
+// directory without its slash, anything ending in index.html) or a directory
+// listing, and neither is content v describes -- so the header is decided at
+// WriteHeader, on the status, and never on a path ending in a slash. On an
+// error FileServerFS strips Cache-Control itself, so a 404 is not cached.
+func cacheVersionedAssets(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("v") == "" || strings.HasSuffix(r.URL.Path, "/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(&cacheOnSuccess{ResponseWriter: w}, r)
+	})
+}
+
+// cacheOnSuccess sets the immutable Cache-Control only if the response turns
+// out to be the file itself: 200, or 206 for a range of it.
+type cacheOnSuccess struct {
+	http.ResponseWriter
+	decided bool
+}
+
+func (w *cacheOnSuccess) WriteHeader(code int) {
+	if !w.decided {
+		w.decided = true
+		if code == http.StatusOK || code == http.StatusPartialContent {
+			w.Header().Set("Cache-Control", immutableAssetCache)
+		}
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *cacheOnSuccess) Write(b []byte) (int, error) {
+	if !w.decided {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *cacheOnSuccess) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// crossOriginProtection refuses a state-changing request a browser says came
+// from another origin, and logs why.
+//
+// The log is the point of wrapping it. Where the browser sends no
+// Sec-Fetch-Site, the check falls back to comparing Origin with the request's
+// Host, and behind a proxy that rewrites Host that refuses every legitimate
+// POST. htmx discards a 403's body, so the user sees nothing happen and the
+// request line says only 403; this line says which header disagreed with what.
+func crossOriginProtection(logger *slog.Logger) func(http.Handler) http.Handler {
+	protection := http.NewCrossOriginProtection()
+	protection.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger.Warn("cross-origin request refused",
+			"request_id", requestIDFrom(r.Context()),
+			"method", r.Method,
+			"path", r.URL.Path,
+			"host", r.Host,
+			"origin", r.Header.Get("Origin"),
+			"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"),
+		)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+	}))
+	return protection.Handler
 }

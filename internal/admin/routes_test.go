@@ -12,9 +12,8 @@ import (
 )
 
 // adminRoutes is every route the handler registers. Keep it in step with
-// RegisterRoutes: the point of the tests below is that nothing reaches a
-// handler without the admin flag, and a route added outside the guard wrapper
-// would be missed by a test that only probes the ones it already knows about.
+// RegisterRoutes: TestRegisteredRoutesAreAllListed fails if a route is missing,
+// so the wrong-method test below cannot quietly skip a new mutation.
 var adminRoutes = []struct {
 	method string
 	path   string
@@ -93,10 +92,38 @@ func TestAdminRoutesRejectNonAdmin(t *testing.T) {
 	}
 }
 
+// TestUnregisteredAdminPathsAreGuarded is the property the sub-mux exists for:
+// the guard covers the /admin prefix, not a list of routes, so a path nobody
+// registered is refused rather than answered.
+func TestUnregisteredAdminPathsAreGuarded(t *testing.T) {
+	mux := newTestMux(&models.User{ID: uuid.New(), Username: "testalice", IsAdmin: false})
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/admin/not-a-route"},
+		{http.MethodPost, "/admin/not-a-route"},
+		{http.MethodGet, "/admin/"},
+	} {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			req := httptest.NewRequest(route.method, route.path, nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+			}
+		})
+	}
+}
+
 // TestAdminRoutesRejectWrongMethod guards against a route being registered
 // without its method, which would expose a mutation to a GET.
+//
+// It asks as an admin, because the guard runs before routing and would refuse
+// anyone else with a 403 whatever the method. Past the guard, a GET at a
+// POST-only path must be a 405: reaching a handler instead would mean the route
+// answers GET too.
 func TestAdminRoutesRejectWrongMethod(t *testing.T) {
-	mux := newTestMux(nil)
+	mux := newTestMux(&models.User{ID: uuid.New(), Username: "testadmin", IsAdmin: true})
 
 	for _, route := range adminRoutes {
 		// Some paths legitimately answer both verbs -- /admin/leagues lists on
@@ -106,14 +133,21 @@ func TestAdminRoutesRejectWrongMethod(t *testing.T) {
 		}
 
 		t.Run(route.path, func(t *testing.T) {
+			// The handlers hold a nil service, so a GET that reaches one panics.
+			// That is the failure this test is for, so report it as such rather
+			// than let it take down the rest of the package's tests.
+			defer func() {
+				if v := recover(); v != nil {
+					t.Errorf("GET %s reached its handler, so it is registered for GET too (panicked: %v)", route.path, v)
+				}
+			}()
+
 			req := httptest.NewRequest(http.MethodGet, route.path, nil)
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, req)
 
-			// A GET at a POST-only path matches no pattern, so it never reaches
-			// the guard and falls through as 404/405 rather than 403.
-			if w.Code == http.StatusForbidden {
-				t.Errorf("GET %s reached the admin guard, so it is registered for GET too", route.path)
+			if w.Code != http.StatusMethodNotAllowed {
+				t.Errorf("GET %s: status = %d, want %d", route.path, w.Code, http.StatusMethodNotAllowed)
 			}
 		})
 	}
@@ -126,7 +160,7 @@ func TestRegisteredRoutesAreAllListed(t *testing.T) {
 
 	for line := range strings.SplitSeq(source, "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "mux.Handle(") {
+		if !strings.HasPrefix(line, "mux.Handle(") && !strings.HasPrefix(line, "mux.HandleFunc(") {
 			continue
 		}
 
