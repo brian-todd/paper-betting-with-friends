@@ -129,7 +129,7 @@ func buildHandler(
 	if err != nil {
 		return nil, fmt.Errorf("open static assets: %w", err)
 	}
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
+	mux.Handle("GET /static/", cacheVersionedAssets(http.StripPrefix("/static/", http.FileServerFS(staticFS))))
 
 	// Register auth routes.
 	authHandler.RegisterRoutes(mux)
@@ -174,13 +174,23 @@ func buildHandler(
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Apply middleware stack. Order matters: the logger is outermost so it
-	// still records the 500 that recoverPanics synthesises, and both sit outside
-	// OptionalAuth so a panic in session handling is caught too.
+	// Apply middleware stack. Order matters: requestID is outermost so every
+	// log line below it carries the ID; the logger is outside recoverPanics so it
+	// still records the 500 that recoverPanics synthesises; and all of them sit
+	// outside OptionalAuth so a panic in session handling is caught too.
+	//
+	// Cross-origin protection refuses a state-changing request a browser says
+	// came from another origin, using Sec-Fetch-Site and falling back to Origin.
+	// The session cookie's SameSite=Lax already stops most of those, but not one
+	// from a sibling subdomain, which counts as same-site. It sits inside the
+	// security headers so its 403 carries them, and before OptionalAuth so a
+	// refused request never loads a session.
 	app.Handler = applyMiddleware(mux,
+		requestID,
 		requestLogger(logger),
 		recoverPanics(logger),
 		securityHeaders(cfg.IsProduction()),
+		crossOriginProtection(logger),
 		auth.OptionalAuth(authService),
 	)
 

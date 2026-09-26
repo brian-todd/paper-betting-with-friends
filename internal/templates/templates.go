@@ -251,11 +251,11 @@ const assetVersionLength = 8
 // asset appends a cache-busting version to a /static/ URL path, derived from a
 // hash of the file's contents.
 //
-// The static file server sends only Last-Modified, no Cache-Control, so
-// browsers apply heuristic caching: a file that had not changed for months may
-// be reused from cache for days without ever revalidating. Changing the URL
-// whenever the file changes defeats that. A missing file renders its path
-// unversioned rather than failing the page.
+// cmd/server marks a versioned URL immutable, so a browser keeps the file until
+// the URL changes -- which it does whenever the file does. Without the version
+// that header would pin stale files, and without the header the embedded files
+// carry no Cache-Control and no Last-Modified, leaving nothing to cache against.
+// A missing file renders its path unversioned rather than failing the page.
 //
 // The version is the content rather than the modification time because an
 // embedded file has no meaningful mtime -- everything in an embed.FS reports

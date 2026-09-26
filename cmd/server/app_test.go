@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -156,5 +157,79 @@ func TestSessionsThroughTheRouter(t *testing.T) {
 		requireLoggedOut(t, alice, server.URL, "alice after logging out")
 		// The administrator's session is its own and is untouched.
 		requireLoggedIn(t, admin, server.URL, "the administrator")
+	})
+}
+
+// The middleware that matters here is only in force if buildHandler put it in
+// the stack, which the unit tests beside each one cannot see.
+func TestMiddlewareThroughTheRouter(t *testing.T) {
+	env := pagetest.Open(t, firstSnapshot)
+	_, server := serve(t, env)
+
+	// registerFrom posts the registration form the way a browser would label a
+	// request from site.
+	registerFrom := func(t *testing.T, client *http.Client, site, username string) *http.Response {
+		t.Helper()
+
+		form := url.Values{
+			"username":         {username},
+			"password":         {"long-enough-password"},
+			"confirm_password": {"long-enough-password"},
+		}
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/register", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatalf("building the request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Sec-Fetch-Site", site)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("POST /register: %v", err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+
+	t.Run("a cross-site form post is refused before it does anything", func(t *testing.T) {
+		client := newClient(t, server)
+		if resp := registerFrom(t, client, "cross-site", "mallory"); resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+		}
+		requireLoggedOut(t, client, server.URL, "after a cross-site registration")
+	})
+
+	t.Run("a same-origin form post goes through", func(t *testing.T) {
+		client := newClient(t, server)
+		registerFrom(t, client, "same-origin", "carol")
+		requireLoggedIn(t, client, server.URL, "carol after registering")
+	})
+
+	t.Run("every response carries a request ID", func(t *testing.T) {
+		resp, _ := get(t, newClient(t, server), server.URL+"/login")
+		if resp.Header.Get("X-Request-ID") == "" {
+			t.Error("X-Request-ID is absent")
+		}
+	})
+
+	// The URLs the layout renders are the ones that must be cached, so they are
+	// read off a real page rather than written out here.
+	t.Run("the assets a page links to are cached until they change", func(t *testing.T) {
+		client := newClient(t, server)
+		_, page := get(t, client, server.URL+"/login")
+
+		assets := regexp.MustCompile(`/static/[^"]+\?v=[0-9a-f]+`).FindAllString(page, -1)
+		if len(assets) == 0 {
+			t.Fatal("the page links no versioned assets")
+		}
+		for _, asset := range assets {
+			resp, _ := get(t, client, server.URL+asset)
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("%s: status = %d, want %d", asset, resp.StatusCode, http.StatusOK)
+			}
+			if got := resp.Header.Get("Cache-Control"); got != immutableAssetCache {
+				t.Errorf("%s: Cache-Control = %q, want %q", asset, got, immutableAssetCache)
+			}
+		}
 	})
 }

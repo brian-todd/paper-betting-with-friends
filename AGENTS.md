@@ -131,15 +131,33 @@ entry wraps outermost**. Order is load-bearing:
 
 ```go
 handler := applyMiddleware(mux,
+    requestID,
     requestLogger(logger),
     recoverPanics(logger),
     securityHeaders(cfg.IsProduction()),
+    crossOriginProtection(logger),
     auth.OptionalAuth(authService),
 )
 ```
 
-`requestLogger` stays outside `recoverPanics` so its log line still records the
-500 that a recovered panic produces.
+`requestID` is outermost so both log lines below it carry the ID; it is what
+ties a panic's stack trace to the request line for the same request, and it is
+returned as `X-Request-ID`. `requestLogger` stays outside `recoverPanics` so its
+log line still records the 500 that a recovered panic produces.
+
+Cross-origin protection is the CSRF defence: it refuses a state-changing request
+whose `Sec-Fetch-Site` (or, failing that, `Origin`) says another origin sent it.
+`SameSite=Lax` on the session cookie does not cover a sibling subdomain, which
+counts as same-site. Requests with neither header — curl, the tests' client —
+pass. It sits before `OptionalAuth` so a refused request never loads a session.
+A refusal is logged with the `Host`, `Origin` and `Sec-Fetch-Site` it compared,
+because behind a proxy that rewrites `Host` the `Origin` fallback refuses every
+legitimate POST, and htmx shows the user nothing.
+
+`/static/` is wrapped in `cacheVersionedAssets`, which marks a `?v=` URL
+`immutable` for a year. That is safe only because `asset` versions by content
+hash; without it the embedded files had no `Cache-Control` and no
+`Last-Modified`, so nothing was cached at all.
 
 `recoverPanics` exists because `net/http`'s own recovery is close to the worst
 available outcome: it drops the connection with no response and writes the trace
