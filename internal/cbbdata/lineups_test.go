@@ -22,8 +22,20 @@ func TestGameLineupsFrom(t *testing.T) {
 	row := func(teamID int64, hash string, who models.LineupAthletes) APIGameLineup {
 		return APIGameLineup{
 			TeamID: teamID, IDHash: hash, Athletes: who, TotalSeconds: 90.6,
-			TeamStats: APILineupSide{Points: 5, Possessions: 4},
-			Opponent:  APILineupSide{Points: 3, Possessions: 5},
+			TeamStats: APILineupSide{
+				Points: 5, Possessions: 4,
+				FieldGoals:    APIMadeAttempted{Made: 2, Attempted: 6},
+				ThreePointers: APIMadeAttempted{Made: 1, Attempted: 3},
+				FreeThrows:    APIMadeAttempted{Made: 0, Attempted: 2},
+				Turnovers:     1, OffensiveRebounds: 2, DefensiveRebounds: 3,
+			},
+			Opponent: APILineupSide{
+				Points: 3, Possessions: 5,
+				FieldGoals:    APIMadeAttempted{Made: 1, Attempted: 7},
+				ThreePointers: APIMadeAttempted{Made: 1, Attempted: 4},
+				FreeThrows:    APIMadeAttempted{Made: 0, Attempted: 0},
+				Turnovers:     2, OffensiveRebounds: 1, DefensiveRebounds: 4,
+			},
 		}
 	}
 
@@ -44,6 +56,11 @@ func TestGameLineupsFrom(t *testing.T) {
 	}
 	if l.PointsFor != 5 || l.PossessionsFor != 4 || l.PointsAgainst != 3 || l.PossessionsAgainst != 5 {
 		t.Errorf("totals = %+v, want the team's on one side and the opponent's on the other", l)
+	}
+	wantFor := models.LineupBox{FGMade: 2, FGAttempted: 6, ThreeMade: 1, ThreeAttempted: 3, FTAttempted: 2, Turnovers: 1, OffRebounds: 2, DefRebounds: 3}
+	wantAgainst := models.LineupBox{FGMade: 1, FGAttempted: 7, ThreeMade: 1, ThreeAttempted: 4, Turnovers: 2, OffRebounds: 1, DefRebounds: 4}
+	if l.For != wantFor || l.Against != wantAgainst {
+		t.Errorf("boxes = %+v and %+v, want %+v and %+v", l.For, l.Against, wantFor, wantAgainst)
 	}
 }
 

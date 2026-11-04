@@ -41,6 +41,9 @@ type SyncService struct {
 	gameLiveStateRepo *repository.GameLiveStateRepository
 	pollRankRepo      *repository.PollRankRepository
 	gameLineupRepo    *repository.GameLineupRepository
+	teamRatingRepo    *repository.TeamRatingRepository
+	teamRecordRepo    *repository.TeamRecordRepository
+	teamStatsRepo     *repository.TeamSeasonStatsRepository
 	betEvaluator      BetEvaluator
 	logger            *slog.Logger
 
@@ -67,6 +70,9 @@ func NewSyncService(client *Client, db *gorm.DB) *SyncService {
 		gameLiveStateRepo: repository.NewGameLiveStateRepository(db),
 		pollRankRepo:      repository.NewPollRankRepository(db),
 		gameLineupRepo:    repository.NewGameLineupRepository(db),
+		teamRatingRepo:    repository.NewTeamRatingRepository(db),
+		teamRecordRepo:    repository.NewTeamRecordRepository(db),
+		teamStatsRepo:     repository.NewTeamSeasonStatsRepository(db),
 	}
 }
 
@@ -179,12 +185,18 @@ func (s *SyncService) SeedAll(ctx context.Context, season int) error {
 
 	// Last, so a poll feed that is down costs the ranks and not the season. This is
 	// also the first moment a first deploy has teams to attach ranks to.
-	if err := s.syncRankings(ctx, season); err != nil {
-		return errors.Join(incomplete, err)
+	err := errors.Join(
+		incomplete,
+		s.syncRankings(ctx, season),
+		s.syncRatings(ctx, season),
+		s.syncTeamStats(ctx, season),
+	)
+	if err != nil {
+		return err
 	}
 
 	s.logger.Info("full seed completed for season", "season", season)
-	return incomplete
+	return nil
 }
 
 // SyncLineups asks for the five-man units of a few finished games.
@@ -287,9 +299,25 @@ func gameLineupsFrom(gameID uuid.UUID, rows []APIGameLineup, teams map[int64]uui
 			PossessionsFor:     row.TeamStats.Possessions,
 			PointsAgainst:      row.Opponent.Points,
 			PossessionsAgainst: row.Opponent.Possessions,
+			For:                lineupBoxFrom(row.TeamStats),
+			Against:            lineupBoxFrom(row.Opponent),
 		})
 	}
 	return lineups
+}
+
+func lineupBoxFrom(side APILineupSide) models.LineupBox {
+	return models.LineupBox{
+		FGMade:         side.FieldGoals.Made,
+		FGAttempted:    side.FieldGoals.Attempted,
+		ThreeMade:      side.ThreePointers.Made,
+		ThreeAttempted: side.ThreePointers.Attempted,
+		FTMade:         side.FreeThrows.Made,
+		FTAttempted:    side.FreeThrows.Attempted,
+		Turnovers:      side.Turnovers,
+		OffRebounds:    side.OffensiveRebounds,
+		DefRebounds:    side.DefensiveRebounds,
+	}
 }
 
 // SyncRankings stores the AP poll for the current season.
@@ -681,6 +709,9 @@ func (s *SyncService) syncGames(ctx context.Context, opts GameQueryOpts) error {
 			NeutralSite:    g.NeutralSite,
 			ConferenceGame: g.ConferenceGame,
 			Completed:      status == models.GameStatusFinal,
+
+			HomePregameElo: g.HomeTeamEloStart,
+			AwayPregameElo: g.AwayTeamEloStart,
 		}
 
 		if err := s.gameRepo.Upsert(game); err != nil {

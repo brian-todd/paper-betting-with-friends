@@ -115,7 +115,8 @@
     <!-- Pre-game comparison. Everything in it is decision support for choosing a
          bet, so it is drawn for a finished game too but makes no claim to show
          what the numbers were before kickoff -- the "as of" line says when they
-         were fetched. Football only: the basketball provider supplies none of it. -->
+         were fetched. A season's rows only ever describe that season, so a game
+         early in one may have no ratings yet. -->
     {{with .Matchup}}
     {{$matchup := .}}
     <div class="matchup-section">
@@ -246,8 +247,8 @@
                 </tbody>
             </table>
 
-            {{if .RatingsAreFBSOnly}}
-            <p class="matchup-note">Ratings and efficiency figures are published for FBS teams only.</p>
+            {{with .CoverageNote}}
+            <p class="matchup-note">{{.}}</p>
             {{end}}
 
             <!-- Without this a reader assumes the numbers are live. During a
@@ -321,13 +322,20 @@
         <div class="info-card">
             <h3>{{if .InThisGame}}Lineups in this game{{else}}Most-used lineups this season{{end}}</h3>
             {{range .Sides}}
-            <table class="matchup-table">
+            <div class="lineup-scroll">
+            <table class="matchup-table lineup-table">
                 <thead>
                     <tr>
                         <th scope="col">{{.Team}}</th>
                         <th scope="col">Min</th>
                         <th scope="col">Poss</th>
-                        <th scope="col"><span class="metric-help" title="Points scored minus points allowed per 100 possessions. Shown from 10 possessions, since less than that is mostly noise.">Net</span></th>
+                        <th scope="col"><span class="metric-help" title="Points scored minus points allowed per 100 possessions. Every rate here is shown from 10 possessions, since less than that is mostly noise.">Net</span></th>
+                        <th scope="col"><span class="metric-help" title="Points scored per 100 possessions.">Off</span></th>
+                        <th scope="col"><span class="metric-help" title="Points allowed per 100 possessions.">Def</span></th>
+                        <th scope="col"><span class="metric-help" title="Effective field goal percentage, with a three counted as one and a half makes.">eFG%</span></th>
+                        <th scope="col"><span class="metric-help" title="The opposition's effective field goal percentage against this unit.">Opp eFG%</span></th>
+                        <th scope="col"><span class="metric-help" title="The share of this unit's field goal attempts that were threes.">3PA%</span></th>
+                        <th scope="col"><span class="metric-help" title="Turnovers per 100 possessions.">TO%</span></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -337,10 +345,17 @@
                         <td>{{.Minutes}}</td>
                         <td>{{.Possessions}}</td>
                         <td>{{if .Net}}{{.Net}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{if .Offense}}{{.Offense}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{if .Defense}}{{.Defense}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{if .EffectiveFG}}{{.EffectiveFG}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{if .OppEffectiveFG}}{{.OppEffectiveFG}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{if .ThreeRate}}{{.ThreeRate}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{if .TurnoverRate}}{{.TurnoverRate}}{{else}}<span class="no-data">—</span>{{end}}</td>
                     </tr>
                     {{end}}
                 </tbody>
             </table>
+            </div>
             {{end}}
             <p class="text-muted">Five-player units from games already played, not a starting lineup or a projection. Coverage of a game can be partial.</p>
         </div>

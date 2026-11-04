@@ -21,7 +21,7 @@ var lineupFetchRules = repository.LineupFetchRules{
 	Lookback:    14 * 24 * time.Hour,
 }
 
-// Six jobs read six things at their own rates, and all of them spend from the
+// Eight jobs read eight things at their own rates, and all of them spend from the
 // monthly allowance football also draws on:
 //
 //   - cbb-scoreboard is the live feed: status, score and clock. It finalizes
@@ -36,8 +36,12 @@ var lineupFetchRules = repository.LineupFetchRules{
 //     outage is repaired.
 //   - cbb-rankings checks twice a week in season, because polls move weekly.
 //   - cbb-lineups asks for a few finished games an hour, one request each.
+//   - cbb-ratings reads the two rating tables once a day in season.
+//   - cbb-team-stats reads the season figures every six hours in season, since each
+//     night's games change them and one request covers every team.
 //
-// Between seasons each runs once a day. The incremental window reaches three
+// Between seasons the first four run once a day, and the last two and cbb-rankings not
+// at all, since nothing moves them. The incremental window reaches three
 // days ahead, so anything faster asks for an empty span.
 const (
 	// offSeasonInterval is the rate between seasons.
@@ -76,6 +80,12 @@ const (
 	// budget. Days average about 50 games with a line and peak at 155, so a peak day
 	// takes a couple of days to drain.
 	lineupsPerRun = 3
+
+	// ratingsSyncHour is the local hour cbb-ratings runs, after the night's games.
+	ratingsSyncHour = 5
+
+	// teamStatsInterval is the cbb-team-stats rate through the season.
+	teamStatsInterval = 6 * time.Hour
 
 	// minDelay floors the computed wait, so no clock case can become a hot
 	// loop against a metered API.
@@ -233,6 +243,46 @@ func NextRankingsSync(now time.Time, loc *time.Location) time.Time {
 // hourly in season, daily outside it, always lineupsOffset past the grid.
 func NextLineupsSync(now time.Time, loc *time.Location) time.Time {
 	return nextAtRate(now.Add(-lineupsOffset), loc, time.Hour).Add(lineupsOffset)
+}
+
+// NextRatingsSync returns the next daily ratings run after now, skipping forward to
+// the season's first day when now is outside it.
+func NextRatingsSync(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	t := now.In(loc)
+	for day := 0; ; day++ {
+		slot := time.Date(t.Year(), t.Month(), t.Day()+day, ratingsSyncHour, 0, 0, 0, loc)
+		if slot.After(t) && InSeason(slot, loc) {
+			return slot
+		}
+	}
+}
+
+// NextTeamStatsSync returns the next team stats run after now, skipping forward to
+// the season's first slot when now is outside it.
+func NextTeamStatsSync(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	next := timeutil.NextOnGrid(now.In(loc), loc, teamStatsInterval)
+	for !InSeason(next, loc) {
+		next = timeutil.NextOnGrid(next, loc, teamStatsInterval)
+	}
+	return next
+}
+
+// RatingsDelay returns how long to wait after now before the next ratings run.
+func RatingsDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextRatingsSync(now, loc).Sub(now))
+}
+
+// TeamStatsDelay returns how long to wait after now before the next team stats run.
+func TeamStatsDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextTeamStatsSync(now, loc).Sub(now))
 }
 
 // LineupsDelay returns how long to wait after now before the next lineups sync.

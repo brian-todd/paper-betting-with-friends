@@ -2,7 +2,10 @@ package cbbdata_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"math"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +51,36 @@ func TestBasketballSeedsARealSeason(t *testing.T) {
 		}
 		if ranks == 0 {
 			t.Error("a seeded season holds no ranks")
+		}
+	})
+
+	t.Run("the seed fetches the season's ratings and team stats", func(t *testing.T) {
+		var ratings, stats int64
+		if err := db.Model(&models.TeamRating{}).Where("season = ?", fixtureseed.DefaultSeason).Count(&ratings).Error; err != nil {
+			t.Fatalf("counting ratings: %v", err)
+		}
+		if err := db.Model(&models.TeamSeasonStats{}).Where("season = ?", fixtureseed.DefaultSeason).Count(&stats).Error; err != nil {
+			t.Fatalf("counting team stats: %v", err)
+		}
+		if ratings != 2*365 || stats != 727 {
+			t.Errorf("seeded %d ratings and %d team stats, want %d and 727", ratings, stats, 2*365)
+		}
+	})
+
+	t.Run("a game keeps the Elo it went in with", func(t *testing.T) {
+		var withElo, played int64
+		if err := db.Model(&models.Game{}).
+			Where("sport = ? AND home_pregame_elo IS NOT NULL AND away_pregame_elo IS NOT NULL", models.SportBasketball).
+			Count(&withElo).Error; err != nil {
+			t.Fatalf("counting Elo: %v", err)
+		}
+		if err := db.Model(&models.Game{}).
+			Where("sport = ? AND status = ?", models.SportBasketball, models.GameStatusFinal).
+			Count(&played).Error; err != nil {
+			t.Fatalf("counting games: %v", err)
+		}
+		if withElo < played {
+			t.Errorf("%d games have an Elo, but %d were played", withElo, played)
 		}
 	})
 
@@ -424,6 +457,97 @@ func TestLineupsFromRealGames(t *testing.T) {
 			if ok && math.Abs(net-want) > 0.11 {
 				t.Errorf("%s: net %.2f, feed says %.1f", unit.Players(), net, want)
 			}
+		}
+	})
+
+	t.Run("a stored box matches the feed's own rates", func(t *testing.T) {
+		// The feed's rates are worked out by the feed, and ours from the counts we
+		// store, so a count stored on the wrong side or under the wrong name fails.
+		type feedRates struct{ efg, oppEFG, turnovers float64 }
+		var raw []struct {
+			IDHash    string `json:"idHash"`
+			TeamID    int64  `json:"teamId"`
+			TeamStats struct {
+				Possessions int `json:"possessions"`
+				FourFactors struct {
+					EFG      float64 `json:"effectiveFieldGoalPct"`
+					Turnover float64 `json:"turnoverRatio"`
+				} `json:"fourFactors"`
+			} `json:"teamStats"`
+			OpponentStats struct {
+				FourFactors struct {
+					EFG float64 `json:"effectiveFieldGoalPct"`
+				} `json:"fourFactors"`
+			} `json:"opponentStats"`
+		}
+		resp, err := http.Get(fmt.Sprintf("%s/lineups/game/%d", base, duke1))
+		if err != nil {
+			t.Fatalf("reading the capture: %v", err)
+		}
+		defer resp.Body.Close()
+		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+			t.Fatalf("decoding the capture: %v", err)
+		}
+		feed := make(map[string]feedRates, len(raw))
+		for _, row := range raw {
+			if row.TeamID == *duke.ExternalID {
+				feed[row.IDHash] = feedRates{row.TeamStats.FourFactors.EFG, row.OpponentStats.FourFactors.EFG, row.TeamStats.FourFactors.Turnover}
+			}
+		}
+
+		var stored []models.GameLineup
+		if err := db.Where("game_id = ? AND team_id = ?", gameIDs[duke1], duke.ID).Find(&stored).Error; err != nil {
+			t.Fatalf("reading stored units: %v", err)
+		}
+		checked := 0
+		for _, unit := range stored {
+			want := feed[unit.IDHash]
+			if efg, ok := unit.For.EffectiveFGPct(); ok {
+				checked++
+				if math.Abs(efg-want.efg) > 0.06 {
+					t.Errorf("unit %s: eFG %.2f, feed says %.1f", unit.IDHash, efg, want.efg)
+				}
+			}
+			if efg, ok := unit.Against.EffectiveFGPct(); ok && math.Abs(efg-want.oppEFG) > 0.06 {
+				t.Errorf("unit %s: opponent eFG %.2f, feed says %.1f", unit.IDHash, efg, want.oppEFG)
+			}
+			if rate, ok := unit.For.TurnoverPct(unit.PossessionsFor); ok && math.Abs(rate/100-want.turnovers) > 0.006 {
+				t.Errorf("unit %s: turnover rate %.2f, feed says %.2f", unit.IDHash, rate, want.turnovers)
+			}
+		}
+		if checked == 0 {
+			t.Error("no unit had a shot to check")
+		}
+	})
+
+	t.Run("the repository sums a box across games", func(t *testing.T) {
+		totals, err := repo.TopForSeason(duke.ID, 2026, now, 1)
+		if err != nil || len(totals) != 1 {
+			t.Fatalf("TopForSeason: %v, %v", totals, err)
+		}
+		var rows []models.GameLineup
+		if err := db.Where("team_id = ?", duke.ID).Find(&rows).Error; err != nil {
+			t.Fatalf("reading stored units: %v", err)
+		}
+		var want models.LineupBox
+		for _, row := range rows {
+			if (models.LineupTotals{Athletes: row.Athletes}).Players() == totals[0].Players() {
+				want.FGMade += row.For.FGMade
+				want.FGAttempted += row.For.FGAttempted
+				want.ThreeMade += row.For.ThreeMade
+				want.ThreeAttempted += row.For.ThreeAttempted
+				want.FTMade += row.For.FTMade
+				want.FTAttempted += row.For.FTAttempted
+				want.Turnovers += row.For.Turnovers
+				want.OffRebounds += row.For.OffRebounds
+				want.DefRebounds += row.For.DefRebounds
+			}
+		}
+		if totals[0].For != want {
+			t.Errorf("summed box = %+v, want %+v", totals[0].For, want)
+		}
+		if want.FGAttempted == 0 {
+			t.Error("the most-used unit has no attempts, so this checked nothing")
 		}
 	})
 

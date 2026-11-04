@@ -26,7 +26,7 @@ const (
 	// Basketball is the share for the basketball jobs with lines at the shortest
 	// interval configuration allows, restarts included.
 	// TestBasketballCadenceStaysWithinMonthlyCallBudget measures its worst month
-	// at ~12,100, with every job counted, and the lineups job at its hard cap of
+	// at ~12,350, with every job counted, and the lineups job at its hard cap of
 	// ~2,230 rather than the ~1,550 a month of games with a line.
 	Basketball = 12_500
 

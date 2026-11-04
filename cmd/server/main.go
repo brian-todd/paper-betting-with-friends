@@ -460,6 +460,29 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			Run:        cbbSyncService.SyncRankings,
 		})
 
+		// One request reads every team, and nothing moves them out of season. RunOnStart
+		// only while the season has none stored, as with cbb-rankings.
+		sched.Add(scheduler.Job{
+			Name:  "cbb-ratings",
+			Label: "Basketball ratings",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.RatingsDelay(now, location)
+			},
+			RunOnStart: cbbSyncService.RatingsMissing(time.Now(), location),
+			Timeout:    syncRunTimeout,
+			Run:        cbbSyncService.SyncRatings,
+		})
+		sched.Add(scheduler.Job{
+			Name:  "cbb-team-stats",
+			Label: "Basketball team stats",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.TeamStatsDelay(now, location)
+			},
+			RunOnStart: cbbSyncService.TeamStatsMissing(time.Now(), location),
+			Timeout:    syncRunTimeout,
+			Run:        cbbSyncService.SyncTeamStats,
+		})
+
 		// Works through a queue of finished games, a few requests a run, so a run
 		// that is missed loses nothing and there is no reason to run on start.
 		sched.Add(scheduler.Job{

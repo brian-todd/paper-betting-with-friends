@@ -3,6 +3,7 @@ package games
 import (
 	"strconv"
 
+	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/shopspring/decimal"
 )
 
@@ -57,6 +58,9 @@ func (m *Matchup) HasEfficiency() bool {
 	if m == nil {
 		return false
 	}
+	if m.Sport == models.SportBasketball {
+		return m.Home.Season.HasGames() && m.Away.Season.HasGames()
+	}
 	return m.Home.Advanced.OffenseReliable() && m.Away.Advanced.OffenseReliable() &&
 		m.Home.Advanced.DefenseReliable() && m.Away.Advanced.DefenseReliable()
 }
@@ -66,6 +70,9 @@ func (m *Matchup) HasEfficiency() bool {
 func (m *Matchup) EfficiencyMetrics() []EfficiencyMetric {
 	if !m.HasEfficiency() {
 		return nil
+	}
+	if m.Sport == models.SportBasketball {
+		return m.basketballEfficiencyMetrics()
 	}
 
 	home, away := m.Home.Advanced, m.Away.Advanced
@@ -152,6 +159,10 @@ func (m *Matchup) EfficiencySample() string {
 	if !m.HasEfficiency() {
 		return ""
 	}
+	if m.Sport == models.SportBasketball {
+		return "Based on " + gamesText(m.Away.Season.Games) + " for " + m.Away.Team.Abbreviation +
+			" and " + gamesText(m.Home.Season.Games) + " for " + m.Home.Team.Abbreviation + " this season."
+	}
 	return "Based on " +
 		plays(m.Away.Advanced.OffensePlays) + " offensive plays for " + m.Away.Team.Abbreviation +
 		" and " +
@@ -212,4 +223,64 @@ func (m *Matchup) HasATS() bool {
 		return false
 	}
 	return m.Home.ATS.Record().Played() && m.Away.ATS.Record().Played()
+}
+
+// basketballEfficiencyMetrics is the same panel for basketball: the season's raw
+// efficiency, the four factors and three-point shooting, all before any adjustment for
+// the opposition, which is what the Adjusted row above them is for.
+func (m *Matchup) basketballEfficiencyMetrics() []EfficiencyMetric {
+	home, away := m.Home.Season, m.Away.Season
+
+	both := func(label, help string, format func(*decimal.Decimal) string, awayOffense, homeOffense, awayDefense, homeDefense *decimal.Decimal) EfficiencyMetric {
+		return EfficiencyMetric{
+			Label: label,
+			Help:  help,
+			Units: []EfficiencyRow{
+				{Label: "Offense", Away: format(awayOffense), Home: format(homeOffense)},
+				{Label: "Defense", Away: format(awayDefense), Home: format(homeDefense)},
+			},
+		}
+	}
+
+	return []EfficiencyMetric{
+		{
+			Label: "Pace",
+			Help:  "Possessions per 40 minutes. A fast team's totals run high without it being any better, which is why the figures below are per possession.",
+			Units: []EfficiencyRow{{Label: "Possessions", Away: unitText(away.Pace), Home: unitText(home.Pace)}},
+		},
+		both("Points / 100 possessions",
+			"Points scored and allowed per 100 possessions, before any adjustment for the opposition; high for an offense, low for a defense.",
+			unitText, away.OffenseRating, home.OffenseRating, away.DefenseRating, home.DefenseRating),
+		both("Effective FG%",
+			"Shooting with a three counted as one and a half makes; high for an offense, low for a defense.",
+			percentText, away.OffenseEffectiveFGPct, home.OffenseEffectiveFGPct, away.DefenseEffectiveFGPct, home.DefenseEffectiveFGPct),
+		both("Turnover rate",
+			"Turnovers per 100 possessions. The defense line is the turnovers its opponents committed; low for an offense, high for a defense.",
+			percentText, away.OffenseTurnoverPct, home.OffenseTurnoverPct, away.DefenseTurnoverPct, home.DefenseTurnoverPct),
+		both("Offensive rebound rate",
+			"The share of its own misses a team got back. The defense line is what its opponents got back; high for an offense, low for a defense.",
+			percentText, away.OffenseReboundPct, home.OffenseReboundPct, away.DefenseReboundPct, home.DefenseReboundPct),
+		both("Free throw rate",
+			"Free throw attempts for every 100 field goal attempts; high for an offense, low for a defense.",
+			unitText, away.OffenseFreeThrowRate, home.OffenseFreeThrowRate, away.DefenseFreeThrowRate, home.DefenseFreeThrowRate),
+		both("3-point %",
+			"Three-pointers made as a share of those attempted; high for an offense, low for a defense.",
+			percentText, away.OffenseThreePct, home.OffenseThreePct, away.DefenseThreePct, home.DefenseThreePct),
+	}
+}
+
+// percentText renders a figure already on a 0-100 scale, empty when it is missing.
+func percentText(v *decimal.Decimal) string {
+	if v == nil {
+		return ""
+	}
+	return v.Round(1).StringFixed(1) + "%"
+}
+
+// gamesText is a count of games.
+func gamesText(n int) string {
+	if n == 1 {
+		return "1 game"
+	}
+	return strconv.Itoa(n) + " games"
 }

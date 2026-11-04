@@ -12,9 +12,9 @@ const (
 	// lineupUnitsShown is how many units the panel lists for each team.
 	lineupUnitsShown = 5
 
-	// minPossessionsForNet is the fewest possessions a side needs for the panel to
-	// show a net rating. Under it, one made three moves the number by tens of points.
-	minPossessionsForNet = 10
+	// minPossessionsForRates is the fewest possessions a side needs for the panel to
+	// show a unit's rates. Under it, one made three moves them by tens of points.
+	minPossessionsForRates = 10
 )
 
 // LineupPanel is the game page's five-man unit panel.
@@ -35,8 +35,14 @@ type LineupUnit struct {
 	Players     string
 	Minutes     int
 	Possessions int
-	// Net is empty when the sample is too small to mean anything.
-	Net string
+	// The rates are empty when the sample is too small to mean anything.
+	Net            string
+	Offense        string
+	Defense        string
+	EffectiveFG    string
+	OppEffectiveFG string
+	ThreeRate      string
+	TurnoverRate   string
 }
 
 // lineupPanel builds the panel for a game, or nil when there is nothing to show.
@@ -100,9 +106,26 @@ func lineupUnit(totals models.LineupTotals) LineupUnit {
 		Minutes:     (totals.Seconds + 30) / 60,
 		Possessions: totals.PossessionsFor,
 	}
-	if net, ok := totals.NetRating(); ok &&
-		totals.PossessionsFor >= minPossessionsForNet && totals.PossessionsAgainst >= minPossessionsForNet {
+	if totals.PossessionsFor < minPossessionsForRates || totals.PossessionsAgainst < minPossessionsForRates {
+		return unit
+	}
+
+	if net, ok := totals.NetRating(); ok {
 		unit.Net = fmt.Sprintf("%+.1f", net)
 	}
+	unit.Offense = rate(totals.OffenseRating())
+	unit.Defense = rate(totals.DefenseRating())
+	unit.EffectiveFG = rate(totals.For.EffectiveFGPct())
+	unit.OppEffectiveFG = rate(totals.Against.EffectiveFGPct())
+	unit.ThreeRate = rate(totals.For.ThreeRate())
+	unit.TurnoverRate = rate(totals.For.TurnoverPct(totals.PossessionsFor))
 	return unit
+}
+
+// rate renders a figure with one decimal place, empty when it could not be worked out.
+func rate(value float64, ok bool) string {
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%.1f", value)
 }

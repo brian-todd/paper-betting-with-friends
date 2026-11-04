@@ -10,6 +10,7 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/pagetest"
 	"github.com/brian/paper-betting-with-friends/internal/testdb"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -151,6 +152,53 @@ func TestBasketballThroughTheRouter(t *testing.T) {
 			t.Error("the football filter shows a basketball bet")
 		}
 	})
+}
+
+// A game reads its own season's ratings and no other. Rosters turn over, so last
+// season's number on this season's game reads as a verdict on a different team, and a
+// season's first days are meant to show none.
+func TestMatchupReadsOnlyItsOwnSeason(t *testing.T) {
+	env := pagetest.Open(t, firstSnapshot)
+	_, server := serve(t, env)
+	client := newClient(t, server)
+
+	resp, err := client.PostForm(server.URL+"/register", url.Values{
+		"username":         {"season-watcher"},
+		"password":         {"long-enough-password"},
+		"confirm_password": {"long-enough-password"},
+	})
+	if err != nil {
+		t.Fatalf("registering: %v", err)
+	}
+	resp.Body.Close()
+
+	home := testdb.InsertTeam(t, env.DB, "")
+	away := testdb.InsertTeam(t, env.DB, "")
+	for _, team := range []uuid.UUID{home.ID, away.ID} {
+		row := models.TeamRating{
+			TeamID: team, Season: 2025, Source: models.RatingSourceSRS,
+			FetchedAt: firstSnapshot, Overall: decimal.RequireFromString("9.9"),
+		}
+		if err := env.DB.Create(&row).Error; err != nil {
+			t.Fatalf("creating rating: %v", err)
+		}
+	}
+	game := func(season int) *models.Game {
+		return testdb.InsertGame(t, env.DB, models.Game{
+			Sport: models.SportBasketball, Season: season, ScheduledAt: firstSnapshot.AddDate(0, 0, 1),
+			HomeTeamID: home.ID, AwayTeamID: away.ID,
+		})
+	}
+
+	_, body := get(t, client, server.URL+"/games/"+game(2026).ID.String())
+	if strings.Contains(body, ">SRS<") {
+		t.Error("a 2026 game shows a 2025 rating")
+	}
+
+	_, body = get(t, client, server.URL+"/games/"+game(2025).ID.String())
+	if !strings.Contains(body, ">SRS<") {
+		t.Error("a 2025 game does not show its own season's rating, so this test checked nothing")
+	}
 }
 
 // What the lineups panel shows depends on when you are looking. A page must never

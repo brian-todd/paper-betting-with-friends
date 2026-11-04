@@ -139,6 +139,7 @@ type Service struct {
 
 	teamATSRecordRepo     *repository.TeamATSRecordRepository
 	teamAdvancedStatsRepo *repository.TeamAdvancedStatsRepository
+	teamSeasonStatsRepo   *repository.TeamSeasonStatsRepository
 	gamePregameWPRepo     *repository.GamePregameWinProbabilityRepository
 	pollRankRepo          *repository.PollRankRepository
 	gameLineupRepo        *repository.GameLineupRepository
@@ -171,6 +172,7 @@ func NewService(db *gorm.DB, location *time.Location) *Service {
 
 		teamATSRecordRepo:     repository.NewTeamATSRecordRepository(db),
 		teamAdvancedStatsRepo: repository.NewTeamAdvancedStatsRepository(db),
+		teamSeasonStatsRepo:   repository.NewTeamSeasonStatsRepository(db),
 		gamePregameWPRepo:     repository.NewGamePregameWinProbabilityRepository(db),
 		gameForecastRepo:      repository.NewGameForecastRepository(db),
 		pollRankRepo:          repository.NewPollRankRepository(db),
@@ -484,18 +486,10 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 		}
 	}
 
-	// The comparison panel is football-only because its provider is, and the
-	// sport has to be checked before HasAny rather than instead of it. Nothing
-	// basketball reaches here populates a rating, a record or an efficiency
-	// figure -- but RecentResults is sport-aware and answers happily, so a
-	// basketball page drew a panel consisting of nothing but form, and spent a
-	// dozen queries finding out that the rest of it was empty. HasAny still
-	// earns its place afterwards: a football game synced before the stats job
-	// first ran has to render the absent case.
-	if game.Sport == models.SportFootball {
-		if matchup := s.buildMatchup(game); matchup.HasAny() {
-			detail.Matchup = matchup
-		}
+	// HasAny because a game synced before the stats jobs first ran has to render the
+	// absent case.
+	if matchup := s.buildMatchup(game); matchup.HasAny() {
+		detail.Matchup = matchup
 	}
 	if game.Sport == models.SportBasketball {
 		detail.Lineups = s.lineupPanel(game)
@@ -539,6 +533,7 @@ const formGames = 5
 // Callers get a non-nil Matchup and ask HasAny whether it is worth drawing.
 func (s *Service) buildMatchup(game *models.Game) *Matchup {
 	matchup := &Matchup{
+		Sport:       game.Sport,
 		NeutralSite: game.NeutralSite,
 		Home: TeamStats{
 			Team:       game.HomeTeam,
@@ -598,6 +593,17 @@ func (s *Service) buildMatchup(game *models.Game) *Matchup {
 	}
 	if stats, ok := advanced[game.AwayTeamID]; ok {
 		matchup.Away.Advanced = &stats
+	}
+
+	seasonStats, err := s.teamSeasonStatsRepo.FindForTeams(game.Season, game.HomeTeamID, game.AwayTeamID)
+	if err != nil {
+		slog.Error("failed to fetch team season stats", "game", game.ID, "error", err)
+	}
+	if stats, ok := seasonStats[game.HomeTeamID]; ok {
+		matchup.Home.Season = &stats
+	}
+	if stats, ok := seasonStats[game.AwayTeamID]; ok {
+		matchup.Away.Season = &stats
 	}
 
 	winProbability, err := s.gamePregameWPRepo.FindByGameID(game.ID)

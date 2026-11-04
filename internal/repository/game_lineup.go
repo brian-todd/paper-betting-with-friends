@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"strings"
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
@@ -119,6 +120,22 @@ func (r *GameLineupRepository) TopForSeason(teamID uuid.UUID, season int, before
 		Where("game_lineups.team_id = ? AND games.season = ? AND games.scheduled_at < ?", teamID, season, before), limit)
 }
 
+// lineupBoxSums sums every count of a unit's box on both sides. Rates are worked out
+// from these rather than averaged, since a unit's games are not the same length.
+var lineupBoxSums = func() string {
+	var sums []string
+	for _, side := range []string{"for", "against"} {
+		for _, column := range []string{
+			"fg_made", "fg_attempted", "three_made", "three_attempted",
+			"ft_made", "ft_attempted", "turnovers", "off_rebounds", "def_rebounds",
+		} {
+			name := side + "_" + column
+			sums = append(sums, "SUM(game_lineups."+name+") AS "+name)
+		}
+	}
+	return strings.Join(sums, ", ")
+}()
+
 func (r *GameLineupRepository) top(scope *gorm.DB, limit int) ([]models.LineupTotals, error) {
 	var totals []models.LineupTotals
 	err := scope.Model(&models.GameLineup{}).
@@ -127,7 +144,7 @@ func (r *GameLineupRepository) top(scope *gorm.DB, limit int) ([]models.LineupTo
 			SUM(game_lineups.points_for) AS points_for,
 			SUM(game_lineups.possessions_for) AS possessions_for,
 			SUM(game_lineups.points_against) AS points_against,
-			SUM(game_lineups.possessions_against) AS possessions_against`).
+			SUM(game_lineups.possessions_against) AS possessions_against,` + lineupBoxSums).
 		Group("game_lineups.id_hash").
 		Order("SUM(game_lineups.seconds) DESC").
 		Order("game_lineups.id_hash").

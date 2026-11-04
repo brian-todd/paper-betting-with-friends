@@ -287,6 +287,39 @@ seed, so either change needs one to reach existing rows. There is no shared scho
 between the two sports' teams; nothing reads one yet, and `sourceId` is the key if
 something ever does.
 
+### Basketball Matchup
+
+The game page's Matchup and Efficiency panels are shared with football, branching on
+`Matchup.Sport` where the provider differs. `cbb-ratings` stores adjusted efficiency
+and SRS in `team_ratings`; `cbb-team-stats` stores the season figures in
+`team_season_stats` and the record in `team_records`.
+
+**A game reads its own season's rows and no other.** The provider publishes no adjusted
+or SRS ratings for a season's first days, and those pages show none rather than last
+season's, because rosters turn over. An empty answer is therefore a success. Like
+football's, these are current values, so a finished game shows them under the "as of"
+line and makes no claim about what they were at tip-off.
+
+Things the feed will not tell you:
+
+- **Elo fits nowhere but the game.** Values like 1571 overflow `team_ratings.overall`,
+  a `decimal(6,3)`, and `homeTeamEloStart` is free on `/games` anyway. The row is hidden
+  while both teams are at exactly 1500 (`basketballEloStart`): 211 of last November's
+  games and none after it, and 224 of 226 unplayed games in the first week of this
+  season. Reading 1500 against 1500 as "even" would be wrong.
+- **`turnoverRatio` changes scale between endpoints**: a fraction in `/stats/team/season`
+  (0.16) and a percentage in `/games/teams` (21.7). `APITeamSeasonSide.TurnoverPct`
+  works it out from the counts. Player `trueShootingPct` is a fraction too (0.636) where
+  the team's is a percentage (60.4). Everything stored is on a 0-100 scale.
+- **The feed's record is overall only.** Home and away are worked out from stored games
+  (`TeamRecordRepository.BasketballSplits`). A team outside Division I appears only for
+  games it played against one, so its record is that and no more.
+- **Coverage is close to Division I but not equal to it.** West Florida has no rating and
+  St. Francis (PA) does, and both-or-neither drops the row.
+
+There is no sample-size floor beyond a game each, matching football's low one, and the
+panel's footnote says how many games each side rests on.
+
 ### Lineups
 
 **`/lineups` is not a team sheet.** It returns stats for five-man units computed from
@@ -297,9 +330,9 @@ projections, and the game page says so, because five names read like tonight's l
 the sums in `game_lineups`. The game page shows a finished game's own units, or the
 team's most-used units from earlier in that season, added up across games and cut off
 at tip-off, so a page never credits a team with what came after it. `idHash` is the
-unit's player IDs joined, so it is stable across games. Ratings are worked out from the
-summed points and possessions, and over a single game they match the feed's own to
-within rounding.
+unit's player IDs joined, so it is stable across games. Every rate is worked out from
+summed counts (`models.LineupBox`), never averaged, and over a single game they match
+the feed's own to within rounding: eFG% on all 356 sides of the captured games.
 
 An empty answer is not an answer: it can mean not processed yet or never available,
 so `game_lineup_fetches` counts attempts and gives up after three, a day apart. A
@@ -307,11 +340,13 @@ failed request is not an answer either, and does not count: it starts the same d
 wait through `RecordFailure`, and only the lookback ends it, so an outage cannot
 abandon the games it touches. The feed's coverage can also be partial, and an opponent outside Division I has no units.
 
+`/lineups/team` can cut off at a date (`endDateRange`), so it could show a game as of
+tip-off, but only at a request per team per cutoff, about 3,000 a month for what the
+game endpoint already gives. A recap would need the game endpoint anyway.
+
 `lineupFetchRules.Lookback` is what stops a seed spending the budget: seeding a past
 season leaves thousands of games final with a line, and without it the job would walk
-them all. There is deliberately no backfill. `/lineups/team` is not used: it costs a
-request per team per refresh, cannot show a past game as of its tip-off, and a recap
-would need the game endpoint anyway.
+them all. There is deliberately no backfill.
 
 ### Purse Operations
 
@@ -1058,6 +1093,12 @@ requests a month and the football jobs are most of it:
   a queue, so a missed run loses nothing. A peak day of 155 games takes a couple of
   days to drain
 
+- `cbb-ratings` runs daily at 5am local in season and not at all outside it
+  (`cbbdata.NextRatingsSync`), two requests a run, ~60 a month
+- `cbb-team-stats` runs every six hours in season and not at all outside it
+  (`cbbdata.NextTeamStatsSync`), one request for every team, ~120 a month. Both carry
+  `RunOnStart` only while the season has none stored, as `cbb-rankings` does
+
 The allowance is split in `internal/apibudget` — a share for each sport and a
 reserve for the jobs no test counts — and each sport's cadence test holds its
 worst month to its own share. `apibudget`'s own test checks the shares still fit
@@ -1158,6 +1199,8 @@ a migration is the wrong place to decide that.
 - Saving a whole bet row — a preloaded association overwrites the foreign key and a stale status overwrites a cancel or a settlement; write named columns, conditionally, as `UpdateIfPending` does
 - Reading a basketball rank from "this week's" poll or the feed's week number — polls skip weeks and week numbers restart in the postseason; use the latest poll date on or before the game
 - Counting a custom odds row as a line the game offers — one bet would switch everyone's day page to that game alone, with no odds to show
+- Showing last season's ratings on this season's games — rosters turn over; a game reads its own season's rows
+- Storing a feed's `turnoverRatio` as it comes — it is a fraction on one endpoint and a percentage on another; work it out from the counts
 - Treating `/lineups` as who is playing tonight — it is what units did in games already played
 - Removing the lookback from the lineups queue — a seeded past season is thousands of due games, each a metered request
 - Scanning `MAX` or `MIN` into a `*time.Time` — over no rows the aggregate is NULL and the scan errors; use `sql.NullTime`

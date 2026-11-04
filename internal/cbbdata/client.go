@@ -140,6 +140,35 @@ func (c *Client) GetGameLineups(ctx context.Context, gameID int64) ([]APIGameLin
 	return lineups, nil
 }
 
+// GetAdjustedRatings retrieves every team's adjusted efficiency for a season. Empty
+// until the provider has published any.
+func (c *Client) GetAdjustedRatings(ctx context.Context, season int) ([]APIAdjustedRating, error) {
+	var ratings []APIAdjustedRating
+	if err := c.doRequest(ctx, fmt.Sprintf("/ratings/adjusted?season=%d", season), &ratings); err != nil {
+		return nil, fmt.Errorf("fetching adjusted ratings: %w", err)
+	}
+	return ratings, nil
+}
+
+// GetSRSRatings retrieves every team's SRS rating for a season. Empty until the
+// provider has published any.
+func (c *Client) GetSRSRatings(ctx context.Context, season int) ([]APISRSRating, error) {
+	var ratings []APISRSRating
+	if err := c.doRequest(ctx, fmt.Sprintf("/ratings/srs?season=%d", season), &ratings); err != nil {
+		return nil, fmt.Errorf("fetching srs ratings: %w", err)
+	}
+	return ratings, nil
+}
+
+// GetTeamSeasonStats retrieves every team's figures for a season.
+func (c *Client) GetTeamSeasonStats(ctx context.Context, season int) ([]APITeamSeasonStats, error) {
+	var stats []APITeamSeasonStats
+	if err := c.doRequest(ctx, fmt.Sprintf("/stats/team/season?season=%d", season), &stats); err != nil {
+		return nil, fmt.Errorf("fetching team season stats: %w", err)
+	}
+	return stats, nil
+}
+
 func buildGameQuery(opts GameQueryOpts) string {
 	q := ""
 	sep := ""

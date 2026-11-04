@@ -36,3 +36,42 @@ func TestLineupUnit(t *testing.T) {
 		})
 	}
 }
+
+func TestLineupUnitRates(t *testing.T) {
+	totals := models.LineupTotals{
+		PointsFor: 30, PossessionsFor: 25, PointsAgainst: 20, PossessionsAgainst: 25,
+		For:     models.LineupBox{FGMade: 10, FGAttempted: 20, ThreeMade: 4, ThreeAttempted: 8, Turnovers: 5},
+		Against: models.LineupBox{FGMade: 8, FGAttempted: 25, ThreeMade: 2, ThreeAttempted: 10, Turnovers: 3},
+	}
+
+	got := lineupUnit(totals)
+	want := LineupUnit{
+		Possessions: 25, Net: "+40.0", Offense: "120.0", Defense: "80.0",
+		EffectiveFG: "60.0", OppEffectiveFG: "36.0", ThreeRate: "40.0", TurnoverRate: "20.0",
+	}
+	if got != want {
+		t.Errorf("lineupUnit = %+v, want %+v", got, want)
+	}
+
+	t.Run("no attempts leaves the shooting rates empty", func(t *testing.T) {
+		noShots := totals
+		noShots.For, noShots.Against = models.LineupBox{}, models.LineupBox{}
+		got := lineupUnit(noShots)
+		if got.EffectiveFG != "" || got.OppEffectiveFG != "" || got.ThreeRate != "" {
+			t.Errorf("rates from no attempts: %+v", got)
+		}
+		if got.TurnoverRate != "0.0" {
+			t.Errorf("turnover rate = %q, want 0.0: it is per possession", got.TurnoverRate)
+		}
+	})
+
+	t.Run("too small a sample shows no rates at all", func(t *testing.T) {
+		small := totals
+		small.PossessionsAgainst = 9
+		got := lineupUnit(small)
+		if got.Net != "" || got.Offense != "" || got.Defense != "" || got.EffectiveFG != "" ||
+			got.OppEffectiveFG != "" || got.ThreeRate != "" || got.TurnoverRate != "" {
+			t.Errorf("rates from a small sample: %+v", got)
+		}
+	})
+}

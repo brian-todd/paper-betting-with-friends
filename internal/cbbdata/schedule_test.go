@@ -199,6 +199,58 @@ func TestNextRankingsSync(t *testing.T) {
 	}
 }
 
+func TestNextRatingsSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"before the slot runs that morning", time.Date(2026, time.November, 4, 4, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 4, 5, 0, 0, 0, eastern)},
+		{"on the slot waits a day", time.Date(2026, time.November, 4, 5, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 5, 5, 0, 0, 0, eastern)},
+		{"the season spans New Year", time.Date(2026, time.December, 31, 12, 0, 0, 0, eastern),
+			time.Date(2027, time.January, 1, 5, 0, 0, 0, eastern)},
+		{"the last day of the season is followed by the next season", time.Date(2027, time.April, 15, 5, 0, 0, 0, eastern),
+			time.Date(2027, time.October, 25, 5, 0, 0, 0, eastern)},
+		{"out of season it waits for the first slot in the season", time.Date(2027, time.July, 4, 12, 0, 0, 0, eastern),
+			time.Date(2027, time.October, 25, 5, 0, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextRatingsSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextRatingsSync(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextTeamStatsSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"mid-slot goes to the next one", time.Date(2026, time.November, 4, 7, 30, 0, 0, eastern),
+			time.Date(2026, time.November, 4, 12, 0, 0, 0, eastern)},
+		{"on a slot goes to the next one", time.Date(2026, time.November, 4, 12, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 4, 18, 0, 0, 0, eastern)},
+		{"out of season it waits for the first slot in the season", time.Date(2027, time.July, 4, 12, 0, 0, 0, eastern),
+			time.Date(2027, time.October, 25, 0, 0, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextTeamStatsSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextTeamStatsSync(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNextLineupsSync(t *testing.T) {
 	eastern := mustLoad(t, "America/New_York")
 
@@ -328,6 +380,10 @@ func TestBasketballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		restartsPerMonth = 40
 		jobs             = 4
 
+		// cbb-ratings (two requests) and cbb-team-stats (one) can run on start only
+		// in season, so a restart costs an off-season month nothing for them.
+		inSeasonRestartRequests = 3
+
 		// A month entirely out of season is a run a day of each job plus
 		// restarts: ~285. The regression this exists for is a throttle
 		// disappearing, which costs thousands.
@@ -370,9 +426,16 @@ func TestBasketballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		// is due and this costs nothing, so it overstates those months.
 		lineups := lineupsPerRun * count(month, end, func(now time.Time) time.Time { return NextLineupsSync(now, eastern) })
 
-		calls := scoreboard + games + lines + schedule + rankings + lineups + jobs*restartsPerMonth
-		t.Logf("%s: scoreboard %d, games %d, lines %d, schedule %d, rankings %d, lineups %d = %d",
-			month.Format("2006-01"), scoreboard, games, lines, schedule, rankings, lineups, calls)
+		// Two requests a run, one per rating table.
+		ratings := 2 * count(month, end, func(now time.Time) time.Time { return NextRatingsSync(now, eastern) })
+		teamStats := count(month, end, func(now time.Time) time.Time { return NextTeamStatsSync(now, eastern) })
+
+		calls := scoreboard + games + lines + schedule + rankings + lineups + ratings + teamStats + jobs*restartsPerMonth
+		if InSeason(month, eastern) || InSeason(end.Add(-time.Minute), eastern) {
+			calls += inSeasonRestartRequests * restartsPerMonth
+		}
+		t.Logf("%s: scoreboard %d, games %d, lines %d, schedule %d, rankings %d, lineups %d, ratings %d, team stats %d = %d",
+			month.Format("2006-01"), scoreboard, games, lines, schedule, rankings, lineups, ratings, teamStats, calls)
 
 		if calls > apibudget.Basketball {
 			t.Errorf("%s: %d calls is over basketball's %d share", month.Format("2006-01"), calls, apibudget.Basketball)
