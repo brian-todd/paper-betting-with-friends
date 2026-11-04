@@ -1358,6 +1358,11 @@ button.btn {
 }
 
 /* Games Filters */
+.filter-results a,
+.empty-state p a {
+    color: var(--color-primary);
+}
+
 .games-filters {
     display: flex;
     flex-direction: column;

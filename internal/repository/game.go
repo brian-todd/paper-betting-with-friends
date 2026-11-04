@@ -76,6 +76,10 @@ type GameFilter struct {
 	RankedTeam    bool // at least one side ranked in RankingPoll
 	RankedMatchup bool // both sides ranked in RankingPoll
 	RankingPoll   string
+	// RankedTeamIDs, when non-nil, is the ranked teams themselves, and is read
+	// instead of RankingPoll. Basketball's polls are dated rather than hung off a
+	// week, so the service resolves them first. An empty one matches nothing.
+	RankedTeamIDs []uuid.UUID
 
 	NeutralSiteOnly bool  // only games played at a neutral site
 	ConferenceGame  *bool // nil = any, true = conference games only, false = non-conference only
@@ -196,7 +200,13 @@ func applyGameFilter(q *gorm.DB, filter GameFilter) *gorm.DB {
 		away := oddsInRange(q, "money_line_odds", "money_line_odds.away_odds", filter.MoneyLineMin, filter.MoneyLineMax)
 		q = q.Where("(EXISTS (?) OR EXISTS (?))", home, away)
 	}
-	if filter.RankedMatchup || filter.RankedTeam {
+	if (filter.RankedMatchup || filter.RankedTeam) && filter.RankedTeamIDs != nil {
+		operator := "OR"
+		if filter.RankedMatchup {
+			operator = "AND"
+		}
+		q = q.Where("(home_team.id IN ? "+operator+" away_team.id IN ?)", filter.RankedTeamIDs, filter.RankedTeamIDs)
+	} else if filter.RankedMatchup || filter.RankedTeam {
 		home := rankedSide(q, "home_team.id", filter.RankingPoll)
 		away := rankedSide(q, "away_team.id", filter.RankingPoll)
 		if filter.RankedMatchup {
@@ -234,12 +244,14 @@ func applyGameFilter(q *gorm.DB, filter GameFilter) *gorm.DB {
 // this game have a row in the given market whose value sits in range.
 //
 // The bounds stay decimal.Decimal the whole way down rather than becoming
-// float64 -- a 2.5 spread has to compare exactly against a stored 2.5.
+// float64 -- a 2.5 spread has to compare exactly against a stored 2.5. A custom row
+// is one bettor's number rather than a line the game offers, so it never matches.
 func oddsInRange(q *gorm.DB, table, column string, low, high *decimal.Decimal) *gorm.DB {
 	sub := q.Session(&gorm.Session{NewDB: true}).
 		Table(table).
 		Select("1").
-		Where(table + ".game_id = games.id")
+		Where(table + ".game_id = games.id").
+		Where(table + ".source <> 'custom'")
 	if low != nil {
 		sub = sub.Where(column+" >= ?", *low)
 	}
@@ -678,23 +690,26 @@ func (r *GameRepository) rangeQuery(sport string, start, end time.Time, filter G
 }
 
 // FindConferencesInRange lists the conferences with a team playing in [start,
-// end), alphabetically, for the day's filter. noConference is what the sync files
-// a team under when the feed gives it no conference, and is left out: it is not a
-// conference anybody would pick, and it holds over a thousand non-Division I teams.
-func (r *GameRepository) FindConferencesInRange(sport string, start, end time.Time, noConference string) ([]string, error) {
+// end) and how many games each has, alphabetically, for the day's filter.
+// noConference is what the sync files a team under when the feed gives it no
+// conference, and is left out: it is not a conference anybody would pick, and it holds
+// over a thousand non-Division I teams.
+func (r *GameRepository) FindConferencesInRange(sport string, start, end time.Time, noConference string) ([]WeekConference, error) {
 	const sides = `
-		SELECT t.conference FROM games g JOIN teams t ON t.id = g.home_team_id
+		SELECT g.id AS game_id, t.conference FROM games g JOIN teams t ON t.id = g.home_team_id
 		WHERE g.sport = ? AND g.scheduled_at >= ? AND g.scheduled_at < ?
 		UNION
-		SELECT t.conference FROM games g JOIN teams t ON t.id = g.away_team_id
+		SELECT g.id, t.conference FROM games g JOIN teams t ON t.id = g.away_team_id
 		WHERE g.sport = ? AND g.scheduled_at >= ? AND g.scheduled_at < ?`
 
-	var conferences []string
+	var conferences []WeekConference
 	err := r.db.
 		Table("(?) AS sides", r.db.Raw(sides, sport, start, end, sport, start, end)).
+		Select("sides.conference, COUNT(*) AS games").
 		Where("sides.conference <> '' AND sides.conference <> ?", noConference).
+		Group("sides.conference").
 		Order("sides.conference").
-		Pluck("sides.conference", &conferences).Error
+		Scan(&conferences).Error
 	if err != nil {
 		return nil, err
 	}

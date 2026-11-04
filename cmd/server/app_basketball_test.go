@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -68,12 +69,20 @@ func TestBasketballThroughTheRouter(t *testing.T) {
 	})
 
 	t.Run("a conference with no games that day says so and stays selected", func(t *testing.T) {
-		body := page(t, "/basketball/games?date="+day+"&conference=Zed")
-		if !strings.Contains(body, "No Zed basketball games on this date") {
-			t.Error("the empty state ignores the conference filter")
+		body := page(t, "/basketball/games?date="+day+"&applied=1&conf=Zed")
+		if !strings.Contains(body, "match these filters") {
+			t.Error("the empty state ignores the filter")
 		}
-		if !strings.Contains(body, `<option value="Zed" selected`) {
-			t.Error("the dropdown reads as unfiltered while the filter applies")
+		if !regexp.MustCompile(`name="conf" value="Zed"\s+checked`).MatchString(body) {
+			t.Error("the filter reads as unset while it applies")
+		}
+	})
+
+	t.Run("choosing a season keeps the filter", func(t *testing.T) {
+		resp, _ := get(t, client, server.URL+"/basketball/games?season=2026&applied=1&conf=Zed")
+		query := resp.Request.URL.Query()
+		if query.Get("date") == "" || query.Get("conf") != "Zed" || query.Get("applied") != "1" {
+			t.Errorf("landed on %s", resp.Request.URL)
 		}
 	})
 
@@ -303,4 +312,64 @@ func TestLineupPanelThroughTheRouter(t *testing.T) {
 			t.Error("the panel renders with nothing in it")
 		}
 	})
+}
+
+// The page hides games without a line until asked, and the form is how it is asked:
+// an unticked box arrives as nothing, so "applied" is what makes it a choice.
+func TestBasketballGridLinesFilterThroughTheRouter(t *testing.T) {
+	env := pagetest.Open(t, firstSnapshot)
+	_, server := serve(t, env)
+	client := newClient(t, server)
+
+	resp, err := client.PostForm(server.URL+"/register", url.Values{
+		"username":         {"line-watcher"},
+		"password":         {"long-enough-password"},
+		"confirm_password": {"long-enough-password"},
+	})
+	if err != nil {
+		t.Fatalf("registering: %v", err)
+	}
+	resp.Body.Close()
+
+	tip := firstSnapshot.AddDate(0, 0, 1)
+	game := func(name string) *models.Game {
+		home := testdb.InsertTeam(t, env.DB, "")
+		if err := env.DB.Model(home).Update("name", name).Error; err != nil {
+			t.Fatalf("naming team: %v", err)
+		}
+		return testdb.InsertGame(t, env.DB, models.Game{
+			Sport: models.SportBasketball, Season: 2026, ScheduledAt: tip,
+			HomeTeamID: home.ID, AwayTeamID: testdb.InsertTeam(t, env.DB, "").ID,
+		})
+	}
+	lined := game("Lined University")
+	game("Unlined University")
+	line := models.OverUnderOdds{
+		GameID: lined.ID, Source: models.OddsSourceDraftKings, Total: decimal.NewFromInt(140),
+		OverOdds: decimal.NewFromInt(-110), UnderOdds: decimal.NewFromInt(-110),
+	}
+	if err := env.DB.Create(&line).Error; err != nil {
+		t.Fatalf("creating line: %v", err)
+	}
+
+	day := tip.In(env.Location).Format(time.DateOnly)
+	tests := []struct {
+		name, query string
+		wantUnlined bool
+	}{
+		{"an untouched page hides it", "", false},
+		{"the box ticked hides it", "&applied=1&bettable=1", false},
+		{"the box unticked shows it", "&applied=1", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, body := get(t, client, server.URL+"/basketball/games?date="+day+tt.query)
+			if !strings.Contains(body, "Lined University") {
+				t.Fatal("the game with a line is missing")
+			}
+			if got := strings.Contains(body, "Unlined University"); got != tt.wantUnlined {
+				t.Errorf("the game without a line drawn = %v, want %v", got, tt.wantUnlined)
+			}
+		})
+	}
 }

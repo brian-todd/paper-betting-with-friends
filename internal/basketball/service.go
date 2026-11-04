@@ -1,6 +1,7 @@
 package basketball
 
 import (
+	"cmp"
 	"log/slog"
 	"slices"
 	"time"
@@ -34,8 +35,9 @@ const noConference = "Independent"
 
 // DayQuery narrows one day's games. The zero value is the page's default.
 type DayQuery struct {
-	Search     string
-	Conference string
+	// Filter is what the reader chose. Its BettableOnly, RankingPoll, RankedTeamIDs and
+	// Location are the service's to set, and whatever arrives in them is ignored.
+	Filter repository.GameFilter
 	// AllGames asks for games without a line as well.
 	AllGames bool
 }
@@ -52,7 +54,7 @@ type DayGames struct {
 	LinesOnly bool
 	// HiddenGames is how many games LinesOnly left out.
 	HiddenGames int
-	Conferences []string
+	Conferences []repository.WeekConference
 	// PrevDay and NextDay are the nearest days with games, nil when there is none,
 	// so the pager skips the holiday break and the off-season.
 	PrevDay *time.Time
@@ -128,13 +130,22 @@ func (s *Service) GetDay(date time.Time, query DayQuery) (*DayGames, error) {
 	start := timeutil.StartOfDay(date, s.location)
 	end := start.AddDate(0, 0, 1)
 
-	filter := repository.GameFilter{Team: query.Search}
-	if query.Conference != "" {
-		filter.Conferences = []string{query.Conference}
+	// Read first, since the ranked filters need them. A failed read costs the ranks and
+	// those filters, not the page.
+	ranks, err := s.pollRankRepo.AsOf(s.SeasonOf(start), models.PollAP, timeutil.CalendarDayInUTC(start, s.location))
+	if err != nil {
+		slog.Error("failed to read basketball ranks", "error", err)
+	}
+
+	filter := query.Filter
+	filter.BettableOnly = false
+	filter.Location = s.location
+	filter.RankedTeamIDs = make([]uuid.UUID, 0, len(ranks))
+	for teamID := range ranks {
+		filter.RankedTeamIDs = append(filter.RankedTeamIDs, teamID)
 	}
 
 	day := &DayGames{}
-	var err error
 	if day.Total, err = s.gameRepo.CountGamesInRange(models.SportBasketball, start, end, repository.GameFilter{}); err != nil {
 		return nil, err
 	}
@@ -165,28 +176,31 @@ func (s *Service) GetDay(date time.Time, query DayQuery) (*DayGames, error) {
 		return nil, err
 	}
 
-	// The games are loaded, so from here a failed read costs what it was for and not
-	// the page.
-	if err := s.attachRanks(day.Games, start); err != nil {
-		slog.Error("failed to attach basketball ranks", "error", err)
-	}
-	s.attachConferences(day, start, end, query.Conference)
+	attachRanks(day.Games, ranks)
+	s.attachConferences(day, start, end, query.Filter.Conferences)
 	s.attachPager(day, start, end)
 	return day, nil
 }
 
-// attachConferences fills in the dropdown: the day's conferences, plus the selected
-// one if the day has none of its games. The pager carries a filter from day to day,
-// and a dropdown without it would read as unfiltered while the filter still applied.
-func (s *Service) attachConferences(day *DayGames, start, end time.Time, selected string) {
+// attachConferences fills in the filter's choices: the day's conferences, plus any
+// selected one the day has no games for. The pager carries a filter from day to day,
+// and leaving it off the list would read as unfiltered while the filter still applied.
+func (s *Service) attachConferences(day *DayGames, start, end time.Time, selected []string) {
 	conferences, err := s.gameRepo.FindConferencesInRange(models.SportBasketball, start, end, noConference)
 	if err != nil {
 		slog.Error("failed to list basketball conferences", "error", err)
 	}
-	if selected != "" && !slices.Contains(conferences, selected) {
-		conferences = append(conferences, selected)
-		slices.Sort(conferences)
+	for _, conference := range selected {
+		listed := slices.ContainsFunc(conferences, func(c repository.WeekConference) bool {
+			return c.Conference == conference
+		})
+		if !listed {
+			conferences = append(conferences, repository.WeekConference{Conference: conference})
+		}
 	}
+	slices.SortFunc(conferences, func(a, b repository.WeekConference) int {
+		return cmp.Compare(a.Conference, b.Conference)
+	})
 	day.Conferences = conferences
 }
 
@@ -248,17 +262,8 @@ func (s *Service) attachOdds(games []models.Game) ([]GameWithOdds, error) {
 	return withOdds, nil
 }
 
-// attachRanks fills in each side's AP position as of the day. A day falls in one
-// season, so one lookup covers its games.
-func (s *Service) attachRanks(games []GameWithOdds, day time.Time) error {
-	if len(games) == 0 {
-		return nil
-	}
-
-	ranks, err := s.pollRankRepo.AsOf(games[0].Game.Season, models.PollAP, timeutil.CalendarDayInUTC(day, s.location))
-	if err != nil {
-		return err
-	}
+// attachRanks fills in each side's AP position as of the day.
+func attachRanks(games []GameWithOdds, ranks map[uuid.UUID]int) {
 	for i := range games {
 		if rank, ok := ranks[games[i].Game.HomeTeamID]; ok {
 			games[i].HomeRank = &rank
@@ -267,7 +272,6 @@ func (s *Service) attachRanks(games []GameWithOdds, day time.Time) error {
 			games[i].AwayRank = &rank
 		}
 	}
-	return nil
 }
 
 // Seasons lists the seasons holding games, newest first, labelled for display.
@@ -283,6 +287,9 @@ func (s *Service) Seasons() ([]SeasonOption, error) {
 	}
 	return options, nil
 }
+
+// Location is the zone the day boundaries and the tip-off window are read in.
+func (s *Service) Location() *time.Location { return s.location }
 
 // SeasonOf is the season a calendar day belongs to.
 func (s *Service) SeasonOf(date time.Time) int {

@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/auth"
+	"github.com/brian/paper-betting-with-friends/internal/games"
 	"github.com/brian/paper-betting-with-friends/internal/templates"
 	"github.com/google/uuid"
 )
@@ -57,7 +57,23 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to resolve the default basketball day", "error", err)
 		day = h.service.Today()
 	}
-	http.Redirect(w, r, dayURL(day, DayQuery{}), http.StatusSeeOther)
+	http.Redirect(w, r, dayURL(day, games.Filter{Defaulted: true}), http.StatusSeeOther)
+}
+
+// parseFilter reads the page's filter from a query.
+//
+// A page nobody has filtered hides games without a line, so it starts with the box
+// ticked, and a submitted form without it is a deliberate ask for every game. Division
+// and kickoff day have no control here: the feed reports no division, so a tier would
+// match nothing, and the page is already one day.
+func parseFilter(query url.Values) games.Filter {
+	filter := games.ParseSubmittedFilter(query)
+	filter.Tiers, filter.Weekdays = nil, nil
+	if !games.FilterApplied(query) {
+		filter.Defaulted = !filter.Active()
+		filter.Bettable = true
+	}
+	return filter
 }
 
 // ListGames displays basketball games for a single day. A season parameter with no
@@ -77,7 +93,7 @@ func (h *Handler) ListGames(w http.ResponseWriter, r *http.Request) {
 				slog.Error("failed to resolve a day in the basketball season", "season", season, "error", err)
 			}
 			if ok {
-				http.Redirect(w, r, dayURL(day, DayQuery{}), http.StatusSeeOther)
+				http.Redirect(w, r, dayURL(day, parseFilter(params)), http.StatusSeeOther)
 				return
 			}
 		}
@@ -85,11 +101,8 @@ func (h *Handler) ListGames(w http.ResponseWriter, r *http.Request) {
 
 	// Which day a game falls on depends on a timezone, so the service owns it.
 	date := h.service.ParseDate(params.Get("date"))
-	query := DayQuery{
-		Search:     strings.TrimSpace(params.Get("search")),
-		Conference: params.Get("conference"),
-		AllGames:   params.Get("lines") == "all",
-	}
+	filter := parseFilter(params)
+	query := DayQuery{Filter: filter.Repository(), AllGames: !filter.Bettable}
 
 	day, err := h.service.GetDay(date, query)
 	if err != nil {
@@ -111,27 +124,36 @@ func (h *Handler) ListGames(w http.ResponseWriter, r *http.Request) {
 		"Games":       day.Games,
 		"Date":        date,
 		"DateStr":     date.Format(time.DateOnly),
-		"Search":      query.Search,
-		"Conference":  query.Conference,
-		"AllGames":    query.AllGames,
 		"Conferences": day.Conferences,
 		"TotalGames":  day.Total,
 		"LinesOnly":   day.LinesOnly,
 		"HiddenGames": day.HiddenGames,
 		"Seasons":     seasons,
 		"Season":      h.service.SeasonOf(date),
+
+		// Filter state, plus everything the controls need to redraw themselves.
+		"Filter":              filter,
+		"FilterQuery":         filter.Query().Encode(),
+		"FilterActive":        !filter.Defaulted,
+		"SelectedConferences": filter.SelectedConferences(),
+		"StatusOptions":       games.StatusOptions(),
+		"GameTypeOptions":     games.GameTypeOptions(),
+		"HourOptions":         games.HourOptions(),
+		// The displayed day's abbreviation, since a shared link keeps its date.
+		"Zone": games.ZoneAbbreviation(h.service.Location(), date),
 	}
 	if day.PrevDay != nil {
-		data["PrevURL"] = dayURL(*day.PrevDay, query)
+		data["PrevURL"] = dayURL(*day.PrevDay, filter)
 	}
 	if day.NextDay != nil {
-		data["NextURL"] = dayURL(*day.NextDay, query)
+		data["NextURL"] = dayURL(*day.NextDay, filter)
 	}
-	allGames, linesOnly := query, query
-	allGames.AllGames, linesOnly.AllGames = true, false
+	allGames, linesOnly := filter, filter
+	allGames.Bettable, allGames.Defaulted = false, false
+	linesOnly.Bettable = true
 	data["ShowAllURL"] = dayURL(date, allGames)
 	data["LinesOnlyURL"] = dayURL(date, linesOnly)
-	data["ClearURL"] = dayURL(date, DayQuery{})
+	data["ClearURL"] = dayURL(date, games.Filter{Defaulted: true})
 
 	if err := h.templates.Render(w, "basketball_games", data); err != nil {
 		slog.Error("failed to render basketball games", "error", err)
@@ -160,18 +182,10 @@ func (h *Handler) annotateUserBets(userID uuid.UUID, games []GameWithOdds) {
 	}
 }
 
-// dayURL links to a day with the same query, so changing day does not silently
-// reset a filter.
-func dayURL(day time.Time, query DayQuery) string {
-	values := url.Values{"date": {day.Format(time.DateOnly)}}
-	if query.Search != "" {
-		values.Set("search", query.Search)
-	}
-	if query.Conference != "" {
-		values.Set("conference", query.Conference)
-	}
-	if query.AllGames {
-		values.Set("lines", "all")
-	}
+// dayURL links to a day with the same filter, so changing day does not silently reset
+// it.
+func dayURL(day time.Time, filter games.Filter) string {
+	values := filter.Query()
+	values.Set("date", day.Format(time.DateOnly))
 	return "/basketball/games?" + values.Encode()
 }

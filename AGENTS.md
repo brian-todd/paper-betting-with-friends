@@ -255,8 +255,15 @@ and a season from the dropdown resolves to its nearest game day.
 
 The day page hides games without a line only when the day has a matching line.
 Books post late, so a future day usually has none, and hiding everything would read
-as nothing being scheduled. A custom row is not a line: it is one bettor's number, so
-`gameHasOddsClause` skips it, here and in the lineups queue.
+as nothing being scheduled. So "Bettable only" here is a preference rather than the
+strict filter it is on football's grid, and the page says when no lines are posted. A
+custom row is not a line: it is one bettor's number, so `gameHasOddsClause` and
+`oddsInRange` skip it, here, on football's grid and in the lineups queue.
+
+The day page takes football's filters through `games.ParseSubmittedFilter`, less
+division and kickoff day: the feed reports no division, and the page is already one
+day. The ranked filters read the same as-of poll the cards do, resolved first into
+`GameFilter.RankedTeamIDs`, because `rankedSide` reads football's weekly rankings.
 
 Ranks live in `poll_ranks`, not football's `team_rankings`, which hangs off
 `week_id`. A game reads the **latest AP poll on or before its calendar day**
