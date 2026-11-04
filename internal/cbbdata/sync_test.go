@@ -196,6 +196,16 @@ func TestIncrementalWindow(t *testing.T) {
 	}
 }
 
+func TestScheduleWindowReachesAMonthAheadAndAWeekBack(t *testing.T) {
+	start, end := scheduleWindow(time.Date(2026, 12, 30, 12, 0, 0, 0, time.UTC))
+	if want := "2026-12-23T00:00:00.000Z"; start != want {
+		t.Errorf("start = %s, want %s", start, want)
+	}
+	if want := "2027-01-29T23:59:59.000Z"; end != want {
+		t.Errorf("end = %s, want %s", end, want)
+	}
+}
+
 // The incremental syncs are the only callers that build their own date window,
 // and they sent a malformed one on every run from the day it was written: CBBD
 // answered 400 and the job never succeeded. This drives each real job so the
@@ -212,6 +222,7 @@ func TestIncrementalSyncsSendAValidDateWindow(t *testing.T) {
 	}{
 		{"games", "/games", (*SyncService).SyncGames},
 		{"lines", "/lines", (*SyncService).SyncLines},
+		{"schedule", "/games", (*SyncService).SyncSchedule},
 	}
 
 	for _, tt := range tests {

@@ -183,6 +183,57 @@ func TestBasketballSeedsARealSeason(t *testing.T) {
 	})
 }
 
+// An unplayed day, recorded the morning before it: 66 games, none played, and the
+// feed reporting every one of them 0-0. The sync used to store that as a score on
+// every upcoming game.
+//
+// Like football's week 6, this capture is worth more stale than fresh. Re-recording
+// it after 2026-11-05 returns a played day and removes the premise, which the first
+// assertion here is what notices.
+func TestAnUnplayedDayStoresNoScores(t *testing.T) {
+	db := testdb.Open(t)
+	ctx := context.Background()
+
+	base, fake, stop, err := fixtureserver.Listen(fixtures.CBBD)
+	if err != nil {
+		t.Fatalf("starting the fake upstream: %v", err)
+	}
+	defer stop()
+
+	sync := cbbdata.NewSyncService(cbbdata.NewClientAt(base, ""), db)
+	sync.SetClock(timeutil.Fixed(time.Date(2026, 11, 4, 13, 6, 20, 0, time.UTC)))
+
+	if err := sync.SyncReferenceForTest(ctx); err != nil {
+		t.Fatalf("syncing reference data: %v", err)
+	}
+	start, end := "2026-11-05T05:00:00.000Z", "2026-11-06T05:00:00.000Z"
+	if err := sync.SyncGamesForTest(ctx, cbbdata.GameQueryOpts{StartDateRange: &start, EndDateRange: &end}); err != nil {
+		t.Fatalf("syncing the day: %v", err)
+	}
+	if n := fake.Refusals(); n > 0 {
+		t.Fatalf("the fake upstream refused %d requests", n)
+	}
+
+	var gameIDs []uuid.UUID
+	if err := db.Model(&models.Game{}).
+		Where("sport = ? AND status = ?", models.SportBasketball, models.GameStatusScheduled).
+		Pluck("id", &gameIDs).Error; err != nil {
+		t.Fatalf("reading games: %v", err)
+	}
+	if len(gameIDs) == 0 {
+		t.Fatal("no scheduled games were stored; this capture only proves anything about unplayed games")
+	}
+	t.Logf("%d scheduled games stored", len(gameIDs))
+
+	var results int64
+	if err := db.Model(&models.GameResult{}).Where("game_id IN ?", gameIDs).Count(&results).Error; err != nil {
+		t.Fatalf("counting results: %v", err)
+	}
+	if results != 0 {
+		t.Errorf("stored %d results for games nobody has played", results)
+	}
+}
+
 // capturedTeams is the /teams capture, read through the real client.
 //
 // The count of these is what a seed has to write. Deriving it here rather than

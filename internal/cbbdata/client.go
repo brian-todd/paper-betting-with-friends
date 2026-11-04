@@ -111,6 +111,16 @@ func (c *Client) GetLines(ctx context.Context, opts LineQueryOpts) ([]APIGameLin
 	return lines, nil
 }
 
+// GetScoreboard retrieves the games the live feed currently covers. The endpoint
+// requires Patreon Tier 1 or higher.
+func (c *Client) GetScoreboard(ctx context.Context) ([]APIScoreboardGame, error) {
+	var games []APIScoreboardGame
+	if err := c.doRequest(ctx, "/scoreboard", &games); err != nil {
+		return nil, fmt.Errorf("fetching scoreboard: %w", err)
+	}
+	return games, nil
+}
+
 func buildGameQuery(opts GameQueryOpts) string {
 	q := ""
 	sep := ""

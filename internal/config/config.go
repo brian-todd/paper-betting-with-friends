@@ -38,11 +38,10 @@ const minSessionKeyBytes = 32
 //
 // It is the step of a grid laid from midnight, so it has to divide a day: 100
 // would run at 23:20, then 01:00 the next morning, then 01:40, and never land
-// on the midnight where the season changes rate. The floor is the budget: two
-// requests a run at ten minutes is ~8,900 a month, which is what the basketball
-// share of the allowance is planned against (see internal/apibudget). Five
-// would be ~17,900, and with football on the same meter that is most of the
-// 30,000.
+// on the midnight where the season changes rate. The floor is the budget: it
+// sets the /lines rate, and one request a run at ten minutes is ~4,460 a month,
+// which is what the basketball share of the allowance is planned against (see
+// internal/apibudget). Five would be ~8,900.
 const (
 	MinCBBSyncIntervalMins = 10
 	MaxCBBSyncIntervalMins = 24 * 60
@@ -63,7 +62,7 @@ type Config struct {
 	Env                 string
 	CFBDataAPIKey       string // API key for collegefootballdata.com.
 	CBBDataAPIKey       string // API key for collegebasketballdata.com.
-	CBBSyncIntervalMins int    // How often the basketball games and lines jobs run in season, in minutes.
+	CBBSyncIntervalMins int    // How often the basketball lines job runs in season, in minutes.
 
 	// CFBScoreboardClassifications is the divisions the live scoreboard sync
 	// polls. The endpoint takes one division per call, so each entry is another

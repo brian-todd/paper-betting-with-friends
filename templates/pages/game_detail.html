@@ -17,7 +17,7 @@
             {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
             <!-- The clock stands in for the word "Live" when the scoreboard has
                  one, which it does for every division that sync covers. -->
-            {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel}}{{.}}{{else}}Live{{end}}{{end}}
+            {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel .Game.Sport}}{{.}}{{else}}Live{{end}}{{end}}
             {{if eq .Game.Status "final"}}Final{{end}}
             {{if eq .Game.Status "postponed"}}Postponed{{end}}
             {{if eq .Game.Status "cancelled"}}Cancelled{{end}}

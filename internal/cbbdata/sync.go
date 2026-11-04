@@ -17,6 +17,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// gamesResultCap is the most games the API returns for one /games request.
+const gamesResultCap = 3000
+
 // BetEvaluator is called when a game becomes final to evaluate pending bets.
 type BetEvaluator interface {
 	EvaluateBetsForGame(gameID uuid.UUID) error
@@ -34,6 +37,7 @@ type SyncService struct {
 	spreadOddsRepo    *repository.SpreadOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
 	oddsMovementRepo  *repository.OddsMovementRepository
+	gameLiveStateRepo *repository.GameLiveStateRepository
 	betEvaluator      BetEvaluator
 	logger            *slog.Logger
 
@@ -57,6 +61,7 @@ func NewSyncService(client *Client, db *gorm.DB) *SyncService {
 		spreadOddsRepo:    repository.NewSpreadOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
 		oddsMovementRepo:  repository.NewOddsMovementRepository(db),
+		gameLiveStateRepo: repository.NewGameLiveStateRepository(db),
 	}
 }
 
@@ -171,12 +176,28 @@ func (s *SyncService) SeedAll(ctx context.Context, season int) error {
 	return incomplete
 }
 
+// SyncSchedule refreshes the games in the wide window: a week back, so an outage
+// longer than the incremental window's one-day lookback cannot leave a game
+// unfinished for good, and a month ahead, so the day picker has games to show.
+//
+// One request. The widest window this spans held 1,986 games across the captured
+// season, inside the API's 3,000-game cap.
+func (s *SyncService) SyncSchedule(ctx context.Context) error {
+	start, end := scheduleWindow(s.clock.Now())
+	s.logger.Info("syncing schedule", "from", start, "to", end)
+
+	if err := s.syncGames(ctx, GameQueryOpts{StartDateRange: &start, EndDateRange: &end}); err != nil {
+		return fmt.Errorf("syncing schedule: %w", err)
+	}
+	return nil
+}
+
 // SyncGames refreshes the games -- schedule, status and score -- in the
 // incremental window, and settles any that finished.
 //
 // It is a job of its own, apart from SyncLines, so that a failure here costs
-// the lines nothing. See NextGamesSync for why the two share a cadence anyway,
-// and NextLinesSync for why the lines run a few minutes behind.
+// the lines nothing. The scoreboard normally gets to a finished game first; this
+// is the backstop for what that feed misses. See the cadence notes in schedule.go.
 func (s *SyncService) SyncGames(ctx context.Context) error {
 	start, end := incrementalWindow(s.clock.Now())
 	s.logger.Info("syncing games", "from", start, "to", end)
@@ -216,9 +237,19 @@ func (s *SyncService) SyncLines(ctx context.Context) error {
 //
 // The instant is taken to UTC first, since the strings say Z.
 func incrementalWindow(now time.Time) (start, end string) {
+	return dayWindow(now, 1, 3)
+}
+
+// scheduleWindow is the span the daily schedule sync asks for.
+func scheduleWindow(now time.Time) (start, end string) {
+	return dayWindow(now, 7, 30)
+}
+
+// dayWindow is whole UTC days around now, in the form the API validates.
+func dayWindow(now time.Time, back, ahead int) (start, end string) {
 	today := now.UTC()
-	start = today.AddDate(0, 0, -1).Format(time.DateOnly) + "T00:00:00.000Z"
-	end = today.AddDate(0, 0, 3).Format(time.DateOnly) + "T23:59:59.000Z"
+	start = today.AddDate(0, 0, -back).Format(time.DateOnly) + "T00:00:00.000Z"
+	end = today.AddDate(0, 0, ahead).Format(time.DateOnly) + "T23:59:59.000Z"
 	return start, end
 }
 
@@ -376,8 +407,21 @@ func (s *SyncService) syncGames(ctx context.Context, opts GameQueryOpts) error {
 		return err
 	}
 
+	// A full page means the API dropped the rest of the window, and every later
+	// game in it silently stays unwritten.
+	if len(games) >= gamesResultCap {
+		s.logger.Warn("games response hit the API's result cap", "games", len(games))
+	}
+
 	syncedCount := 0
 	for _, g := range games {
+		// A missing startDate decodes to year 1, which reads as a tip-off long
+		// past: it closes betting and freezes every bet already placed.
+		if g.StartDate.IsZero() {
+			s.logger.Warn("skipping game: no start date", "game", g.ID)
+			continue
+		}
+
 		// Look up home team.
 		homeTeam, err := s.teamRepo.FindByExternalID(g.HomeTeamID, models.SportBasketball)
 		if err != nil {
@@ -432,15 +476,13 @@ func (s *SyncService) syncGames(ctx context.Context, opts GameQueryOpts) error {
 			continue
 		}
 
-		// Sync the score whenever the provider reports one, including for a
-		// game still in progress, so a live card can show it. gameResultFrom
-		// leaves FinalizedAt nil until the game is over.
+		// Sync the score for a game being played or over. gameResultFrom leaves
+		// FinalizedAt nil until the game is over.
 		//
-		// Unlike the football feed this API reports a real status rather than
-		// one inferred from the clock, and takes status=in_progress as a query
-		// filter, so it plausibly carries live points -- unconfirmed, since
-		// there are no games in progress out of season.
-		if g.HomePoints != nil && g.AwayPoints != nil {
+		// The status decides this, not the presence of points: the feed reports
+		// every scheduled, postponed and cancelled game as 0-0, and a row written
+		// from points alone puts a score on a game nobody has played.
+		if hasScore(status) && g.HomePoints != nil && g.AwayPoints != nil {
 			dbGame, err := s.gameRepo.FindByExternalID(g.ID, models.SportBasketball)
 			if err != nil {
 				s.logger.Error("failed to find game for result", "error", err)
@@ -589,6 +631,12 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 	s.logger.Info("synced lines for games", "for", syncedCount, "moved", moved,
 		"failed_writes", failed.Count(), "failed_history_writes", failedMoves.Count())
 	return errors.Join(failed.Err("odds"), failedMoves.Err("odds history"))
+}
+
+// hasScore reports whether a game in this status has played any basketball, and
+// so whether the points the feed reports for it are a score.
+func hasScore(status models.GameStatus) bool {
+	return status == models.GameStatusInProgress || status == models.GameStatusFinal
 }
 
 // gameResultFrom builds the score row for a game the provider has reported

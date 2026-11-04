@@ -202,7 +202,7 @@ func TestScoreboardLiveState(t *testing.T) {
 	if state.GameID != gameID {
 		t.Errorf("GameID = %v, want %v", state.GameID, gameID)
 	}
-	if got := state.LiveLabel(); got != "Q3 · 07:42" {
+	if got := state.LiveLabel(models.SportFootball); got != "Q3 · 07:42" {
 		t.Errorf("LiveLabel() = %q, want %q", got, "Q3 · 07:42")
 	}
 	if !state.HomeHasBall() || state.AwayHasBall() {

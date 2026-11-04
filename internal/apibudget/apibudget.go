@@ -13,9 +13,8 @@
 package apibudget
 
 const (
-	// MonthlyAllowance is the requests a month the provider allows. The
-	// README treats it as one meter shared by both keys; if the keys are metered
-	// separately this plan is conservative, not wrong.
+	// MonthlyAllowance is the requests a month the provider allows. CBBD's
+	// access tiers page confirms football and basketball share one quota.
 	MonthlyAllowance = 30_000
 
 	// Football is the share for the football jobs a cadence test counts:
@@ -24,11 +23,13 @@ const (
 	// month at ~7,770.
 	Football = 10_000
 
-	// Basketball is the share for the basketball games and lines jobs at the
-	// shortest interval configuration allows, restarts included.
-	// TestBasketballCadenceStaysWithinMonthlyCallBudget measures its worst
-	// month at ~9,000.
-	Basketball = 9_500
+	// Basketball is the share for the basketball jobs with lines at the shortest
+	// interval configuration allows, restarts included.
+	// TestBasketballCadenceStaysWithinMonthlyCallBudget measures its worst month
+	// at ~10,000 for the scoreboard, games, lines and schedule jobs. The share
+	// also holds ~1,550 a month for lineups and a few requests for rankings, which
+	// the same test will count once those jobs exist.
+	Basketball = 12_500
 
 	// Reserve is everything no cadence test counts. The football calendar job
 	// is ~800 a month and grows by a season a year, since each run walks every

@@ -90,12 +90,14 @@ func (s *GameLiveState) BeforeCreate(tx *gorm.DB) error {
 //
 // A nil receiver is a game the scoreboard has never covered, so every method
 // here answers for one rather than making each template guard the call.
-func (s *GameLiveState) PeriodLabel() string {
+//
+// It takes the sport because a period number means nothing without one: period 3
+// is a third quarter in football and overtime in basketball.
+func (s *GameLiveState) PeriodLabel(sport string) string {
 	if s == nil || s.Period == nil || *s.Period < 1 {
 		return ""
 	}
-	// The scoreboard feed is football only, so there is no sport to resolve.
-	return periodLabel(SportFootball, *s.Period)
+	return periodLabel(sport, *s.Period)
 }
 
 // periodLabel names the nth period of a game. It is shared with the line score,
@@ -131,8 +133,8 @@ func (s *GameLiveState) ClockText() string {
 // LiveLabel is the game clock as one string for a status badge -- "Q3 · 7:42",
 // or just "Q3" when the feed has the period but not the clock. It is empty when
 // there is neither, which is what a caller shows a plain "Live" for.
-func (s *GameLiveState) LiveLabel() string {
-	period, clock := s.PeriodLabel(), s.ClockText()
+func (s *GameLiveState) LiveLabel(sport string) string {
+	period, clock := s.PeriodLabel(sport), s.ClockText()
 	switch {
 	case period != "" && clock != "":
 		return period + " · " + clock
@@ -246,7 +248,8 @@ func (s *GameLiveState) HasLiveDetail() bool {
 	if s == nil {
 		return false
 	}
-	return s.PeriodLabel() != "" || s.ClockText() != "" || s.SituationText() != "" || s.LastPlayText() != ""
+	hasPeriod := s.Period != nil && *s.Period >= 1
+	return hasPeriod || s.ClockText() != "" || s.SituationText() != "" || s.LastPlayText() != ""
 }
 
 // AwayWinProbability is the complement of the home side's, nil when the feed

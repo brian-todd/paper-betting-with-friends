@@ -26,10 +26,30 @@ func TestGameLiveStatePeriodLabel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &GameLiveState{Period: tt.period}
-			if got := state.PeriodLabel(); got != tt.want {
+			if got := state.PeriodLabel(SportFootball); got != tt.want {
 				t.Errorf("PeriodLabel() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// A period number means nothing without its sport: period 3 is a third quarter
+// in football and overtime in basketball.
+func TestGameLiveStatePeriodLabelForBasketball(t *testing.T) {
+	tests := []struct {
+		period int
+		want   string
+	}{
+		{1, "1H"},
+		{2, "2H"},
+		{3, "OT"},
+		{4, "2OT"},
+	}
+	for _, tt := range tests {
+		state := &GameLiveState{Period: new(tt.period)}
+		if got := state.PeriodLabel(SportBasketball); got != tt.want {
+			t.Errorf("period %d = %q, want %q", tt.period, got, tt.want)
+		}
 	}
 }
 
@@ -51,7 +71,7 @@ func TestGameLiveStateLiveLabel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.state.LiveLabel(); got != tt.want {
+			if got := tt.state.LiveLabel(SportFootball); got != tt.want {
 				t.Errorf("LiveLabel() = %q, want %q", got, tt.want)
 			}
 		})

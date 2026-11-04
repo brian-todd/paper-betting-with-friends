@@ -121,4 +121,29 @@ func TestClientDecodesEveryCapturedEndpoint(t *testing.T) {
 			t.Error("games decoded but not one carries a sportsbook line")
 		}
 	})
+
+	t.Run("scoreboard", func(t *testing.T) {
+		games, err := c.GetScoreboard(ctx)
+		if err != nil {
+			t.Fatalf("GetScoreboard: %v", err)
+		}
+		if len(games) == 0 {
+			t.Fatal("no scoreboard games decoded")
+		}
+		var finals, zeroStart int
+		for _, g := range games {
+			if g.Status == "final" && g.HomeTeam.Points != nil && g.AwayTeam.Points != nil {
+				finals++
+			}
+			if g.StartDate.IsZero() {
+				zeroStart++
+			}
+		}
+		if finals == 0 {
+			t.Error("the first capture holds no scored finals, so finalization is untested by it")
+		}
+		if zeroStart > 0 {
+			t.Errorf("%d games decoded with a zero start date", zeroStart)
+		}
+	})
 }

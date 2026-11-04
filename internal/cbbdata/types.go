@@ -83,6 +83,36 @@ type APIGameLines struct {
 	Lines          []APILineProvider `json:"lines"`
 }
 
+// The statuses /scoreboard reports. Football's feed says "completed" where this
+// one says "final", so the two packages keep their own.
+const (
+	scoreboardStatusScheduled  = "scheduled"
+	scoreboardStatusInProgress = "in_progress"
+	scoreboardStatusFinal      = "final"
+	scoreboardStatusPostponed  = "postponed"
+	scoreboardStatusCancelled  = "cancelled"
+)
+
+// APIScoreboardTeam is one side of a scoreboard game.
+type APIScoreboardTeam struct {
+	ID         int64 `json:"id"`
+	Points     *int  `json:"points"`
+	LineScores []int `json:"lineScores"`
+}
+
+// APIScoreboardGame is one game from the live scoreboard.
+type APIScoreboardGame struct {
+	ID           int64             `json:"id"`
+	StartDate    time.Time         `json:"startDate"`
+	StartTimeTBD bool              `json:"startTimeTbd"`
+	TV           string            `json:"tv"`
+	Status       string            `json:"status"`
+	Period       *int              `json:"period"`
+	Clock        *string           `json:"clock"`
+	HomeTeam     APIScoreboardTeam `json:"homeTeam"`
+	AwayTeam     APIScoreboardTeam `json:"awayTeam"`
+}
+
 // GameQueryOpts holds optional query parameters for the games endpoint.
 type GameQueryOpts struct {
 	Season         *int

@@ -537,15 +537,57 @@ func (r *GameRepository) UpdateScheduledAt(gameID uuid.UUID, at time.Time) error
 // The statuses excluded are the terminal ones. A game that is over, or that will
 // not be played, neither is being played now nor will kick off later.
 func scoreboardScoped(db *gorm.DB, classifications []string) *gorm.DB {
-	return db.Model(&models.Game{}).
+	return unfinishedGames(db, models.SportFootball).
 		Joins("JOIN teams ON teams.id = games.home_team_id").
-		Where("games.sport = ?", models.SportFootball).
-		Where("teams.classification IN ?", classifications).
+		Where("teams.classification IN ?", classifications)
+}
+
+// unfinishedGames narrows a query to one sport's games that are not over and
+// that will still be played.
+func unfinishedGames(db *gorm.DB, sport string) *gorm.DB {
+	return db.Model(&models.Game{}).
+		Where("games.sport = ?", sport).
 		Where("games.status NOT IN ?", []models.GameStatus{
 			models.GameStatusFinal,
 			models.GameStatusCancelled,
 			models.GameStatusPostponed,
 		})
+}
+
+// HasActiveBasketballGames reports whether a basketball game tipped off within
+// the last window and has not finished.
+//
+// There is no division scoping to do, unlike HasActiveGames: the basketball
+// scoreboard covers non-Division I opponents too, so every game in the table is
+// one the feed can finish. The window still bounds what a game it drops can cost.
+func (r *GameRepository) HasActiveBasketballGames(now time.Time, window time.Duration) (bool, error) {
+	var count int64
+	err := unfinishedGames(r.db, models.SportBasketball).
+		Where("games.scheduled_at <= ? AND games.scheduled_at > ?", now, now.Add(-window)).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// NextBasketballTip returns the earliest basketball tip-off after the given
+// instant, or gorm.ErrRecordNotFound when there is none.
+func (r *GameRepository) NextBasketballTip(after time.Time) (time.Time, error) {
+	var tip time.Time
+	err := unfinishedGames(r.db, models.SportBasketball).
+		Select("games.scheduled_at").
+		Where("games.scheduled_at > ?", after).
+		Order("games.scheduled_at ASC").
+		Limit(1).
+		Scan(&tip).Error
+	if err != nil {
+		return time.Time{}, err
+	}
+	if tip.IsZero() {
+		return time.Time{}, gorm.ErrRecordNotFound
+	}
+	return tip, nil
 }
 
 // HasActiveGames reports whether a game in one of the given classifications

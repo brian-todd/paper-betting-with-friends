@@ -358,9 +358,18 @@ Anything new that reads a score has to decide which of the two it wants.
 
 Live football scores come from `/scoreboard`, not `/games`. CFBD's `/games`
 returns null points until `completed` flips true, so the nil-`FinalizedAt` path
-never runs from there; `internal/cfbdata/scoreboard.go` is what fills it. The
-basketball feed reports a real status and filters on `status=in_progress`, so it
-may well carry live points — unverified, as it was checked out of season.
+never runs from there; `internal/cfbdata/scoreboard.go` is what fills it.
+
+**Basketball has a scoreboard too** (`internal/cbbdata/scoreboard.go`, Patreon
+Tier 1), and it finalizes games the same way, leaving the payout to the
+`bet-settlement` job. Three things differ from football. One request covers the
+whole slate, including non-Division I opponents. It says `final` where football
+says `completed`. And **both feeds report a scheduled game as 0-0, and `/games`
+does the same for postponed and cancelled ones**, so whether points are a score
+is decided by the status, never by their presence. A `final` the score cannot
+back up, level or missing a side, is not believed: `finalIsCredible` leaves the
+status alone and stores the score as provisional, because basketball has no ties
+and none of the ~6,300 finals in the captured season is one.
 
 **Two feeds write a football game, and they disagree for minutes at a time.**
 The scoreboard calls a game over within five minutes; `/games` keeps inferring
@@ -460,7 +469,8 @@ tables are keyed by one.
 `Game.Status` is reported for any football game the scoreboard covers, and
 *inferred* (`now > startDate + 5min`) for the rest — which is every division
 outside `CFB_SCOREBOARD_CLASSIFICATIONS` and every game outside the current
-week. Basketball takes its status from the API.
+week. Basketball takes its status from whichever of its two feeds wrote last,
+and both report one.
 
 The line score is the exception: it stays on `GameResult`, where the score
 lives, and `PeriodScores(sport)` zips the two sides into columns for the game
@@ -527,6 +537,10 @@ type.
   unplayed week` in the level-1 test is what notices; if it fails after a
   capture run, `git checkout` that directory rather than editing the test.
   Recording a *new* unplayed week is the way to replace it
+- **Basketball has an unplayed capture too.** `/games` for 2026-11-05 was
+  recorded the morning before it was played, with every game `scheduled` at 0-0,
+  and `TestAnUnplayedDayStoresNoScores` rests on it. The same rule applies: do not
+  re-record it
 - **`make capture` replaces a route's capture; it refuses to replace a
   sequence.** The server replays oldest-first, so appending a second capture of
   a single-shot endpoint leaves the seed reading the stale one forever. A route
@@ -912,30 +926,44 @@ requests a month and the football jobs are most of it:
   covers the case the six-hour grid cannot: `NextDelay` is recomputed on every
   start, so a process restarting faster than its interval never reaches the
   timer, and this job would never run at all
-- `cbb-games` and `cbb-lines` share one cadence (`cbbdata.NextGamesSync`):
-  `CBB_SYNC_INTERVAL_MINS` from October 25 to April 15, once a day outside it,
-  ~5,800 a month between them in season and ~60 out. They are two jobs so a
-  failing `/games` no longer skips `/lines` and a line snapshot with it — not
-  to slow `/games` the way football's was. Basketball has no scoreboard, so
-  `/games` is its only source of scores, statuses and settlement. The lines
-  run `linesLag` (five minutes) behind the games: `syncLines` skips a game it
-  cannot find, so racing the games run in one slot drops a new game's lines
-  until the next — a day, out of season. `RunOnStart` is set only when the
-  process starts out of season, where the slot is a day long; in season it
-  would be two metered requests on every Air reload for nothing. The interval
-  is a grid step, so when a basketball key is set `Config.Validate` refuses
-  one that does not divide a day or lies outside 10–1440: zero divides by it,
-  100 runs at irregular spacing across midnight, and under ten the pair
-  outspend their share
+- `cbb-scoreboard` polls every 5 minutes while a game is being played, hourly
+  in season otherwise and daily out of it (`cbbdata.ScoreboardDelay`), at one
+  request a run: ~4,650 in the worst month, measured against the real 2025-26
+  schedule with every game held live for three hours. Like football's, what
+  decides the rate is the games table, and the admin sync page shows the same
+  two facts through the same function
+- `cbb-games` runs hourly from October 25 to April 15 and daily outside it
+  (`cbbdata.NextGamesSync`), ~745 a month. It is not slowed to football's six
+  hours because the scoreboard only reaches a day or so either side of now and
+  never writes `postponed` or `cancelled`, so `/games` is the backstop for
+  anything it misses and the only source of those two statuses
+- `cbb-lines` follows `CBB_SYNC_INTERVAL_MINS` in season and runs daily out of
+  it, ~2,975 a month at the default, on a grid `linesLag` (five minutes) behind
+  the hour so it never lands on a games run. The interval is a grid step, so when
+  a basketball key is set `Config.Validate` refuses one that does not divide a
+  day or lies outside 10–1440: zero divides by it, 100 runs at irregular spacing
+  across midnight, and under ten it outspends its share. Books post late: at 8am
+  on the day of one capture, 10 of that night's 27 games had a quote and none of
+  the next day's 66 did, so a game with no line is usually a game with no line
+  *yet*
+- `cbb-schedule` runs once a day, all year, from a week back to a month ahead
+  (`cbbdata.NextScheduleSync`), ~30 a month. The incremental window only reaches
+  three days ahead, so without it the day picker is empty beyond that; and its
+  week of lookback repairs a game left unfinished by an outage longer than the
+  incremental window's one day. It carries `RunOnStart`; the other three do so
+  only when the process starts out of season, where the slot is a day long and in
+  season it would be metered requests on every Air reload for nothing
 
 The allowance is split in `internal/apibudget` — a share for each sport and a
 reserve for the jobs no test counts — and each sport's cadence test holds its
 worst month to its own share. `apibudget`'s own test checks the shares still fit
 the allowance, so neither sport can pass by raising its number.
-`TestBasketballCadenceStaysWithinMonthlyCallBudget` counts at the ten-minute
-floor rather than the default, and holds an off-season month to a few hundred —
-which is what notices the throttle going missing, since a July at the in-season
-rate still fits under the share.
+`TestBasketballCadenceStaysWithinMonthlyCallBudget` counts lines at the
+ten-minute floor rather than the default, drives the scoreboard from the captured
+season, and holds an off-season month to a few hundred — which is what notices the
+throttle going missing, since a July at the in-season rate still fits under the
+share. `TestGamesRunHourlyThroughTheSeason` pins the `/games` rate, which the cap
+would not notice.
 
 `TestFootballCadenceStaysWithinMonthlyCallBudget` walks real months at all
 three schedules and fails if a change to any of them overruns the plan, capped
@@ -1046,7 +1074,8 @@ a migration is the wrong place to decide that.
 - Re-capturing an *unplayed* week — its value is that the games had not happened, and a refresh destroys it silently
 - Inferring a status from a `startTimeTBD` placeholder or a zero `startDate` — both are instants the feed does not mean, and `advancesFrom` has no edge back from the `in_progress` they produce
 - A unique index on a display string — the one on `teams.abbreviation` cost 107 basketball teams and the 49 games that needed them, because `Upsert` arbitrates a different index and the violation was logged and continued past
-- Slowing basketball's `/games` to football's schedule rate — there is no basketball scoreboard behind it, so it is the score feed and the settlement trigger
+- Slowing basketball's `/games` to football's six hours — the scoreboard only reaches about a day either side of now and never writes `postponed` or `cancelled`, so `/games` is still the backstop for both
+- Treating a basketball feed's points as a score without checking the status — both feeds report a scheduled game as 0-0
 - Raising a share in `internal/apibudget` to make a cadence test pass — the shares are the plan; overrunning one is the finding
 - Deltas in `odds_movements` — store the whole line at each change; a delta log turns one lost row into every later value being wrong
 - Writing a book's quotes one by one in a lines sync — fold them with `quotesBySource` first, or a book under two spellings records a phantom move every run
