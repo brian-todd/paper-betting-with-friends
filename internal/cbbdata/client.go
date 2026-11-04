@@ -121,6 +121,25 @@ func (c *Client) GetScoreboard(ctx context.Context) ([]APIScoreboardGame, error)
 	return games, nil
 }
 
+// GetRankings retrieves every poll published so far in a season.
+func (c *Client) GetRankings(ctx context.Context, season int) ([]APIPollRanking, error) {
+	var rankings []APIPollRanking
+	if err := c.doRequest(ctx, fmt.Sprintf("/rankings?season=%d", season), &rankings); err != nil {
+		return nil, fmt.Errorf("fetching rankings: %w", err)
+	}
+	return rankings, nil
+}
+
+// GetGameLineups retrieves the five-man unit stats for one played game. An empty
+// answer can mean not processed yet as well as never available.
+func (c *Client) GetGameLineups(ctx context.Context, gameID int64) ([]APIGameLineup, error) {
+	var lineups []APIGameLineup
+	if err := c.doRequest(ctx, fmt.Sprintf("/lineups/game/%d", gameID), &lineups); err != nil {
+		return nil, fmt.Errorf("fetching lineups for game %d: %w", gameID, err)
+	}
+	return lineups, nil
+}
+
 func buildGameQuery(opts GameQueryOpts) string {
 	q := ""
 	sep := ""

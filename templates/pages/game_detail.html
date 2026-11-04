@@ -6,7 +6,7 @@
             ← Back to Week {{.Game.Week.Number}}
         </a>
         {{else}}
-        <a href="/basketball/games" class="back-link">
+        <a href="/basketball/games?date={{.BasketballDay}}" class="back-link">
             ← Back to Basketball Games
         </a>
         {{end}}
@@ -310,6 +310,40 @@
             {{end}}
         </div>
         {{end}}
+    </div>
+    {{end}}
+
+    <!-- Five-man units from games already played. It is decision support, not a
+         team sheet: the feed has no starters, injuries or projections, and the note
+         says so because a list of five names reads like tonight's lineup. -->
+    {{with .Lineups}}
+    <div class="matchup-section">
+        <div class="info-card">
+            <h3>{{if .InThisGame}}Lineups in this game{{else}}Most-used lineups this season{{end}}</h3>
+            {{range .Sides}}
+            <table class="matchup-table">
+                <thead>
+                    <tr>
+                        <th scope="col">{{.Team}}</th>
+                        <th scope="col">Min</th>
+                        <th scope="col">Poss</th>
+                        <th scope="col"><span class="metric-help" title="Points scored minus points allowed per 100 possessions. Shown from 10 possessions, since less than that is mostly noise.">Net</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Units}}
+                    <tr>
+                        <td>{{.Players}}</td>
+                        <td>{{.Minutes}}</td>
+                        <td>{{.Possessions}}</td>
+                        <td>{{if .Net}}{{.Net}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            {{end}}
+            <p class="text-muted">Five-player units from games already played, not a starting lineup or a projection. Coverage of a game can be partial.</p>
+        </div>
     </div>
     {{end}}
 
@@ -1044,8 +1078,8 @@
     {{else}}
     <div class="bet-slip-section">
         <div class="empty-state small">
-            <h3>Join a League to Bet</h3>
-            <p>You need to be a member of at least one league to place bets.</p>
+            <h3>Join a {{if eq .Game.Sport "basketball"}}Basketball{{else}}Football{{end}} League to Bet</h3>
+            <p>You need to be a member of a league that plays this sport to bet on this game.</p>
             <a href="/leagues" class="btn btn-primary">Browse Leagues</a>
         </div>
     </div>

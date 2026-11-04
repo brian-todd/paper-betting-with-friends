@@ -31,8 +31,8 @@ func renderGames(t *testing.T, games []GameWithOdds) string {
 		"Games":      games,
 		"Date":       date,
 		"DateStr":    date.Format("2006-01-02"),
-		"PrevDate":   "2026-01-14",
-		"NextDate":   "2026-01-16",
+		"PrevURL":    "/basketball/games?date=2026-01-14",
+		"NextURL":    "/basketball/games?date=2026-01-16",
 		"Search":     "",
 		"TotalGames": len(games),
 	}

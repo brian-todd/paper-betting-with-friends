@@ -303,3 +303,51 @@ func TestGameRepositoryNextBasketballTip(t *testing.T) {
 		t.Errorf("NextBasketballTip() = %v, want %v", got, sooner)
 	}
 }
+
+// These answer the basketball day page's "which day" questions, so finished games
+// count and other sports do not.
+func TestGameRepositorySeasonAndDayBoundaries(t *testing.T) {
+	db := testdb.Open(t)
+	repo := NewGameRepository(db)
+
+	early := time.Date(2026, 11, 3, 23, 0, 0, 0, time.UTC)
+	late := time.Date(2027, 3, 1, 23, 0, 0, 0, time.UTC)
+	insert := func(sport string, season int, at time.Time, status models.GameStatus) {
+		testdb.InsertGame(t, db, models.Game{Sport: sport, Season: season, ScheduledAt: at, Status: status})
+	}
+	insert(models.SportBasketball, 2027, early, models.GameStatusFinal)
+	insert(models.SportBasketball, 2027, late, models.GameStatusScheduled)
+	insert(models.SportBasketball, 2026, early.AddDate(-1, 0, 0), models.GameStatusFinal)
+	insert(models.SportFootball, 2030, early.Add(time.Hour), models.GameStatusScheduled)
+
+	seasons, err := repo.FindSeasons(models.SportBasketball)
+	if err != nil {
+		t.Fatalf("FindSeasons: %v", err)
+	}
+	if len(seasons) != 2 || seasons[0] != 2027 || seasons[1] != 2026 {
+		t.Errorf("seasons = %v, want [2027 2026]", seasons)
+	}
+
+	first, last, ok, err := repo.SeasonSpan(models.SportBasketball, 2027)
+	if err != nil || !ok || !first.Equal(early) || !last.Equal(late) {
+		t.Errorf("SeasonSpan = %v, %v, %v, %v", first, last, ok, err)
+	}
+	if _, _, ok, err := repo.SeasonSpan(models.SportBasketball, 2040); err != nil || ok {
+		t.Errorf("SeasonSpan of an empty season = %v, %v, want not found", ok, err)
+	}
+
+	next, ok, err := repo.NextTipFrom(models.SportBasketball, early.Add(time.Minute))
+	if err != nil || !ok || !next.Equal(late) {
+		t.Errorf("NextTipFrom = %v, %v, %v, want %v, skipping football", next, ok, err, late)
+	}
+	if at, ok, err := repo.NextTipFrom(models.SportBasketball, early); err != nil || !ok || !at.Equal(early) {
+		t.Errorf("NextTipFrom on a tip-off = %v, %v, %v, want that finished game", at, ok, err)
+	}
+	prev, ok, err := repo.LastTipBefore(models.SportBasketball, late)
+	if err != nil || !ok || !prev.Equal(early) {
+		t.Errorf("LastTipBefore = %v, %v, %v, want %v", prev, ok, err, early)
+	}
+	if _, ok, err := repo.NextTipFrom(models.SportBasketball, late.Add(time.Minute)); err != nil || ok {
+		t.Errorf("NextTipFrom past the end = %v, %v, want not found", ok, err)
+	}
+}

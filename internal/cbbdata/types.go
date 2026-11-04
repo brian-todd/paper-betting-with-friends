@@ -1,6 +1,10 @@
 package cbbdata
 
-import "time"
+import (
+	"time"
+
+	"github.com/brian/paper-betting-with-friends/internal/models"
+)
 
 // APIVenue represents a venue from the CBB Data API.
 type APIVenue struct {
@@ -111,6 +115,34 @@ type APIScoreboardGame struct {
 	Clock        *string           `json:"clock"`
 	HomeTeam     APIScoreboardTeam `json:"homeTeam"`
 	AwayTeam     APIScoreboardTeam `json:"awayTeam"`
+}
+
+// APIPollRanking is one team's row in one poll. Ranking is null for a team only
+// receiving votes, which is over a third of the rows.
+type APIPollRanking struct {
+	Season   int        `json:"season"`
+	PollDate *time.Time `json:"pollDate"`
+	PollType string     `json:"pollType"`
+	TeamID   float64    `json:"teamId"`
+	Ranking  *float64   `json:"ranking"`
+}
+
+// APILineupSide is one side's totals while a five-man unit was on the floor.
+type APILineupSide struct {
+	Points      int `json:"points"`
+	Possessions int `json:"possessions"`
+}
+
+// APIGameLineup is one five-man unit's stats in one game. IDHash is the unit's
+// player IDs joined in order, so it is the same unit across games.
+type APIGameLineup struct {
+	TeamID       int64                 `json:"teamId"`
+	IDHash       string                `json:"idHash"`
+	Athletes     models.LineupAthletes `json:"athletes"`
+	TotalSeconds float64               `json:"totalSeconds"`
+	NetRating    float64               `json:"netRating"`
+	TeamStats    APILineupSide         `json:"teamStats"`
+	Opponent     APILineupSide         `json:"opponentStats"`
 }
 
 // GameQueryOpts holds optional query parameters for the games endpoint.

@@ -10,7 +10,8 @@ and odds are `shopspring/decimal` throughout, never `float64`.
 
 ## Features
 
-- **Leagues** — public or private, joined by browsing or by invite code, each
+- **Leagues** — each plays one sport, football or basketball, with its own purses
+  and standings. Public or private, joined by browsing or by invite code, each
   member funded from the league's starting balance
 - **Betting** — moneyline, spread, and over/under against synced lines or a
   custom line, editable until kickoff, settled automatically once a game is final
@@ -130,8 +131,10 @@ a month of the season, at default configuration (FBS-only scoreboard,
 | `cbb-games` | hourly Oct 25–Apr 15, daily otherwise | 1 (`/games`) | ~745 in season, ~30 out |
 | `cbb-lines` | `CBB_SYNC_INTERVAL_MINS` (default 15) Oct 25–Apr 15, daily otherwise | 1 (`/lines`) | ~2,975 in season, ~30 out |
 | `cbb-schedule` | daily, a week back to a month ahead | 1 (`/games`) | ~30 |
+| `cbb-lineups` | hourly Oct 25–Apr 15, daily otherwise | at most 3 (`/lineups/game/{id}`) | ~1,550 in season, capped at ~2,230; 0 out |
+| `cbb-rankings` | Mondays 6pm and Tuesdays 6am Oct 25–Apr 15, none otherwise | 1 (`/rankings`) | ~10 in season, 0 out |
 | `bet-settlement` | every 5 minutes | 0 — database only | 0 |
-| **Total** | | | **~14,000 / 30,000** in season, ~3,700 with neither sport in season |
+| **Total** | | | **~15,600 / 30,000** in season, ~3,700 with neither sport in season |
 
 That leaves over half of the budget as headroom. The plan is written
 down in `internal/apibudget`: football's share (10,000), basketball's (12,500)

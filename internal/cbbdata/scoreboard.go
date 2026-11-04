@@ -10,6 +10,7 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
+	"github.com/brian/paper-betting-with-friends/internal/syncerr"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -43,6 +44,7 @@ func (s *SyncService) SyncScoreboard(ctx context.Context) error {
 	}
 
 	var synced, live, unknown int
+	var failed syncerr.Tally
 	for _, g := range games {
 		gameID, ok := byExternalID[g.ID]
 		if !ok {
@@ -54,6 +56,7 @@ func (s *SyncService) SyncScoreboard(ctx context.Context) error {
 
 		if err := s.applyScoreboardGame(gameID, g); err != nil {
 			s.logger.Error("failed to apply scoreboard state", "game", g.ID, "error", err)
+			failed.Add(err)
 			continue
 		}
 
@@ -63,8 +66,8 @@ func (s *SyncService) SyncScoreboard(ctx context.Context) error {
 		}
 	}
 
-	s.logger.Info("synced scoreboard", "synced", synced, "live", live, "unknown_games", unknown)
-	return nil
+	s.logger.Info("synced scoreboard", "synced", synced, "live", live, "unknown_games", unknown, "failed_writes", failed.Count())
+	return failed.Err("scoreboard")
 }
 
 // applyScoreboardGame writes one scoreboard row across the places its parts
@@ -112,7 +115,7 @@ func (s *SyncService) scoreboardStatusFor(g APIScoreboardGame) (models.GameStatu
 	case scoreboardStatusInProgress:
 		return models.GameStatusInProgress, false, true
 	case scoreboardStatusFinal:
-		if !finalIsCredible(g) {
+		if !finalIsCredible(g.HomeTeam.Points, g.AwayTeam.Points) {
 			s.logger.Warn("ignoring a final the score cannot back up",
 				"game", g.ID, "home_points", g.HomeTeam.Points, "away_points", g.AwayTeam.Points)
 			return "", false, false
@@ -134,9 +137,8 @@ func (s *SyncService) scoreboardStatusFor(g APIScoreboardGame) (models.GameStatu
 // ties, and none of the ~6,300 finals in the captured 2025-26 season is one. A
 // level "final" is the feed being wrong, most plausibly at the end of regulation
 // with overtime still to come, and a spread or total settled on it pays the
-// wrong people with nothing to retry it.
-func finalIsCredible(g APIScoreboardGame) bool {
-	home, away := g.HomeTeam.Points, g.AwayTeam.Points
+// wrong people with nothing to retry it. Both feeds finalize games, so both ask.
+func finalIsCredible(home, away *int) bool {
 	return home != nil && away != nil && *home != *away
 }
 
@@ -162,7 +164,7 @@ func scoreboardResult(gameID uuid.UUID, g APIScoreboardGame, now time.Time) (*mo
 		if home == nil || away == nil {
 			return nil, false
 		}
-		if finalIsCredible(g) {
+		if finalIsCredible(home, away) {
 			finalizedAt = &now
 		}
 	default:

@@ -3,12 +3,25 @@ package cbbdata
 import (
 	"time"
 
+	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 )
 
 // Basketball cadence.
 //
-// Four jobs read four things at four rates, and all of them spend from the
+// lineupFetchRules decide when a finished game is asked for. The feed builds
+// lineups from play-by-play: the previous night's games had them by the next
+// morning, so the first attempt waits past the end of a game, and an empty answer
+// is asked again a day later, twice, because it can mean not processed yet or
+// never available.
+var lineupFetchRules = repository.LineupFetchRules{
+	FirstAfter:  6 * time.Hour,
+	RetryAfter:  24 * time.Hour,
+	MaxAttempts: 3,
+	Lookback:    14 * 24 * time.Hour,
+}
+
+// Six jobs read six things at their own rates, and all of them spend from the
 // monthly allowance football also draws on:
 //
 //   - cbb-scoreboard is the live feed: status, score and clock. It finalizes
@@ -21,6 +34,8 @@ import (
 //   - cbb-schedule reaches well past the three-day incremental window, once a
 //     day, so the day picker has games to show and a game stuck unfinished by an
 //     outage is repaired.
+//   - cbb-rankings checks twice a week in season, because polls move weekly.
+//   - cbb-lineups asks for a few finished games an hour, one request each.
 //
 // Between seasons each runs once a day. The incremental window reaches three
 // days ahead, so anything faster asks for an empty span.
@@ -46,6 +61,21 @@ const (
 
 	// scheduleSyncHour is the local hour cbb-schedule runs, clear of any slate.
 	scheduleSyncHour = 4
+
+	// rankingsMondayHour and rankingsTuesdayHour are the local hours of the two
+	// weekly rankings checks. Weekly polls are dated Mondays, but the date does
+	// not say when the feed has them, so Tuesday morning catches a late one.
+	rankingsMondayHour  = 18
+	rankingsTuesdayHour = 6
+
+	// lineupsOffset places the hourly lineups run clear of the games and lines runs.
+	lineupsOffset = 40 * time.Minute
+
+	// lineupsPerRun is the most games one lineups run asks for. At a run an hour it
+	// is 72 requests a day and ~2,230 a month at most, which is the job's whole
+	// budget. Days average about 50 games with a line and peak at 155, so a peak day
+	// takes a couple of days to drain.
+	lineupsPerRun = 3
 
 	// minDelay floors the computed wait, so no clock case can become a hot
 	// loop against a metered API.
@@ -170,6 +200,49 @@ func NextScheduleSync(now time.Time, loc *time.Location) time.Time {
 		next = time.Date(t.Year(), t.Month(), t.Day()+1, scheduleSyncHour, 0, 0, 0, loc)
 	}
 	return next
+}
+
+// NextRankingsSync returns the next weekly rankings check after now, which is
+// Monday evening or Tuesday morning during the season. Out of season it is the
+// first one after the season opens, so the job costs nothing between seasons.
+func NextRankingsSync(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	t := now.In(loc)
+	for day := 0; ; day++ {
+		date := time.Date(t.Year(), t.Month(), t.Day()+day, 0, 0, 0, 0, loc)
+
+		var slot time.Time
+		switch date.Weekday() {
+		case time.Monday:
+			slot = time.Date(date.Year(), date.Month(), date.Day(), rankingsMondayHour, 0, 0, 0, loc)
+		case time.Tuesday:
+			slot = time.Date(date.Year(), date.Month(), date.Day(), rankingsTuesdayHour, 0, 0, 0, loc)
+		default:
+			continue
+		}
+		if slot.After(t) && InSeason(slot, loc) {
+			return slot
+		}
+	}
+}
+
+// NextLineupsSync returns the next instant the lineups sync should run after now:
+// hourly in season, daily outside it, always lineupsOffset past the grid.
+func NextLineupsSync(now time.Time, loc *time.Location) time.Time {
+	return nextAtRate(now.Add(-lineupsOffset), loc, time.Hour).Add(lineupsOffset)
+}
+
+// LineupsDelay returns how long to wait after now before the next lineups sync.
+func LineupsDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextLineupsSync(now, loc).Sub(now))
+}
+
+// RankingsDelay returns how long to wait after now before the next rankings check.
+func RankingsDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextRankingsSync(now, loc).Sub(now))
 }
 
 // GamesDelay returns how long to wait after now before the next basketball

@@ -131,6 +131,7 @@ func (r *SpreadBetRepository) CancelIfPending(betID uuid.UUID) (bool, error) {
 // optional; a zero BetFilter matches every bet, which is what the admin bet
 // browser starts from.
 type BetFilter struct {
+	Sport    *string
 	Season   *int
 	Week     *int
 	LeagueID *uuid.UUID
@@ -152,6 +153,9 @@ func (r *SpreadBetRepository) FindFiltered(filter BetFilter) ([]models.SpreadBet
 
 	if filter.UserID != nil {
 		query = query.Where("spread_bets.user_id = ?", *filter.UserID)
+	}
+	if filter.Sport != nil {
+		query = query.Where("games.sport = ?", *filter.Sport)
 	}
 	if filter.Season != nil {
 		query = query.Where("games.season = ?", *filter.Season)
@@ -318,6 +322,9 @@ func (r *MoneyLineBetRepository) FindFiltered(filter BetFilter) ([]models.MoneyL
 	if filter.UserID != nil {
 		query = query.Where("money_line_bets.user_id = ?", *filter.UserID)
 	}
+	if filter.Sport != nil {
+		query = query.Where("games.sport = ?", *filter.Sport)
+	}
 	if filter.Season != nil {
 		query = query.Where("games.season = ?", *filter.Season)
 	}
@@ -481,6 +488,9 @@ func (r *OverUnderBetRepository) FindFiltered(filter BetFilter) ([]models.OverUn
 	if filter.UserID != nil {
 		query = query.Where("over_under_bets.user_id = ?", *filter.UserID)
 	}
+	if filter.Sport != nil {
+		query = query.Where("games.sport = ?", *filter.Sport)
+	}
 	if filter.Season != nil {
 		query = query.Where("games.season = ?", *filter.Season)
 	}
@@ -610,6 +620,7 @@ func (r *BetRecordRepository) GetRecordsByLeague(leagueID uuid.UUID) (map[uuid.U
 type LeagueBetRow struct {
 	UserID       uuid.UUID
 	Username     string
+	Sport        string
 	Season       *int
 	Week         *int
 	BetType      string
@@ -647,7 +658,7 @@ func (r *BetRecordRepository) FindLeagueBets(leagueID uuid.UUID) ([]LeagueBetRow
 	var rows []LeagueBetRow
 	err := r.db.
 		Table("(?) AS b", r.db.Raw(leagueBets, leagueID, leagueID, leagueID)).
-		Select("b.user_id, users.username, games.season AS season, weeks.number AS week, " +
+		Select("b.user_id, users.username, games.sport AS sport, games.season AS season, weeks.number AS week, " +
 			"b.bet_type, b.status, b.pick, b.line_value, b.stake, b.odds_snapshot, b.is_holy_lock, " +
 			"home.abbreviation AS home_abbr, away.abbreviation AS away_abbr, games.scheduled_at").
 		Joins("JOIN users ON users.id = b.user_id").
@@ -665,6 +676,7 @@ func (r *BetRecordRepository) FindLeagueBets(leagueID uuid.UUID) ([]LeagueBetRow
 // BetPeriod is a season and week the user has at least one bet in. Week is nil
 // for a bet on a game the calendar has no week row for.
 type BetPeriod struct {
+	Sport  string
 	Season int
 	Week   *int
 }
@@ -699,7 +711,7 @@ func (r *BetPeriodRepository) FindByUser(userID uuid.UUID) ([]BetPeriod, error) 
 	var periods []BetPeriod
 	err := r.db.
 		Table("(?) AS b", r.db.Raw(userBets, userID, userID, userID)).
-		Select("DISTINCT games.season AS season, weeks.number AS week").
+		Select("DISTINCT games.sport AS sport, games.season AS season, weeks.number AS week").
 		Joins("JOIN games ON games.id = b.game_id").
 		Joins("LEFT JOIN weeks ON weeks.id = games.week_id").
 		Where("games.season IS NOT NULL").

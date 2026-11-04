@@ -282,3 +282,29 @@ func TestLinesSyncDoesNotDependOnGames(t *testing.T) {
 		t.Errorf("SyncLines() error = %v with /games down; the lines should not be asking for it", err)
 	}
 }
+
+func TestPollRanksFrom(t *testing.T) {
+	team := uuid.New()
+	teams := map[int64]uuid.UUID{87: team}
+	date := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+
+	row := func(id float64, poll string, rank *float64, at *time.Time) APIPollRanking {
+		return APIPollRanking{Season: 2027, PollType: poll, TeamID: id, Ranking: rank, PollDate: at}
+	}
+	ranks, unknown := pollRanksFrom([]APIPollRanking{
+		row(87, models.PollAP, new(1.0), &date),
+		row(87, models.PollAP, new(1.0), &date),  // the same row twice
+		row(87, "Coaches Poll", new(2.0), &date), // not the poll we show
+		row(87, models.PollAP, nil, &date),       // only receiving votes
+		row(87, models.PollAP, new(3.0), nil),    // no date to read it by
+		row(999, models.PollAP, new(4.0), &date), // a team we do not hold
+		row(999, models.PollAP, nil, &date),      // unranked, so not worth counting
+	}, teams)
+
+	if len(ranks) != 1 || ranks[0].TeamID != team || ranks[0].Rank != 1 || !ranks[0].PollDate.Equal(date) {
+		t.Errorf("ranks = %+v, want one rank 1 row", ranks)
+	}
+	if unknown != 1 {
+		t.Errorf("unknown = %d, want 1", unknown)
+	}
+}

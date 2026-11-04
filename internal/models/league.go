@@ -12,8 +12,12 @@ import (
 
 // League represents a betting league that users can join.
 type League struct {
-	ID              uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	Name            string          `gorm:"type:varchar(255);not null"`
+	ID   uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Name string    `gorm:"type:varchar(255);not null"`
+	// Sport is fixed at creation. A league's bets, purses and standings are all
+	// in this one sport, so a member of a football league and a basketball league
+	// holds two separate balances.
+	Sport           string          `gorm:"type:varchar(20);not null;default:'football'"`
 	CreatedBy       uuid.UUID       `gorm:"type:uuid;not null"`
 	IsPublic        *bool           `gorm:"default:true"`
 	InviteCode      string          `gorm:"type:varchar(16);uniqueIndex"`
@@ -24,6 +28,14 @@ type League struct {
 	// Relationships.
 	Creator User           `gorm:"foreignKey:CreatedBy"`
 	Members []LeagueMember `gorm:"foreignKey:LeagueID"`
+}
+
+// SportLabel names the league's sport for display.
+func (l League) SportLabel() string {
+	if l.Sport == SportBasketball {
+		return "Basketball"
+	}
+	return "Football"
 }
 
 // BeforeCreate sets the UUID and invite code before creating a new league.

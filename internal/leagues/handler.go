@@ -110,6 +110,12 @@ func (h *Handler) CreateLeague(w http.ResponseWriter, r *http.Request) {
 
 	isPublic := r.FormValue("is_public") == "on" || r.FormValue("is_public") == "true"
 
+	sport, ok := models.ParseSport(r.FormValue("sport"))
+	if !ok {
+		h.renderCreateError(w, user, "Choose football or basketball")
+		return
+	}
+
 	// Parse starting balance with default of 1000.
 	startingBalance := decimal.NewFromInt(1000)
 	if balanceStr := r.FormValue("starting_balance"); balanceStr != "" {
@@ -118,7 +124,7 @@ func (h *Handler) CreateLeague(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	league, err := h.service.CreateLeague(name, user.ID, isPublic, startingBalance)
+	league, err := h.service.CreateLeague(name, sport, user.ID, isPublic, startingBalance)
 	if err != nil {
 		slog.Error("failed to creating league", "error", err)
 		h.renderCreateError(w, user, "Failed to create league")

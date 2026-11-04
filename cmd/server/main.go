@@ -446,6 +446,32 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			Run:        cbbSyncService.SyncSchedule,
 		})
 
+		// Polls move weekly, and this is the job's only spend. RunOnStart only while
+		// the season has no poll stored, so an established season's restarts cost
+		// nothing. cbb-seed fetches ranks too, since a run before teams exist fails.
+		sched.Add(scheduler.Job{
+			Name:  "cbb-rankings",
+			Label: "Basketball rankings",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.RankingsDelay(now, location)
+			},
+			RunOnStart: cbbSyncService.RankingsMissing(time.Now(), location),
+			Timeout:    syncRunTimeout,
+			Run:        cbbSyncService.SyncRankings,
+		})
+
+		// Works through a queue of finished games, a few requests a run, so a run
+		// that is missed loses nothing and there is no reason to run on start.
+		sched.Add(scheduler.Job{
+			Name:  "cbb-lineups",
+			Label: "Basketball lineups",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.LineupsDelay(now, location)
+			},
+			Timeout: syncRunTimeout,
+			Run:     cbbSyncService.SyncLineups,
+		})
+
 		// Teams and venues are synced by nothing else, and syncGames skips any
 		// game whose teams it cannot find, so a new season needs this run once.
 		sched.Add(scheduler.Job{

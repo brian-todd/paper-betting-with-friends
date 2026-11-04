@@ -6,11 +6,17 @@
         </div>
         <div class="header-controls">
             <form id="filter-form" class="filter-form" method="GET" action="/bets">
+                <select name="sport" class="select-input" onchange="updateSportFilter()" aria-label="Sport">
+                    <option value="">All Sports</option>
+                    <option value="football" {{if eq (printf "%v" .SelectedSport) "football"}}selected{{end}}>Football</option>
+                    <option value="basketball" {{if eq (printf "%v" .SelectedSport) "basketball"}}selected{{end}}>Basketball</option>
+                </select>
+
                 {{if .Seasons}}
                 <select name="season" class="select-input" onchange="updateFilters()">
                     <option value="">All Seasons</option>
                     {{range .Seasons}}
-                    <option value="{{.}}" {{if and $.SelectedSeason (eq . (deref $.SelectedSeason))}}selected{{end}}>{{.}} Season</option>
+                    <option value="{{.}}" {{if and $.SelectedSeason (eq . (deref $.SelectedSeason))}}selected{{end}}>{{if $.BasketballSeasons}}{{basketballSeason .}}{{else}}{{.}}{{end}} Season</option>
                     {{end}}
                 </select>
                 {{end}}
@@ -294,7 +300,7 @@
     <div class="empty-state">
         <div class="empty-icon">🎰</div>
         <h2>No Bets Found</h2>
-        {{if or .SelectedSeason .SelectedWeek .SelectedLeague}}
+        {{if or .SelectedSport .SelectedSeason .SelectedWeek .SelectedLeague}}
         <p>No bets match your current filters. Try adjusting the filters or <a href="/bets">view all bets</a>.</p>
         {{else}}
         <p>You haven't placed any bets yet. Browse games to get started!</p>
@@ -343,6 +349,19 @@ function syncCustomLine(index) {
     custom.querySelectorAll('input').forEach(function (input) {
         input.required = isCustom;
     });
+}
+
+function updateSportFilter() {
+    // A season number means something different in each sport and a league plays one,
+    // so changing sport clears both, as well as the week.
+    const form = document.getElementById('filter-form');
+    ['season', 'league'].forEach(function (name) {
+        const select = form.querySelector('select[name="' + name + '"]');
+        if (select) {
+            select.value = '';
+        }
+    });
+    updateFilters();
 }
 
 function updateFilters() {

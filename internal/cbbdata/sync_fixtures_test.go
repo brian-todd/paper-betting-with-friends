@@ -2,6 +2,7 @@ package cbbdata_test
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -10,9 +11,11 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/fixtureseed"
 	"github.com/brian/paper-betting-with-friends/internal/fixtureserver"
 	"github.com/brian/paper-betting-with-friends/internal/models"
+	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/brian/paper-betting-with-friends/internal/testdb"
 	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // Basketball at level 2. It is the thinner feed -- four endpoints to football's
@@ -36,6 +39,16 @@ func TestBasketballSeedsARealSeason(t *testing.T) {
 		t.Fatalf("seeding basketball from fixtures: %v", err)
 	}
 	t.Logf("seeded %v", counts)
+
+	t.Run("the seed fetches the season's ranks", func(t *testing.T) {
+		var ranks int64
+		if err := db.Model(&models.PollRank{}).Where("season = ?", fixtureseed.DefaultSeason).Count(&ranks).Error; err != nil {
+			t.Fatalf("counting ranks: %v", err)
+		}
+		if ranks == 0 {
+			t.Error("a seeded season holds no ranks")
+		}
+	})
 
 	t.Run("every team in the capture is written", func(t *testing.T) {
 		// The /teams capture holds 1,519 teams. 107 of them share a truncated
@@ -232,6 +245,224 @@ func TestAnUnplayedDayStoresNoScores(t *testing.T) {
 	if results != 0 {
 		t.Errorf("stored %d results for games nobody has played", results)
 	}
+}
+
+// The real 2025-26 polls, whose quirks are the reason ranks are read by date: a
+// third of the rows rank nobody, AP skipped a week, and neither poll publishes for
+// most of the tournament.
+func TestRankingsFromARealSeason(t *testing.T) {
+	db := testdb.Open(t)
+	ctx := context.Background()
+
+	base, fake, stop, err := fixtureserver.Listen(fixtures.CBBD)
+	if err != nil {
+		t.Fatalf("starting the fake upstream: %v", err)
+	}
+	defer stop()
+
+	sync := cbbdata.NewSyncService(cbbdata.NewClientAt(base, ""), db)
+	sync.SetClock(timeutil.Fixed(time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)))
+
+	if err := sync.SyncReferenceForTest(ctx); err != nil {
+		t.Fatalf("syncing reference data: %v", err)
+	}
+	if err := sync.SyncRankings(ctx); err != nil {
+		t.Fatalf("SyncRankings: %v", err)
+	}
+	if n := fake.Refusals(); n > 0 {
+		t.Fatalf("the fake upstream refused %d requests", n)
+	}
+
+	repo := repository.NewPollRankRepository(db)
+	at := func(year int, month time.Month, day int) map[uuid.UUID]int {
+		t.Helper()
+		ranks, err := repo.AsOf(2026, models.PollAP, time.Date(year, month, day, 23, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatalf("AsOf: %v", err)
+		}
+		return ranks
+	}
+
+	t.Run("a poll ranks 25 teams, not everyone receiving votes", func(t *testing.T) {
+		if got := len(at(2026, time.January, 6)); got != 25 {
+			t.Errorf("%d ranked teams, want 25", got)
+		}
+	})
+
+	t.Run("the week AP skipped keeps the poll before it", func(t *testing.T) {
+		// AP has no rows dated 2025-12-29.
+		before, during := at(2025, time.December, 23), at(2025, time.December, 30)
+		if len(during) != 25 || len(before) != len(during) {
+			t.Fatalf("%d ranked before the gap, %d during it", len(before), len(during))
+		}
+		for team, rank := range before {
+			if during[team] != rank {
+				t.Errorf("a rank moved across a week with no poll: %d to %d", rank, during[team])
+			}
+		}
+	})
+
+	t.Run("the tournament keeps the last poll before it", func(t *testing.T) {
+		if got := len(at(2026, time.March, 28)); got != 25 {
+			t.Errorf("%d ranked teams during the tournament, want 25", got)
+		}
+	})
+
+	t.Run("a second run stores nothing new", func(t *testing.T) {
+		var before, after int64
+		db.Model(&models.PollRank{}).Count(&before)
+		if err := sync.SyncRankings(ctx); err != nil {
+			t.Fatalf("SyncRankings: %v", err)
+		}
+		db.Model(&models.PollRank{}).Count(&after)
+		if before == 0 || before != after {
+			t.Errorf("rows went from %d to %d", before, after)
+		}
+	})
+}
+
+// Real lineups through the real sync. Duke's two games share eight units, which is
+// what adding a season up depends on: the expected totals are summed from the raw
+// responses here rather than through anything the sync uses, and the ratings are
+// held against the numbers the feed itself reports.
+func TestLineupsFromRealGames(t *testing.T) {
+	const duke1, duke2, overtime, lowMajor = 214309, 214348, 209761, 215243
+
+	db := testdb.Open(t)
+	ctx := context.Background()
+
+	base, fake, stop, err := fixtureserver.Listen(fixtures.CBBD)
+	if err != nil {
+		t.Fatalf("starting the fake upstream: %v", err)
+	}
+	defer stop()
+
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	client := cbbdata.NewClientAt(base, "")
+	sync := cbbdata.NewSyncService(client, db)
+	sync.SetClock(timeutil.Fixed(now))
+
+	if err := sync.SyncReferenceForTest(ctx); err != nil {
+		t.Fatalf("syncing reference data: %v", err)
+	}
+
+	gameIDs := make(map[int64]uuid.UUID)
+	for i, external := range []int64{duke1, duke2, overtime, lowMajor} {
+		game := testdb.InsertGame(t, db, models.Game{
+			ExternalID:  &external,
+			Sport:       models.SportBasketball,
+			Season:      2026,
+			Status:      models.GameStatusFinal,
+			ScheduledAt: now.Add(-time.Duration(24*(i+1)) * time.Hour),
+		})
+		gameIDs[external] = game.ID
+		line := &models.OverUnderOdds{
+			GameID: game.ID, Source: models.OddsSourceDraftKings, Total: decimal.NewFromInt(140),
+			OverOdds: decimal.NewFromInt(-110), UnderOdds: decimal.NewFromInt(-110),
+		}
+		if err := db.Create(line).Error; err != nil {
+			t.Fatalf("creating line: %v", err)
+		}
+	}
+
+	// Two runs, because a run is capped below the four games waiting.
+	for range 2 {
+		if err := sync.SyncLineups(ctx); err != nil {
+			t.Fatalf("SyncLineups: %v", err)
+		}
+	}
+	if n := fake.Refusals(); n > 0 {
+		t.Fatalf("the fake upstream refused %d requests", n)
+	}
+
+	var duke models.Team
+	if err := db.First(&duke, "sport = ? AND name = ?", models.SportBasketball, "Duke").Error; err != nil {
+		t.Fatalf("reading Duke: %v", err)
+	}
+	repo := repository.NewGameLineupRepository(db)
+
+	first, err := client.GetGameLineups(ctx, duke1)
+	if err != nil {
+		t.Fatalf("reading capture: %v", err)
+	}
+	second, err := client.GetGameLineups(ctx, duke2)
+	if err != nil {
+		t.Fatalf("reading capture: %v", err)
+	}
+
+	t.Run("a stored rating matches the feed's own", func(t *testing.T) {
+		stored, err := repo.TopForGame(gameIDs[duke1], duke.ID, 100)
+		if err != nil {
+			t.Fatalf("TopForGame: %v", err)
+		}
+		if len(stored) == 0 {
+			t.Fatal("no Duke units stored")
+		}
+		byPlayers := make(map[string]float64)
+		for _, unit := range first {
+			if unit.TeamID == *duke.ExternalID {
+				byPlayers[unit.IDHash] = unit.NetRating
+			}
+		}
+		if len(stored) != len(byPlayers) {
+			t.Errorf("stored %d units, the capture holds %d", len(stored), len(byPlayers))
+		}
+
+		feed := make(map[string]float64, len(first))
+		for _, unit := range first {
+			names := models.LineupTotals{Athletes: unit.Athletes}.Players()
+			feed[names] = unit.NetRating
+		}
+		for _, unit := range stored {
+			net, ok := unit.NetRating()
+			want, inFeed := feed[unit.Players()]
+			if !inFeed {
+				t.Errorf("stored a unit the feed does not list: %s", unit.Players())
+				continue
+			}
+			if ok && math.Abs(net-want) > 0.11 {
+				t.Errorf("%s: net %.2f, feed says %.1f", unit.Players(), net, want)
+			}
+		}
+	})
+
+	t.Run("a season adds a unit up across games", func(t *testing.T) {
+		want := make(map[string]int)
+		for _, game := range [][]cbbdata.APIGameLineup{first, second} {
+			for _, unit := range game {
+				if unit.TeamID == *duke.ExternalID {
+					want[models.LineupTotals{Athletes: unit.Athletes}.Players()] += int(unit.TotalSeconds)
+				}
+			}
+		}
+
+		totals, err := repo.TopForSeason(duke.ID, 2026, now, 100)
+		if err != nil {
+			t.Fatalf("TopForSeason: %v", err)
+		}
+		if len(totals) != len(want) {
+			t.Fatalf("%d units across two games, want %d", len(totals), len(want))
+		}
+		for i, unit := range totals {
+			if unit.Seconds != want[unit.Players()] {
+				t.Errorf("%s: %d seconds, want %d", unit.Players(), unit.Seconds, want[unit.Players()])
+			}
+			if i > 0 && unit.Seconds > totals[i-1].Seconds {
+				t.Error("units are not ordered by minutes")
+			}
+		}
+	})
+
+	t.Run("an opponent the feed does not cover has no units", func(t *testing.T) {
+		var teams []uuid.UUID
+		if err := db.Model(&models.GameLineup{}).Where("game_id = ?", gameIDs[lowMajor]).
+			Distinct().Pluck("team_id", &teams).Error; err != nil {
+			t.Fatalf("reading teams: %v", err)
+		}
+		if len(teams) != 1 {
+			t.Errorf("%d teams with units, want the one Division I side", len(teams))
+		}
+	})
 }
 
 // capturedTeams is the /teams capture, read through the real client.

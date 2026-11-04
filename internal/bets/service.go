@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ var (
 	ErrOddsNotFound      = errors.New("odds not found")
 	ErrLeagueNotFound    = errors.New("league not found")
 	ErrNotLeagueMember   = errors.New("user is not a member of this league")
+	ErrLeagueWrongSport  = errors.New("this league does not play this game's sport")
 	ErrInvalidBetType    = errors.New("invalid bet type")
 	ErrInsufficientFunds = errors.New("insufficient funds in purse")
 	ErrInvalidStake      = errors.New("stake must be greater than zero")
@@ -162,12 +164,8 @@ func (s *Service) CreateSpreadBet(input CreateSpreadBetInput) (*models.SpreadBet
 	}
 
 	// Validate league membership.
-	isMember, err := s.leagueRepo.IsMember(input.LeagueID, input.UserID)
-	if err != nil {
+	if err := s.ensureLeagueTakesBet(input.LeagueID, input.UserID, game); err != nil {
 		return nil, err
-	}
-	if !isMember {
-		return nil, ErrNotLeagueMember
 	}
 
 	// Checked before the stake is deducted and before the odds are resolved: a
@@ -253,12 +251,8 @@ func (s *Service) CreateMoneyLineBet(input CreateMoneyLineBetInput) (*models.Mon
 	}
 
 	// Validate league membership.
-	isMember, err := s.leagueRepo.IsMember(input.LeagueID, input.UserID)
-	if err != nil {
+	if err := s.ensureLeagueTakesBet(input.LeagueID, input.UserID, game); err != nil {
 		return nil, err
-	}
-	if !isMember {
-		return nil, ErrNotLeagueMember
 	}
 
 	// Checked before the stake is deducted and before the odds are resolved: a
@@ -344,12 +338,8 @@ func (s *Service) CreateOverUnderBet(input CreateOverUnderBetInput) (*models.Ove
 	}
 
 	// Validate league membership.
-	isMember, err := s.leagueRepo.IsMember(input.LeagueID, input.UserID)
-	if err != nil {
+	if err := s.ensureLeagueTakesBet(input.LeagueID, input.UserID, game); err != nil {
 		return nil, err
-	}
-	if !isMember {
-		return nil, ErrNotLeagueMember
 	}
 
 	// Checked before the stake is deducted and before the odds are resolved: a
@@ -398,6 +388,34 @@ func (s *Service) CreateOverUnderBet(input CreateOverUnderBetInput) (*models.Ove
 	}
 
 	return bet, nil
+}
+
+// ensureLeagueTakesBet refuses a bet the league cannot hold: one from a
+// non-member, or one on a sport the league does not play.
+//
+// The sport is checked only here, as a bet is placed, and not when one is edited,
+// cancelled or settled. Basketball bets placed in football leagues before leagues
+// had a sport stay where they are and pay out normally.
+func (s *Service) ensureLeagueTakesBet(leagueID, userID uuid.UUID, game *models.Game) error {
+	isMember, err := s.leagueRepo.IsMember(leagueID, userID)
+	if err != nil {
+		return err
+	}
+	if !isMember {
+		return ErrNotLeagueMember
+	}
+
+	league, err := s.leagueRepo.FindByID(leagueID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrLeagueNotFound
+		}
+		return err
+	}
+	if league.Sport != game.Sport {
+		return ErrLeagueWrongSport
+	}
+	return nil
 }
 
 // cancellable reports whether a bet on game may still be voided for a refund.
@@ -827,6 +845,7 @@ type BetLineOption struct {
 
 // BetListFilter contains filters for querying user bets.
 type BetListFilter struct {
+	Sport    *string
 	Season   *int
 	Week     *int
 	LeagueID *uuid.UUID
@@ -967,6 +986,7 @@ type BetListResult struct {
 // user's entire betting history to render a hundred rows of it.
 func (s *Service) GetUserBets(userID uuid.UUID, filter BetListFilter, page int) (*BetListResult, error) {
 	repoFilter := repository.BetFilter{
+		Sport:    filter.Sport,
 		Season:   filter.Season,
 		Week:     filter.Week,
 		LeagueID: filter.LeagueID,
@@ -985,7 +1005,7 @@ func (s *Service) GetUserBets(userID uuid.UUID, filter BetListFilter, page int) 
 		// Losing the dropdowns costs the reader the filters, not the page.
 		slog.Error("failed to load bet filter periods", "user", userID, "error", err)
 	}
-	seasons, weeks := filterOptions(periods, filter.Season)
+	seasons, weeks := filterOptions(periodsInSport(periods, filter.Sport), filter.Season)
 	leagues, _ := s.leagueRepo.FindUserLeagues(userID)
 
 	return &BetListResult{
@@ -993,8 +1013,21 @@ func (s *Service) GetUserBets(userID uuid.UUID, filter BetListFilter, page int) 
 		Page:    pageInfo,
 		Seasons: seasons,
 		Weeks:   weeks,
-		Leagues: leagues,
+		Leagues: leaguesForFilter(leagues, filter),
 	}, nil
+}
+
+// leaguesForFilter narrows the league dropdown to the selected sport. The selected
+// league stays whatever its sport, because a bet from before leagues had a sport can
+// sit in the other one, and a dropdown without it would read as unfiltered.
+func leaguesForFilter(leagues []models.League, filter BetListFilter) []models.League {
+	if filter.Sport == nil {
+		return leagues
+	}
+	return slices.DeleteFunc(leagues, func(l models.League) bool {
+		selected := filter.LeagueID != nil && *filter.LeagueID == l.ID
+		return l.Sport != *filter.Sport && !selected
+	})
 }
 
 // loadBetPage resolves one page of a filtered bet listing and loads only the
@@ -1209,6 +1242,22 @@ func filterOptions(periods []repository.BetPeriod, season *int) (seasons, weeks 
 
 	sort.Ints(weeks)
 	return seasons, weeks
+}
+
+// periodsInSport narrows the filter options to one sport. The two sports number
+// their seasons differently and overlap: season 2026 is fall 2026 in football and
+// the winter before it in basketball.
+func periodsInSport(periods []repository.BetPeriod, sport *string) []repository.BetPeriod {
+	if sport == nil {
+		return periods
+	}
+	matching := make([]repository.BetPeriod, 0, len(periods))
+	for _, period := range periods {
+		if period.Sport == *sport {
+			matching = append(matching, period)
+		}
+	}
+	return matching
 }
 
 // formatSpread formats a spread value with sign.

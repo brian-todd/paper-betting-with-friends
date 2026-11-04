@@ -61,6 +61,9 @@ func (r *BetPageRepository) refQuery(filter BetFilter) *gorm.DB {
 	if filter.UserID != nil {
 		query = query.Where("b.user_id = ?", *filter.UserID)
 	}
+	if filter.Sport != nil {
+		query = query.Where("games.sport = ?", *filter.Sport)
+	}
 	if filter.Season != nil {
 		query = query.Where("games.season = ?", *filter.Season)
 	}

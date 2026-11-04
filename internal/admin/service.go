@@ -324,9 +324,10 @@ func (s *Service) GetLeagueByID(id uuid.UUID) (*models.League, error) {
 }
 
 // CreateLeague creates a league with the actor as its league admin.
-func (s *Service) CreateLeague(actor *models.User, name string, startingBalance decimal.Decimal) (*models.League, error) {
+func (s *Service) CreateLeague(actor *models.User, name, sport string, startingBalance decimal.Decimal) (*models.League, error) {
 	league := &models.League{
 		Name:            name,
+		Sport:           sport,
 		CreatedBy:       actor.ID,
 		StartingBalance: startingBalance,
 	}

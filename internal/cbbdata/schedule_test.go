@@ -173,6 +173,56 @@ func TestNextScoreboardSync(t *testing.T) {
 	}
 }
 
+func TestNextRankingsSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"a Wednesday waits for Monday evening", time.Date(2026, time.November, 4, 12, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 9, 18, 0, 0, 0, eastern)},
+		{"Monday evening's run is followed by Tuesday morning's", time.Date(2026, time.November, 9, 18, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 10, 6, 0, 0, 0, eastern)},
+		{"Tuesday morning's run waits a week", time.Date(2026, time.November, 10, 6, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 16, 18, 0, 0, 0, eastern)},
+		{"out of season it waits for the first slot in the season", time.Date(2027, time.July, 4, 12, 0, 0, 0, eastern),
+			time.Date(2027, time.October, 25, 18, 0, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextRankingsSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextRankingsSync(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextLineupsSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"before the offset, this hour's", time.Date(2026, time.December, 5, 19, 7, 0, 0, eastern),
+			time.Date(2026, time.December, 5, 19, 40, 0, 0, eastern)},
+		{"on the offset, the next hour's", time.Date(2026, time.December, 5, 19, 40, 0, 0, eastern),
+			time.Date(2026, time.December, 5, 20, 40, 0, 0, eastern)},
+		{"out of season, the next day's", time.Date(2026, time.July, 4, 19, 7, 0, 0, eastern),
+			time.Date(2026, time.July, 5, 0, 40, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextLineupsSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextLineupsSync(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNextScheduleSync(t *testing.T) {
 	eastern := mustLoad(t, "America/New_York")
 
@@ -230,6 +280,7 @@ func TestDelaysAreAlwaysPositiveAcrossDST(t *testing.T) {
 				"scoreboard": ScoreboardDelay(now, eastern, ScoreboardState{}),
 				"live":       ScoreboardDelay(now, eastern, ScoreboardState{Active: true}),
 				"schedule":   ScheduleDelay(now, eastern),
+				"lineups":    LineupsDelay(now, eastern),
 			} {
 				if delay < minDelay {
 					t.Fatalf("%s delay at %v = %v, under the %v floor", name, now, delay, minDelay)
@@ -280,7 +331,7 @@ func TestBasketballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		// A month entirely out of season is a run a day of each job plus
 		// restarts: ~285. The regression this exists for is a throttle
 		// disappearing, which costs thousands.
-		offSeasonCap = 400
+		offSeasonCap = 400 + lineupsPerRun*31
 	)
 
 	eastern := mustLoad(t, "America/New_York")
@@ -314,9 +365,14 @@ func TestBasketballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		games := count(month, end, func(now time.Time) time.Time { return NextGamesSync(now, eastern) })
 		lines := count(month, end, func(now time.Time) time.Time { return NextLinesSync(now, eastern, interval) })
 		schedule := count(month, end, func(now time.Time) time.Time { return NextScheduleSync(now, eastern) })
+		rankings := count(month, end, func(now time.Time) time.Time { return NextRankingsSync(now, eastern) })
+		// The hard cap, not the games a month actually holds. Out of season nothing
+		// is due and this costs nothing, so it overstates those months.
+		lineups := lineupsPerRun * count(month, end, func(now time.Time) time.Time { return NextLineupsSync(now, eastern) })
 
-		calls := scoreboard + games + lines + schedule + jobs*restartsPerMonth
-		t.Logf("%s: scoreboard %d, games %d, lines %d, schedule %d = %d", month.Format("2006-01"), scoreboard, games, lines, schedule, calls)
+		calls := scoreboard + games + lines + schedule + rankings + lineups + jobs*restartsPerMonth
+		t.Logf("%s: scoreboard %d, games %d, lines %d, schedule %d, rankings %d, lineups %d = %d",
+			month.Format("2006-01"), scoreboard, games, lines, schedule, rankings, lineups, calls)
 
 		if calls > apibudget.Basketball {
 			t.Errorf("%s: %d calls is over basketball's %d share", month.Format("2006-01"), calls, apibudget.Basketball)

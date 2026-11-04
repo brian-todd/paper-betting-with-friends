@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
@@ -150,6 +151,13 @@ func (r *GameRepository) weekGamesQuery(weekID uuid.UUID, filter GameFilter) *go
 	return applyGameFilter(q, filter)
 }
 
+// gameHasOddsClause is true for a game a sportsbook has a line on. A custom row is
+// one bettor's own number, so it says nothing about what the game offers anyone else,
+// and the pages reading book lines would show it with no odds at all.
+const gameHasOddsClause = `(EXISTS (SELECT 1 FROM spread_odds WHERE spread_odds.game_id = games.id AND spread_odds.source <> 'custom')
+	OR EXISTS (SELECT 1 FROM money_line_odds WHERE money_line_odds.game_id = games.id AND money_line_odds.source <> 'custom')
+	OR EXISTS (SELECT 1 FROM over_under_odds WHERE over_under_odds.game_id = games.id AND over_under_odds.source <> 'custom'))`
+
 // applyGameFilter adds filter's conditions to a query that has already joined
 // teams as home_team and away_team.
 func applyGameFilter(q *gorm.DB, filter GameFilter) *gorm.DB {
@@ -172,9 +180,7 @@ func applyGameFilter(q *gorm.DB, filter GameFilter) *gorm.DB {
 			term, term, term, term)
 	}
 	if filter.BettableOnly {
-		q = q.Where(`(EXISTS (SELECT 1 FROM spread_odds WHERE spread_odds.game_id = games.id)
-			OR EXISTS (SELECT 1 FROM money_line_odds WHERE money_line_odds.game_id = games.id)
-			OR EXISTS (SELECT 1 FROM over_under_odds WHERE over_under_odds.game_id = games.id))`)
+		q = q.Where(gameHasOddsClause)
 	}
 
 	// Spreads are stored from the home side and away_spread is its negation,
@@ -628,6 +634,129 @@ func (r *GameRepository) NextKickoff(classifications []string, after time.Time) 
 		return time.Time{}, gorm.ErrRecordNotFound
 	}
 	return kickoff, nil
+}
+
+// FindGamesInRange retrieves one sport's games with a tip-off in [start, end),
+// narrowed by filter, live first, then scheduled, then everything settled.
+//
+// There is no paging: a basketball day peaks at 169 games, and it is the filter
+// that makes that readable rather than a page boundary mid-slate.
+func (r *GameRepository) FindGamesInRange(sport string, start, end time.Time, filter GameFilter) ([]models.Game, error) {
+	var games []models.Game
+	err := r.rangeQuery(sport, start, end, filter).
+		Preload("HomeTeam").
+		Preload("AwayTeam").
+		Preload("Venue").
+		Preload("Result").
+		Preload("LiveState").
+		Order("CASE games.status WHEN 'in_progress' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END").
+		Order("games.scheduled_at").
+		Order("games.id").
+		Find(&games).Error
+	if err != nil {
+		return nil, err
+	}
+	return games, nil
+}
+
+// CountGamesInRange reports how many of one sport's games in [start, end) match
+// filter.
+func (r *GameRepository) CountGamesInRange(sport string, start, end time.Time, filter GameFilter) (int, error) {
+	var total int64
+	if err := r.rangeQuery(sport, start, end, filter).Count(&total).Error; err != nil {
+		return 0, err
+	}
+	return int(total), nil
+}
+
+func (r *GameRepository) rangeQuery(sport string, start, end time.Time, filter GameFilter) *gorm.DB {
+	q := r.db.Model(&models.Game{}).
+		Joins("JOIN teams home_team ON home_team.id = games.home_team_id").
+		Joins("JOIN teams away_team ON away_team.id = games.away_team_id").
+		Where("games.sport = ? AND games.scheduled_at >= ? AND games.scheduled_at < ?", sport, start, end)
+	return applyGameFilter(q, filter)
+}
+
+// FindConferencesInRange lists the conferences with a team playing in [start,
+// end), alphabetically, for the day's filter. noConference is what the sync files
+// a team under when the feed gives it no conference, and is left out: it is not a
+// conference anybody would pick, and it holds over a thousand non-Division I teams.
+func (r *GameRepository) FindConferencesInRange(sport string, start, end time.Time, noConference string) ([]string, error) {
+	const sides = `
+		SELECT t.conference FROM games g JOIN teams t ON t.id = g.home_team_id
+		WHERE g.sport = ? AND g.scheduled_at >= ? AND g.scheduled_at < ?
+		UNION
+		SELECT t.conference FROM games g JOIN teams t ON t.id = g.away_team_id
+		WHERE g.sport = ? AND g.scheduled_at >= ? AND g.scheduled_at < ?`
+
+	var conferences []string
+	err := r.db.
+		Table("(?) AS sides", r.db.Raw(sides, sport, start, end, sport, start, end)).
+		Where("sides.conference <> '' AND sides.conference <> ?", noConference).
+		Order("sides.conference").
+		Pluck("sides.conference", &conferences).Error
+	if err != nil {
+		return nil, err
+	}
+	return conferences, nil
+}
+
+// FindSeasons lists the seasons holding one sport's games, newest first.
+func (r *GameRepository) FindSeasons(sport string) ([]int, error) {
+	var seasons []int
+	err := r.db.Model(&models.Game{}).
+		Where("sport = ?", sport).
+		Distinct("season").
+		Order("season DESC").
+		Pluck("season", &seasons).Error
+	if err != nil {
+		return nil, err
+	}
+	return seasons, nil
+}
+
+// SeasonSpan returns the first and last tip-off of one sport's season, and false
+// when the season holds no games.
+func (r *GameRepository) SeasonSpan(sport string, season int) (first, last time.Time, ok bool, err error) {
+	var span struct {
+		First *time.Time
+		Last  *time.Time
+	}
+	err = r.db.Model(&models.Game{}).
+		Select("MIN(scheduled_at) AS first, MAX(scheduled_at) AS last").
+		Where("sport = ? AND season = ?", sport, season).
+		Scan(&span).Error
+	if err != nil || span.First == nil || span.Last == nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	return *span.First, *span.Last, true, nil
+}
+
+// NextTipFrom returns the earliest tip-off at or after the instant, and false when
+// there is none. Unlike NextBasketballTip it counts finished games, because it is
+// answering "which day has games", not "what is left to play".
+func (r *GameRepository) NextTipFrom(sport string, from time.Time) (time.Time, bool, error) {
+	return r.boundaryTip(sport, "MIN(scheduled_at)", "scheduled_at >= ?", from)
+}
+
+// LastTipBefore returns the latest tip-off before the instant, and false when there
+// is none.
+func (r *GameRepository) LastTipBefore(sport string, before time.Time) (time.Time, bool, error) {
+	return r.boundaryTip(sport, "MAX(scheduled_at)", "scheduled_at < ?", before)
+}
+
+func (r *GameRepository) boundaryTip(sport, aggregate, condition string, at time.Time) (time.Time, bool, error) {
+	// NullTime because an aggregate over no rows is NULL, not no row.
+	var tip sql.NullTime
+	err := r.db.Model(&models.Game{}).
+		Select(aggregate).
+		Where("sport = ?", sport).
+		Where(condition, at).
+		Scan(&tip).Error
+	if err != nil || !tip.Valid {
+		return time.Time{}, false, err
+	}
+	return tip.Time, true, nil
 }
 
 // FindByDateRangeAndSport retrieves all games for a sport within a date range.

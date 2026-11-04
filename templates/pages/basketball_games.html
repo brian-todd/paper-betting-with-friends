@@ -5,18 +5,34 @@
             <h1>Basketball</h1>
         </div>
         <div class="header-controls">
+            {{if .Seasons}}
+            <select class="select-input" id="season-picker" aria-label="Season" onchange="navigateToSeason(this.value)">
+                {{range .Seasons}}
+                <option value="{{.Value}}" {{if eq .Value $.Season}}selected{{end}}>{{.Label}}</option>
+                {{end}}
+            </select>
+            {{end}}
             <div class="week-navigation">
-                <a href="/basketball/games?date={{.PrevDate}}" class="btn btn-sm btn-secondary">&larr; Prev</a>
-                <input type="date" class="select-input" id="date-picker" value="{{.DateStr}}" onchange="navigateToDate(this.value)">
-                <a href="/basketball/games?date={{.NextDate}}" class="btn btn-sm btn-secondary">Next &rarr;</a>
+                {{if .PrevURL}}<a href="{{.PrevURL}}" class="btn btn-sm btn-secondary">&larr; Prev</a>{{end}}
+                <input type="date" class="select-input" id="date-picker" value="{{.DateStr}}" aria-label="Date" onchange="navigateToDate(this.value)">
+                {{if .NextURL}}<a href="{{.NextURL}}" class="btn btn-sm btn-secondary">Next &rarr;</a>{{end}}
             </div>
             <div class="search-bar" style="margin-left: 1rem;">
                 <form action="/basketball/games" method="GET" style="display:flex;gap:0.5rem;">
                     <input type="hidden" name="date" value="{{.DateStr}}">
+                    {{if .AllGames}}<input type="hidden" name="lines" value="all">{{end}}
+                    {{if .Conferences}}
+                    <select name="conference" class="select-input" aria-label="Conference" onchange="this.form.submit()">
+                        <option value="">All Conferences</option>
+                        {{range .Conferences}}
+                        <option value="{{.}}" {{if eq . $.Conference}}selected{{end}}>{{.}}</option>
+                        {{end}}
+                    </select>
+                    {{end}}
                     <input type="text" name="search" class="filter-input" placeholder="Search teams..." value="{{.Search}}" style="min-width:200px;">
                     <button type="submit" class="btn btn-sm btn-primary">Search</button>
-                    {{if .Search}}
-                    <a href="/basketball/games?date={{.DateStr}}" class="btn btn-sm btn-secondary">Clear</a>
+                    {{if or .Search .Conference}}
+                    <a href="{{.ClearURL}}" class="btn btn-sm btn-secondary">Clear</a>
                     {{end}}
                 </form>
             </div>
@@ -26,7 +42,12 @@
     <div class="filter-results">
         <!-- .Date is the calendar day the server resolved in the app timezone, not an
              instant, so it is formatted here rather than localized per reader. -->
-        <span>{{.Date.Format "Monday, January 2, 2006"}} &mdash; {{.TotalGames}} games{{if .Search}} matching "{{.Search}}"{{end}}</span>
+        <span>{{.Date.Format "Monday, January 2, 2006"}} &mdash; {{len .Games}} of {{.TotalGames}} games{{if .Search}} matching "{{.Search}}"{{end}}</span>
+        {{if .LinesOnly}}
+        {{if .HiddenGames}}<a href="{{.ShowAllURL}}">Show {{.HiddenGames}} without lines</a>{{end}}
+        {{else if .AllGames}}
+        <a href="{{.LinesOnlyURL}}">Only games with lines</a>
+        {{end}}
     </div>
 
     {{if .Games}}
@@ -39,10 +60,11 @@
             <div class="game-card">
                 <div class="game-status {{.Game.Status}}">
                     {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
-                    {{if eq .Game.Status "in_progress"}}Live{{end}}
+                    {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel .Game.Sport}}{{.}}{{else}}Live{{end}}{{end}}
                     {{if eq .Game.Status "final"}}Final{{end}}
                     {{if eq .Game.Status "postponed"}}Postponed{{end}}
                     {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
+                    {{if .BetSummary}}<span class="badge badge-user-bet" title="Your bet: {{.BetSummary}}">{{.BetSummary}}</span>{{end}}
                 </div>
                 <div class="game-matchup">
                     <div class="team away-team">
@@ -51,7 +73,7 @@
                                 {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
                                 <div class="team-text">
                                     <span class="team-abbr">
-                                        {{if .Game.AwaySeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.AwaySeed}})</span> {{end}}{{.Game.AwayTeam.Abbreviation}}
+                                        {{if .AwayRank}}<span class="team-rank">#{{deref .AwayRank}}</span> {{end}}{{if .Game.AwaySeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.AwaySeed}})</span> {{end}}{{.Game.AwayTeam.Abbreviation}}
                                     </span>
                                     <span class="team-name">{{.Game.AwayTeam.Name}}</span>
                                 </div>
@@ -66,7 +88,7 @@
                                 {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
                                 <div class="team-text">
                                     <span class="team-abbr">
-                                        {{if .Game.HomeSeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.HomeSeed}})</span> {{end}}{{.Game.HomeTeam.Abbreviation}}
+                                        {{if .HomeRank}}<span class="team-rank">#{{deref .HomeRank}}</span> {{end}}{{if .Game.HomeSeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.HomeSeed}})</span> {{end}}{{.Game.HomeTeam.Abbreviation}}
                                     </span>
                                     <span class="team-name">{{.Game.HomeTeam.Name}}</span>
                                 </div>
@@ -139,7 +161,9 @@
         <div class="empty-icon">🏀</div>
         <h2>No Games Found</h2>
         {{if .Search}}
-        <p>No basketball games matching "{{.Search}}" on this date.</p>
+        <p>No {{with .Conference}}{{.}} {{end}}basketball games matching "{{.Search}}" on this date.</p>
+        {{else if .Conference}}
+        <p>No {{.Conference}} basketball games on this date. <a href="{{.ClearURL}}">Show every conference</a>.</p>
         {{else}}
         <p>No basketball games scheduled for this date.</p>
         {{end}}
@@ -150,6 +174,9 @@
 <script>
 function navigateToDate(date) {
     window.location.href = '/basketball/games?date=' + date;
+}
+function navigateToSeason(season) {
+    window.location.href = '/basketball/games?season=' + season;
 }
 // Game times are localized by static/js/localtime.js.
 </script>

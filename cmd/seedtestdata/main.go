@@ -82,7 +82,7 @@ func run(cfg *config.Config) error {
 	defer database.Close(db)
 
 	authService := auth.NewService(db, cfg)
-	leagueService := leagues.NewService(db)
+	leagueService := leagues.NewService(db, nil)
 	betsService := bets.NewService(db)
 
 	users, err := seedUsers(db, authService)
@@ -167,7 +167,7 @@ func seedLeagues(leagueService *leagues.Service, users []models.User) ([]models.
 	for _, spec := range testLeagueSpecs {
 		league, ok := byName[spec.Name]
 		if !ok {
-			created, err := leagueService.CreateLeague(spec.Name, creator.ID, spec.Public, spec.StartingBalance)
+			created, err := leagueService.CreateLeague(spec.Name, models.SportFootball, creator.ID, spec.Public, spec.StartingBalance)
 			if err != nil {
 				return nil, fmt.Errorf("creating league %q: %w", spec.Name, err)
 			}

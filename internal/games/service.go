@@ -52,14 +52,18 @@ type GameDetail struct {
 	MoneyLineOdds []models.MoneyLineOdds
 	SpreadOdds    []models.SpreadOdds
 	OverUnderOdds []models.OverUnderOdds
-	// HomeRank and AwayRank are the team's position in the game's week's
-	// effective poll. Always nil for basketball, which has no WeekID.
+	// HomeRank and AwayRank are the team's poll position: the game's week's
+	// effective poll in football, and the latest AP poll on or before tip-off in
+	// basketball, which has no weeks.
 	HomeRank *int
 	AwayRank *int
 	// Matchup is the pre-game comparison panel -- ratings, records and recent
 	// form for both sides. Nil for basketball, whose provider supplies none of
 	// it, and for a football game whose teams have not been synced yet.
 	Matchup *Matchup
+	// Lineups is the basketball five-man unit panel, nil when there is nothing to
+	// show, which is every football game and any team yet to play.
+	Lineups *LineupPanel
 	// Forecast is the weather expected at kickoff, for a game that has not
 	// kicked off yet and is not played under a roof. Separate from Matchup
 	// because it is a fact about the venue rather than about either side, and
@@ -136,6 +140,8 @@ type Service struct {
 	teamATSRecordRepo     *repository.TeamATSRecordRepository
 	teamAdvancedStatsRepo *repository.TeamAdvancedStatsRepository
 	gamePregameWPRepo     *repository.GamePregameWinProbabilityRepository
+	pollRankRepo          *repository.PollRankRepository
+	gameLineupRepo        *repository.GameLineupRepository
 	gameForecastRepo      *repository.GameForecastRepository
 
 	// location resolves the calendar-day and time-of-day filters. Those ask
@@ -167,6 +173,8 @@ func NewService(db *gorm.DB, location *time.Location) *Service {
 		teamAdvancedStatsRepo: repository.NewTeamAdvancedStatsRepository(db),
 		gamePregameWPRepo:     repository.NewGamePregameWinProbabilityRepository(db),
 		gameForecastRepo:      repository.NewGameForecastRepository(db),
+		pollRankRepo:          repository.NewPollRankRepository(db),
+		gameLineupRepo:        repository.NewGameLineupRepository(db),
 
 		location: location,
 	}
@@ -400,6 +408,12 @@ func (s *Service) GetGameByID(gameID uuid.UUID) (*models.Game, error) {
 	return game, nil
 }
 
+// CalendarDay is the calendar day an instant falls on in the app's timezone, as
+// the YYYY-MM-DD the basketball day page takes.
+func (s *Service) CalendarDay(at time.Time) string {
+	return at.In(s.location).Format(time.DateOnly)
+}
+
 // GetGameDetail retrieves a game with all odds from all sources.
 func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 	game, err := s.gameRepo.FindByID(gameID)
@@ -437,7 +451,7 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 	// Create unified odds by merging all sources.
 	detail.UnifiedOdds = mergeOddsBySources(moneyLine, spread, overUnder)
 
-	// Basketball games carry no WeekID, and there is nothing ranked to show.
+	// Basketball games carry no WeekID, and read their rank by date below.
 	//
 	// A failure here costs the rank badge and nothing else, so the page still
 	// renders -- but it is logged rather than swallowed, since silently
@@ -457,6 +471,19 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 		}
 	}
 
+	if game.Sport == models.SportBasketball {
+		ranks, err := s.pollRankRepo.AsOf(game.Season, models.PollAP, timeutil.CalendarDayInUTC(game.ScheduledAt, s.location))
+		if err != nil {
+			slog.Error("failed to fetch poll ranks for game detail", "game", game.ID, "error", err)
+		}
+		if rank, ok := ranks[game.HomeTeamID]; ok {
+			detail.HomeRank = &rank
+		}
+		if rank, ok := ranks[game.AwayTeamID]; ok {
+			detail.AwayRank = &rank
+		}
+	}
+
 	// The comparison panel is football-only because its provider is, and the
 	// sport has to be checked before HasAny rather than instead of it. Nothing
 	// basketball reaches here populates a rating, a record or an efficiency
@@ -469,6 +496,9 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 		if matchup := s.buildMatchup(game); matchup.HasAny() {
 			detail.Matchup = matchup
 		}
+	}
+	if game.Sport == models.SportBasketball {
+		detail.Lineups = s.lineupPanel(game)
 	}
 	detail.Forecast = s.forecastFor(game)
 

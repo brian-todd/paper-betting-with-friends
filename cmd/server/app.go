@@ -98,7 +98,7 @@ func buildHandler(
 	}
 
 	authService := auth.NewService(db, cfg)
-	leaguesService := leagues.NewService(db)
+	leaguesService := leagues.NewService(db, location)
 
 	app := &application{
 		Renderer:   renderer,
@@ -119,6 +119,7 @@ func buildHandler(
 	// bet on each game.
 	gamesHandler.SetUserBetReader(app.Bets)
 	basketballHandler := basketball.NewHandler(app.Basketball, renderer)
+	basketballHandler.SetUserBetReader(app.Bets)
 	adminHandler := admin.NewHandler(app.Admin, renderer)
 
 	// Set up router.

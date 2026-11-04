@@ -3,12 +3,15 @@ package cbbdata
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/bets"
 	"github.com/brian/paper-betting-with-friends/internal/models"
+	"github.com/brian/paper-betting-with-friends/internal/repository"
+	"github.com/brian/paper-betting-with-friends/internal/syncerr"
 	"github.com/brian/paper-betting-with-friends/internal/testdb"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -28,11 +31,7 @@ func TestFinalIsCredible(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := APIScoreboardGame{
-				HomeTeam: APIScoreboardTeam{Points: tt.home},
-				AwayTeam: APIScoreboardTeam{Points: tt.away},
-			}
-			if got := finalIsCredible(g); got != tt.want {
+			if got := finalIsCredible(tt.home, tt.away); got != tt.want {
 				t.Errorf("finalIsCredible() = %v, want %v", got, tt.want)
 			}
 		})
@@ -299,7 +298,7 @@ func TestScoreboardFinalPaysABasketballBet(t *testing.T) {
 	if err := r.db.Create(user).Error; err != nil {
 		t.Fatalf("creating user: %v", err)
 	}
-	league := &models.League{Name: "hoops", CreatedBy: user.ID, StartingBalance: decimal.NewFromInt(1000)}
+	league := &models.League{Name: "hoops", Sport: models.SportBasketball, CreatedBy: user.ID, StartingBalance: decimal.NewFromInt(1000)}
 	if err := r.db.Create(league).Error; err != nil {
 		t.Fatalf("creating league: %v", err)
 	}
@@ -379,4 +378,114 @@ func TestScoreboardFinalPaysABasketballBet(t *testing.T) {
 	if got, want := balance(), decimal.NewFromInt(1100); !got.Equal(want) {
 		t.Errorf("balance = %s after a second sweep, want %s", got, want)
 	}
+}
+
+// A write that fails has to reach the job's status. Cancelled here rather than made
+// invalid, because a statement that fails in the database would poison the test's
+// transaction, and this one is refused before it gets there.
+func TestSyncScoreboardReportsAWriteItCouldNotMake(t *testing.T) {
+	r := newScoreboardRig(t)
+	r.game(301)
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.sync.gameLiveStateRepo = repository.NewGameLiveStateRepository(r.db.WithContext(cancelled))
+
+	r.feed = []APIScoreboardGame{scoreboardGame(301, scoreboardStatusInProgress, new(10), new(8))}
+	if err := r.sync.SyncScoreboard(context.Background()); !errors.Is(err, syncerr.ErrIncomplete) {
+		t.Errorf("SyncScoreboard() = %v, want ErrIncomplete", err)
+	}
+}
+
+// evaluatorSpy records which games were sent to settlement.
+type evaluatorSpy struct{ games []uuid.UUID }
+
+func (e *evaluatorSpy) EvaluateBetsForGame(id uuid.UUID) error {
+	e.games = append(e.games, id)
+	return nil
+}
+
+// /games finalizes and settles straight away, so it needs the same doubt as the
+// scoreboard: a level "final" there would pay spreads and totals on regulation.
+func TestGamesFeedDoesNotBelieveAFinalItsScoreCannotBackUp(t *testing.T) {
+	db := testdb.Open(t)
+	team := func(external int64) *models.Team {
+		t.Helper()
+		row := testdb.InsertTeam(t, db, "")
+		if err := db.Model(row).Updates(map[string]any{"external_id": external, "sport": models.SportBasketball}).Error; err != nil {
+			t.Fatalf("updating team: %v", err)
+		}
+		return row
+	}
+	team(1)
+	team(2)
+
+	var feed []APIGame
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(feed)
+	})
+	sync := NewSyncService(client, db)
+	sync.SetClock(func() time.Time { return tipOff.Add(3 * time.Hour) })
+	spy := &evaluatorSpy{}
+	sync.SetBetEvaluator(spy)
+
+	run := func(id int64, home, away *int) (models.Game, *models.GameResult) {
+		t.Helper()
+		spy.games = nil
+		feed = []APIGame{{
+			ID: id, Season: 2027, StartDate: tipOff, Status: "final",
+			HomeTeamID: 1, AwayTeamID: 2, HomePoints: home, AwayPoints: away,
+		}}
+		if err := sync.syncGames(context.Background(), GameQueryOpts{}); err != nil {
+			t.Fatalf("syncGames: %v", err)
+		}
+		var game models.Game
+		if err := db.Preload("Result").First(&game, "external_id = ?", id).Error; err != nil {
+			t.Fatalf("reading game: %v", err)
+		}
+		return game, game.Result
+	}
+
+	t.Run("a level score stays in progress and provisional", func(t *testing.T) {
+		game, result := run(401, new(70), new(70))
+		if game.Status != models.GameStatusInProgress || game.Completed {
+			t.Errorf("status = %q, completed = %v", game.Status, game.Completed)
+		}
+		if result == nil || result.IsFinal() || result.HomeScore != 70 {
+			t.Errorf("result = %+v, want a provisional 70-70", result)
+		}
+		if len(spy.games) != 0 {
+			t.Errorf("sent to settlement: %v", spy.games)
+		}
+	})
+
+	t.Run("a missing side stays in progress with no result", func(t *testing.T) {
+		game, result := run(402, new(70), nil)
+		if game.Status != models.GameStatusInProgress || result != nil || len(spy.games) != 0 {
+			t.Errorf("status = %q, result = %+v, settled = %v", game.Status, result, spy.games)
+		}
+	})
+
+	t.Run("the decided score that follows finalizes and settles", func(t *testing.T) {
+		game, result := run(401, new(78), new(74))
+		if game.Status != models.GameStatusFinal || !game.Completed {
+			t.Errorf("status = %q, completed = %v", game.Status, game.Completed)
+		}
+		if result == nil || !result.IsFinal() || result.HomeScore != 78 {
+			t.Errorf("result = %+v, want a final 78-74", result)
+		}
+		if len(spy.games) != 1 {
+			t.Errorf("sent to settlement: %v, want the game once", spy.games)
+		}
+	})
+
+	t.Run("a level score cannot reopen a finished game", func(t *testing.T) {
+		game, result := run(401, new(70), new(70))
+		if game.Status != models.GameStatusFinal {
+			t.Errorf("status = %q, want final", game.Status)
+		}
+		if result == nil || !result.IsFinal() || result.HomeScore != 78 {
+			t.Errorf("result = %+v, want the final 78-74 kept", result)
+		}
+	})
 }

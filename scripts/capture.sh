@@ -108,6 +108,7 @@ SEASON="${SEASON:-2026}"
 default_cbbd=(
     /venues
     /teams
+    "/rankings?season=$SEASON"
 )
 prev=$((SEASON - 1))
 starts=("$prev-11-01" "$prev-12-01" "$SEASON-01-01" "$SEASON-02-01" "$SEASON-03-01" "$SEASON-04-01")
