@@ -57,6 +57,8 @@ func TestScoreboardResult(t *testing.T) {
 		{"a decided final is finalized", scoreboardStatusFinal, new(70), new(64), true, true},
 		{"a level final is written but not finalized", scoreboardStatusFinal, new(70), new(70), true, false},
 		{"a final missing a side writes nothing", scoreboardStatusFinal, new(70), nil, false, false},
+		{"a final at 0-0 writes nothing", scoreboardStatusFinal, new(0), new(0), false, false},
+		{"a live 0-0 is a score", scoreboardStatusInProgress, new(0), new(0), true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -476,6 +478,13 @@ func TestGamesFeedDoesNotBelieveAFinalItsScoreCannotBackUp(t *testing.T) {
 		}
 		if len(spy.games) != 1 {
 			t.Errorf("sent to settlement: %v, want the game once", spy.games)
+		}
+	})
+
+	t.Run("a 0-0 final has not started", func(t *testing.T) {
+		game, result := run(403, new(0), new(0))
+		if game.Status != models.GameStatusScheduled || game.Completed || result != nil || len(spy.games) != 0 {
+			t.Errorf("status = %q, completed = %v, result = %+v, settled = %v", game.Status, game.Completed, result, spy.games)
 		}
 	})
 

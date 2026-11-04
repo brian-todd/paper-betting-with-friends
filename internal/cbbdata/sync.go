@@ -915,11 +915,17 @@ func gameResultFrom(gameID uuid.UUID, g APIGame, status models.GameStatus, now t
 // cannot back up is stored as in progress, which leaves the score provisional and
 // the bets pending until a feed reports a result that can be final. Upsert never
 // regresses a final, so this cannot reopen a game already finished.
+//
+// The exception is a final at 0-0, which is stored as scheduled, since nothing says
+// the game has started and Upsert would not let in_progress be taken back.
 func (s *SyncService) gamesFeedStatus(g APIGame) models.GameStatus {
 	status := mapGameStatus(g.Status)
 	if status == models.GameStatusFinal && !finalIsCredible(g.HomePoints, g.AwayPoints) {
 		s.logger.Warn("ignoring a final the score cannot back up",
 			"game", g.ID, "home_points", g.HomePoints, "away_points", g.AwayPoints)
+		if reportsNoPlay(g.HomePoints, g.AwayPoints) {
+			return models.GameStatusScheduled
+		}
 		return models.GameStatusInProgress
 	}
 	return status

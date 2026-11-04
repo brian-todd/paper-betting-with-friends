@@ -111,11 +111,13 @@ func (m *Matchup) HasAny() bool {
 	if m == nil {
 		return false
 	}
-	if m.WinProbability != nil {
+	// HasElo rather than the raw values: an Elo the panel will not draw is not
+	// something to draw, and it is on most of a season's first week of basketball.
+	if m.WinProbability != nil || m.HasElo() {
 		return true
 	}
 	for _, side := range []TeamStats{m.Home, m.Away} {
-		if side.Record != nil || len(side.Ratings) > 0 || len(side.Form) > 0 || side.PregameElo != nil {
+		if side.Record != nil || len(side.Ratings) > 0 || len(side.Form) > 0 {
 			return true
 		}
 		if side.ATS != nil || side.Advanced != nil || side.Season != nil {

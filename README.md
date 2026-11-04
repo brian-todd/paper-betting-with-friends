@@ -151,7 +151,7 @@ share:
   projection on purpose.
 - `TestBasketballCadenceStaysWithinMonthlyCallBudget` (`internal/cbbdata`) is
   tested at the shortest `CBB_SYNC_INTERVAL_MINS` the server accepts (10,
-  ~9,900 in the worst month), with the scoreboard driven by the real 2025-26
+  ~12,350 in the worst month), with the scoreboard driven by the real 2025-26
   schedule, and holds an off-season month to a few hundred, which is what
   notices the seasonal throttle going missing.
 - The calendar and rankings jobs are in neither; they live in the reserve.

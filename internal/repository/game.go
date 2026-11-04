@@ -448,7 +448,17 @@ func (r *GameRepository) Upsert(game *models.Game) error {
 			"home_pregame_elo": gorm.Expr("excluded.home_pregame_elo"),
 			"away_pregame_elo": gorm.Expr("excluded.away_pregame_elo"),
 
-			"status":    gorm.Expr("CASE WHEN games.status = ? THEN games.status ELSE excluded.status END", models.GameStatusFinal),
+			// A final stays final. A live basketball game also stays live: its /games
+			// feed lags the scoreboard, and a status falling back to scheduled would
+			// reopen the refund window on a game being played. Football's /games status
+			// is inferred from the kickoff, so there scheduled over in_progress can be
+			// a game that has moved, and it has to be able to land.
+			"status": gorm.Expr(`CASE
+				WHEN games.status = ? THEN games.status
+				WHEN games.sport = ? AND games.status = ? AND excluded.status = ? THEN games.status
+				ELSE excluded.status END`,
+				models.GameStatusFinal,
+				models.SportBasketball, models.GameStatusInProgress, models.GameStatusScheduled),
 			"completed": gorm.Expr("games.completed OR excluded.completed"),
 		}),
 	}).Create(game).Error

@@ -58,8 +58,8 @@ type GameDetail struct {
 	HomeRank *int
 	AwayRank *int
 	// Matchup is the pre-game comparison panel -- ratings, records and recent
-	// form for both sides. Nil for basketball, whose provider supplies none of
-	// it, and for a football game whose teams have not been synced yet.
+	// form for both sides. Nil when there is nothing to draw, as for a game whose
+	// teams have not been synced yet.
 	Matchup *Matchup
 	// Lineups is the basketball five-man unit panel, nil when there is nothing to
 	// show, which is every football game and any team yet to play.

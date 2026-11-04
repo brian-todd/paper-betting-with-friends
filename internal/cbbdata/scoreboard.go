@@ -142,6 +142,13 @@ func finalIsCredible(home, away *int) bool {
 	return home != nil && away != nil && *home != *away
 }
 
+// reportsNoPlay reports whether a score is the 0-0 both feeds give a game nobody has
+// played. A "final" carrying one is not a game that went to overtime, so unlike a level
+// score it is no reading of anything, and neither a score nor a start to record.
+func reportsNoPlay(home, away *int) bool {
+	return home != nil && away != nil && *home == 0 && *away == 0
+}
+
 // scoreboardResult builds the score row for a scoreboard game, reporting false
 // when there is no score to write.
 //
@@ -161,7 +168,7 @@ func scoreboardResult(gameID uuid.UUID, g APIScoreboardGame, now time.Time) (*mo
 		// An incredible final with a score is still the latest score, so it is
 		// written as provisional. GameResultRepository.Upsert refuses to let that
 		// overwrite a result already finalized.
-		if home == nil || away == nil {
+		if home == nil || away == nil || reportsNoPlay(home, away) {
 			return nil, false
 		}
 		if finalIsCredible(home, away) {

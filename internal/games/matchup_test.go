@@ -178,16 +178,21 @@ func TestHasAnyAndNilReceiversAreSafe(t *testing.T) {
 		t.Error("an empty matchup reported content")
 	}
 
-	// Pregame Elo arrives with the game rather than the stats sync, so it is on
-	// its own enough to draw the panel.
+	// The Elo row needs both sides, so one side's Elo leaves nothing to draw.
 	elo := 1681
 	empty.Home.PregameElo = &elo
-	if !empty.HasAny() {
-		t.Error("a matchup with a pregame Elo reported no content")
-	}
-	// ...but the Elo row still needs both sides.
 	if empty.HasElo() {
 		t.Error("HasElo() true with only one side")
+	}
+	if empty.HasAny() {
+		t.Error("a matchup with one side's Elo reported content")
+	}
+
+	// Pregame Elo arrives with the game rather than the stats sync, so both sides'
+	// are on their own enough to draw the panel.
+	empty.Away.PregameElo = &elo
+	if !empty.HasAny() {
+		t.Error("a matchup with a pregame Elo reported no content")
 	}
 }
 

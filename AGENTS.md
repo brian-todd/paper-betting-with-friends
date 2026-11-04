@@ -499,7 +499,17 @@ back up, level or missing a side, is not believed by either feed: `finalIsCredib
 keeps the score provisional, because basketball has no ties and none of the ~6,300
 finals in the captured season is one. The scoreboard leaves the status alone, and
 `/games`, which writes a status on every row, stores `in_progress`. `/games` matters
-more here, since it settles the moment it finalizes.
+more here, since it settles the moment it finalizes. A `final` at 0-0 goes further
+(`reportsNoPlay`): it is the placeholder rather than a reading, so no result is written
+and `/games` stores `scheduled`.
+
+**`/games` cannot take a live basketball game back to `scheduled`.** It reports a status
+rather than inferring one, and it lags the scoreboard, so `Upsert` keeps `in_progress`
+over an incoming `scheduled` for basketball. Football cannot share the rule: its status
+is inferred from the kickoff, so `scheduled` there can be a game that has moved. A
+kickoff `/games` writes back is not guarded, so placing and editing a bet, which read the
+kickoff, can stay open until the next scoreboard run on a tip-off moved earlier, the
+same flap football has below.
 
 **Two feeds write a football game, and they disagree for minutes at a time.**
 The scoreboard calls a game over within five minutes; `/games` keeps inferring

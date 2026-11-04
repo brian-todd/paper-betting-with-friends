@@ -57,6 +57,17 @@ func TestHasEloHidesTwoBasketballTeamsAtTheStartingValue(t *testing.T) {
 	}
 }
 
+// Two teams at the starting value are most of a season's first week, and the Elo row
+// is all such a game would have, so the panel would be a header over no rows.
+func TestHasAnyIgnoresAnEloThePanelWillNotDraw(t *testing.T) {
+	start := 1500
+	m := matchupWith("", "")
+	m.Sport, m.Home.PregameElo, m.Away.PregameElo = models.SportBasketball, &start, &start
+	if m.HasAny() {
+		t.Error("HasAny() true with nothing but two starting Elos")
+	}
+}
+
 func TestCoverageNoteNamesTheSportsDivision(t *testing.T) {
 	m := basketballMatchup()
 	m.Home.Ratings[models.RatingSourceSRS] = rating(models.RatingSourceSRS, "4.2")
