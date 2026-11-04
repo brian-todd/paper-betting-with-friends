@@ -3,30 +3,89 @@ package cbbdata
 import (
 	"time"
 
+	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 )
 
 // Basketball cadence.
 //
-// The games and lines jobs share one schedule but run as two jobs. They were
-// one, and a /games failure returned before /lines was asked, so every games
-// error was also a missed line snapshot -- and the footer could not say which
-// half was stale.
+// lineupFetchRules decide when a finished game is asked for. The feed builds
+// lineups from play-by-play: the previous night's games had them by the next
+// morning, so the first attempt waits past the end of a game, and an empty answer
+// is asked again a day later, twice, because it can mean not processed yet or
+// never available.
+var lineupFetchRules = repository.LineupFetchRules{
+	FirstAfter:  6 * time.Hour,
+	RetryAfter:  24 * time.Hour,
+	MaxAttempts: 3,
+	Lookback:    14 * 24 * time.Hour,
+}
+
+// Eight jobs read eight things at their own rates, and all of them spend from the
+// monthly allowance football also draws on:
 //
-// Football's split went further and slowed /games to four runs a day, which was
-// safe because the live scoreboard carries the score and the status. Basketball
-// has no scoreboard: /games is where the score, the status and therefore the
-// settlement come from, so it keeps the configured rate through the season.
+//   - cbb-scoreboard is the live feed: status, score and clock. It finalizes
+//     games, so it is what settlement normally follows.
+//   - cbb-games is the backstop. The scoreboard only covers a day or so either
+//     side of now, and it never writes postponed or cancelled, so /games still
+//     runs hourly in season rather than at football's six hours.
+//   - cbb-lines follows CBB_SYNC_INTERVAL_MINS, because lines are what a bettor
+//     reads before tip-off and nothing else refreshes them.
+//   - cbb-schedule reaches well past the three-day incremental window, once a
+//     day, so the day picker has games to show and a game stuck unfinished by an
+//     outage is repaired.
+//   - cbb-rankings checks twice a week in season, because polls move weekly.
+//   - cbb-lineups asks for a few finished games an hour, one request each.
+//   - cbb-ratings reads the two rating tables once a day in season.
+//   - cbb-team-stats reads the season figures every six hours in season, since each
+//     night's games change them and one request covers every team.
 //
-// What both jobs lose is the rest of the year. The sync window reaches three
-// days ahead, so between seasons every run asked for an empty span -- ~5,760
-// requests a month of CBBD's allowance spent on nothing, on the same monthly
-// meter as football through the whole of the football season. Out of season
-// each job runs once a day instead, which still picks up anything played then
-// and settles it within a day.
+// Between seasons the first four run once a day, and the last two and cbb-rankings not
+// at all, since nothing moves them. The incremental window reaches three
+// days ahead, so anything faster asks for an empty span.
 const (
 	// offSeasonInterval is the rate between seasons.
 	offSeasonInterval = 24 * time.Hour
+
+	// gamesInterval is the /games rate through the season.
+	gamesInterval = time.Hour
+
+	// scoreboardLiveInterval is the rate while a game is being played.
+	scoreboardLiveInterval = 5 * time.Minute
+
+	// scoreboardIdleInterval is the in-season rate while none is. It caps the
+	// wait even when the next tip-off is hours away, because the games table can
+	// be wrong and this schedule is derived from it.
+	scoreboardIdleInterval = time.Hour
+
+	// maxGameDuration is how long after tip-off a game is still presumed to be
+	// being played. It bounds what one stuck row can cost: a game the feed never
+	// calls final keeps the live rate on for this long, and no longer.
+	maxGameDuration = 4 * time.Hour
+
+	// scheduleSyncHour is the local hour cbb-schedule runs, clear of any slate.
+	scheduleSyncHour = 4
+
+	// rankingsMondayHour and rankingsTuesdayHour are the local hours of the two
+	// weekly rankings checks. Weekly polls are dated Mondays, but the date does
+	// not say when the feed has them, so Tuesday morning catches a late one.
+	rankingsMondayHour  = 18
+	rankingsTuesdayHour = 6
+
+	// lineupsOffset places the hourly lineups run clear of the games and lines runs.
+	lineupsOffset = 40 * time.Minute
+
+	// lineupsPerRun is the most games one lineups run asks for. At a run an hour it
+	// is 72 requests a day and ~2,230 a month at most, which is the job's whole
+	// budget. Days average about 50 games with a line and peak at 155, so a peak day
+	// takes a couple of days to drain.
+	lineupsPerRun = 3
+
+	// ratingsSyncHour is the local hour cbb-ratings runs, after the night's games.
+	ratingsSyncHour = 5
+
+	// teamStatsInterval is the cbb-team-stats rate through the season.
+	teamStatsInterval = 6 * time.Hour
 
 	// minDelay floors the computed wait, so no clock case can become a hot
 	// loop against a metered API.
@@ -58,53 +117,206 @@ func InSeason(now time.Time, loc *time.Location) bool {
 	return day >= seasonOpens || day <= seasonCloses
 }
 
-// linesLag is how far behind each games run the lines run sits.
+// ScoreboardState is what the scoreboard schedule needs to know about the games
+// table. The caller resolves it, because answering it means reading the database
+// and the arithmetic here stays testable without one.
+type ScoreboardState struct {
+	// Active reports a game that is being played, or that tipped off recently
+	// enough to still be.
+	Active bool
+
+	// NextTip is the earliest future tip-off, nil when none is known.
+	NextTip *time.Time
+}
+
+// linesLag is how far the lines grid sits behind the games grid.
 //
-// syncLines skips a line for a game it cannot find, so a lines run racing the
-// games run in the same slot drops a newly listed game's lines until the next
-// slot -- a day, out of season. The old combined job ran games first and never
-// did; lagging the lines keeps that order without making either job wait on
-// the other. A games run is seconds against a window of days, so a few minutes
-// covers it, and the lag has to stay under the shortest interval configuration
-// accepts or the lines run would land after the next games run instead.
+// syncLines skips a line for a game it cannot find, so a lines run landing on
+// the same instant as a games run could race it. The lag has to stay under the
+// shortest interval configuration accepts, or it would no longer separate them.
 const linesLag = 5 * time.Minute
 
-// NextGamesSync returns the next instant the basketball games sync should run
-// after now: the next point on interval's grid during the season, the next
-// midnight outside it.
+// nextAtRate returns the next point on rate's grid during the season, and the
+// next midnight outside it.
 //
-// The season's edges are midnights, which lie on every grid, so the step
-// cannot jump over one: the last in-season run lands on the midnight that
-// closes it, and the first run after the off-season midnight that opens it
-// takes the fast rate. That holds because interval divides a day, which
-// config.Validate requires.
-func NextGamesSync(now time.Time, loc *time.Location, interval time.Duration) time.Time {
+// The season's edges are midnights, which lie on every grid, so the step cannot
+// jump over one: the last in-season run lands on the midnight that closes it,
+// and the first run after the off-season midnight that opens it takes the fast
+// rate. That holds because rate divides a day, which config.Validate requires of
+// the one rate that is configurable.
+func nextAtRate(now time.Time, loc *time.Location, rate time.Duration) time.Time {
 	if loc == nil {
 		loc = time.UTC
 	}
 
 	if !InSeason(now, loc) {
-		interval = offSeasonInterval
+		rate = offSeasonInterval
 	}
-	return timeutil.NextOnGrid(now.In(loc), loc, interval)
+	return timeutil.NextOnGrid(now.In(loc), loc, rate)
+}
+
+// NextGamesSync returns the next instant the basketball games sync should run
+// after now.
+func NextGamesSync(now time.Time, loc *time.Location) time.Time {
+	return nextAtRate(now, loc, gamesInterval)
 }
 
 // NextLinesSync returns the next instant the basketball lines sync should run
-// after now: the games schedule, linesLag later.
+// after now: interval's grid during the season, linesLag later.
 func NextLinesSync(now time.Time, loc *time.Location, interval time.Duration) time.Time {
-	return NextGamesSync(now.Add(-linesLag), loc, interval).Add(linesLag)
+	return nextAtRate(now.Add(-linesLag), loc, interval).Add(linesLag)
+}
+
+// NextScoreboardSync returns the next instant the live scoreboard sync should
+// run after now.
+//
+// There is no margin before a tip-off, because there is no score before one. The
+// wake lands on it, scheduled_at <= now makes the next state Active, and the live
+// rate takes over.
+//
+// The idle wait stays on the wall-clock grid so a restart cannot shift the
+// schedule onto an arbitrary offset. Out of season it is a day rather than an
+// hour, which is what keeps an empty July from costing 720 requests.
+func NextScoreboardSync(now time.Time, loc *time.Location, state ScoreboardState) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	t := now.In(loc)
+	if state.Active {
+		return timeutil.NextOnGrid(t, loc, scoreboardLiveInterval)
+	}
+
+	next := nextAtRate(t, loc, scoreboardIdleInterval)
+	if state.NextTip != nil {
+		if tip := state.NextTip.In(loc); tip.After(t) && tip.Before(next) {
+			return tip
+		}
+	}
+	return next
+}
+
+// NextScheduleSync returns the next instant the wide schedule sync should run
+// after now: scheduleSyncHour, every day of the year, since this is the job that
+// finds next season's games before the season's rates begin.
+func NextScheduleSync(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	t := now.In(loc)
+	next := time.Date(t.Year(), t.Month(), t.Day(), scheduleSyncHour, 0, 0, 0, loc)
+	if !next.After(t) {
+		next = time.Date(t.Year(), t.Month(), t.Day()+1, scheduleSyncHour, 0, 0, 0, loc)
+	}
+	return next
+}
+
+// NextRankingsSync returns the next weekly rankings check after now, which is
+// Monday evening or Tuesday morning during the season. Out of season it is the
+// first one after the season opens, so the job costs nothing between seasons.
+func NextRankingsSync(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	t := now.In(loc)
+	for day := 0; ; day++ {
+		date := time.Date(t.Year(), t.Month(), t.Day()+day, 0, 0, 0, 0, loc)
+
+		var slot time.Time
+		switch date.Weekday() {
+		case time.Monday:
+			slot = time.Date(date.Year(), date.Month(), date.Day(), rankingsMondayHour, 0, 0, 0, loc)
+		case time.Tuesday:
+			slot = time.Date(date.Year(), date.Month(), date.Day(), rankingsTuesdayHour, 0, 0, 0, loc)
+		default:
+			continue
+		}
+		if slot.After(t) && InSeason(slot, loc) {
+			return slot
+		}
+	}
+}
+
+// NextLineupsSync returns the next instant the lineups sync should run after now:
+// hourly in season, daily outside it, always lineupsOffset past the grid.
+func NextLineupsSync(now time.Time, loc *time.Location) time.Time {
+	return nextAtRate(now.Add(-lineupsOffset), loc, time.Hour).Add(lineupsOffset)
+}
+
+// NextRatingsSync returns the next daily ratings run after now, skipping forward to
+// the season's first day when now is outside it.
+func NextRatingsSync(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	t := now.In(loc)
+	for day := 0; ; day++ {
+		slot := time.Date(t.Year(), t.Month(), t.Day()+day, ratingsSyncHour, 0, 0, 0, loc)
+		if slot.After(t) && InSeason(slot, loc) {
+			return slot
+		}
+	}
+}
+
+// NextTeamStatsSync returns the next team stats run after now, skipping forward to
+// the season's first slot when now is outside it.
+func NextTeamStatsSync(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	next := timeutil.NextOnGrid(now.In(loc), loc, teamStatsInterval)
+	for !InSeason(next, loc) {
+		next = timeutil.NextOnGrid(next, loc, teamStatsInterval)
+	}
+	return next
+}
+
+// RatingsDelay returns how long to wait after now before the next ratings run.
+func RatingsDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextRatingsSync(now, loc).Sub(now))
+}
+
+// TeamStatsDelay returns how long to wait after now before the next team stats run.
+func TeamStatsDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextTeamStatsSync(now, loc).Sub(now))
+}
+
+// LineupsDelay returns how long to wait after now before the next lineups sync.
+func LineupsDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextLineupsSync(now, loc).Sub(now))
+}
+
+// RankingsDelay returns how long to wait after now before the next rankings check.
+func RankingsDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextRankingsSync(now, loc).Sub(now))
 }
 
 // GamesDelay returns how long to wait after now before the next basketball
 // games sync.
-func GamesDelay(now time.Time, loc *time.Location, interval time.Duration) time.Duration {
-	return atLeastMinDelay(NextGamesSync(now, loc, interval).Sub(now))
+func GamesDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextGamesSync(now, loc).Sub(now))
 }
 
 // LinesDelay returns how long to wait after now before the next basketball
 // lines sync.
 func LinesDelay(now time.Time, loc *time.Location, interval time.Duration) time.Duration {
 	return atLeastMinDelay(NextLinesSync(now, loc, interval).Sub(now))
+}
+
+// ScoreboardDelay returns how long to wait after now before the next scoreboard
+// sync.
+func ScoreboardDelay(now time.Time, loc *time.Location, state ScoreboardState) time.Duration {
+	return atLeastMinDelay(NextScoreboardSync(now, loc, state).Sub(now))
+}
+
+// ScheduleDelay returns how long to wait after now before the next wide schedule
+// sync.
+func ScheduleDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextScheduleSync(now, loc).Sub(now))
 }
 
 func atLeastMinDelay(d time.Duration) time.Duration {

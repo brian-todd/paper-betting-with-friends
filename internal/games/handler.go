@@ -248,6 +248,10 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to fetching user leagues", "error", err)
 	}
 
+	// A league plays one sport, so the slip only offers the ones this game can be
+	// bet in.
+	userLeagues = leaguesForSport(userLeagues, gameDetail.Game.Sport)
+
 	// Get user's purses for balance display.
 	purses, err := h.purseRepo.FindByUser(user.ID)
 	if err != nil {
@@ -286,12 +290,14 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		"Title":         title,
 		"User":          user,
 		"Game":          gameDetail.Game,
+		"BasketballDay": h.service.CalendarDay(gameDetail.Game.ScheduledAt),
 		"Result":        gameDetail.Result,
 		"UnifiedOdds":   gameDetail.UnifiedOdds,
 		"HomeRank":      gameDetail.HomeRank,
 		"AwayRank":      gameDetail.AwayRank,
 		"Matchup":       gameDetail.Matchup,
 		"Forecast":      gameDetail.Forecast,
+		"Lineups":       gameDetail.Lineups,
 		"BetSummary":    gameDetail.BetSummary,
 		"UserLeagues":   userLeagues,
 		"PurseBalances": purseBalances,
@@ -301,6 +307,17 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		"Success":           r.URL.Query().Get("success"),
 		"Error":             r.URL.Query().Get("error"),
 	})
+}
+
+// leaguesForSport narrows leagues to the ones playing sport.
+func leaguesForSport(all []models.League, sport string) []models.League {
+	matching := make([]models.League, 0, len(all))
+	for _, league := range all {
+		if league.Sport == sport {
+			matching = append(matching, league)
+		}
+	}
+	return matching
 }
 
 // annotateUserBets describes, on each game, the bet the user already holds on

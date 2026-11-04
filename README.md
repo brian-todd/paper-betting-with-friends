@@ -10,7 +10,8 @@ and odds are `shopspring/decimal` throughout, never `float64`.
 
 ## Features
 
-- **Leagues** — public or private, joined by browsing or by invite code, each
+- **Leagues** — each plays one sport, football or basketball, with its own purses
+  and standings. Public or private, joined by browsing or by invite code, each
   member funded from the league's starting balance
 - **Betting** — moneyline, spread, and over/under against synced lines or a
   custom line, editable until kickoff, settled automatically once a game is final
@@ -126,13 +127,19 @@ a month of the season, at default configuration (FBS-only scoreboard,
 | `cfb-scoreboard` | 5 min while a game is live, hourly otherwise, one call per division | 1 | ~2,700 |
 | `cfb-calendar` | daily, loops years until the API returns empty | ~25 | ~750 |
 | `cfb-rankings` | every 6 hours | 1 | ~120 |
-| `cbb-games` | `CBB_SYNC_INTERVAL_MINS` (default 15) Oct 25–Apr 15, daily otherwise | 1 (`/games`) | ~2,900 in season, ~30 out |
-| `cbb-lines` | as `cbb-games`, five minutes behind it | 1 (`/lines`) | ~2,900 in season, ~30 out |
+| `cbb-scoreboard` | 5 min while a game is live, hourly otherwise Oct 25–Apr 15, daily out of season | 1 | ~4,650 in season, ~30 out |
+| `cbb-games` | hourly Oct 25–Apr 15, daily otherwise | 1 (`/games`) | ~745 in season, ~30 out |
+| `cbb-lines` | `CBB_SYNC_INTERVAL_MINS` (default 15) Oct 25–Apr 15, daily otherwise | 1 (`/lines`) | ~2,975 in season, ~30 out |
+| `cbb-schedule` | daily, a week back to a month ahead | 1 (`/games`) | ~30 |
+| `cbb-lineups` | hourly Oct 25–Apr 15, daily otherwise | at most 3 (`/lineups/game/{id}`) | ~1,550 in season, capped at ~2,230; 0 out |
+| `cbb-rankings` | Mondays 6pm and Tuesdays 6am Oct 25–Apr 15, none otherwise | 1 (`/rankings`) | ~10 in season, 0 out |
+| `cbb-ratings` | daily at 5am Oct 25–Apr 15, none otherwise | 2 (`/ratings/adjusted`, `/ratings/srs`) | ~60 in season, 0 out |
+| `cbb-team-stats` | every 6 hours Oct 25–Apr 15, none otherwise | 1 (`/stats/team/season`) | ~120 in season, 0 out |
 | `bet-settlement` | every 5 minutes | 0 — database only | 0 |
-| **Total** | | | **~11,300 / 30,000** in season, ~3,650 with neither sport in season |
+| **Total** | | | **~15,800 / 30,000** in season, ~3,700 with neither sport in season |
 
-That leaves roughly two thirds of the budget as headroom. The plan is written
-down in `internal/apibudget`: football's share (10,000), basketball's (9,500)
+That leaves over half of the budget as headroom. The plan is written
+down in `internal/apibudget`: football's share (10,000), basketball's (12,500)
 and a reserve for the jobs nothing counts (2,000), with a test that the three
 fit the allowance. Each sport's cadence test holds its own worst month to its
 share:
@@ -144,17 +151,18 @@ share:
   projection on purpose.
 - `TestBasketballCadenceStaysWithinMonthlyCallBudget` (`internal/cbbdata`) is
   tested at the shortest `CBB_SYNC_INTERVAL_MINS` the server accepts (10,
-  ~9,000 in a season month), and holds an off-season month to a few hundred,
-  which is what notices the seasonal throttle going missing.
+  ~12,350 in the worst month), with the scoreboard driven by the real 2025-26
+  schedule, and holds an off-season month to a few hundred, which is what
+  notices the seasonal throttle going missing.
 - The calendar and rankings jobs are in neither; they live in the reserve.
 
-Basketball's two jobs share one cadence and are two jobs only so that a
-failing `/games` no longer skips `/lines`; the lines run five minutes behind,
-so a newly listed game is written before its lines look for it. `/games` is not slowed the way
-football's was, because basketball has no live scoreboard: it is where the
-score, the status and therefore settlement come from. Outside the season each
-runs once a day — the sync window only reaches three days ahead, so every
-off-season run used to ask for an empty span.
+Basketball's scoreboard reports the status and the score and finalizes games, and
+the `bet-settlement` job pays out from there. It requires Patreon Tier 1. `/games`
+stays hourly rather than football's six hours because the scoreboard only reaches
+about a day either side of now and never reports a postponed or cancelled game.
+Outside the season each job runs once a day, because the incremental window only
+reaches three days ahead and anything faster asks for an empty span. `cbb-schedule`
+is what fills the day picker past that window.
 
 Every page footer reports when each sync last *succeeded*, deliberately not when
 it last *ran*: a job that ran two minutes ago and errored has refreshed nothing,
@@ -197,7 +205,7 @@ alone and the schema cannot arrive out of step with the code.
 | `ADMIN_PASSWORD` | first boot | Required to create the account; later only to reset a lost password |
 | `CFB_DATA_API_KEY` | per sport | Football sync disabled without it |
 | `CBB_DATA_API_KEY` | per sport | Basketball sync disabled without it |
-| `CBB_SYNC_INTERVAL_MINS` | no | Defaults to 15; the in-season rate of both basketball jobs. With a key set, startup fails unless it divides a day evenly and is between 10 and 1440 |
+| `CBB_SYNC_INTERVAL_MINS` | no | Defaults to 15; the in-season rate of the basketball lines job. With a key set, startup fails unless it divides a day evenly and is between 10 and 1440 |
 | `APP_TIMEZONE` | no | Defaults to `America/New_York` |
 | `DB_MAX_OPEN_CONNS` | no | Defaults to 20; must leave headroom under the database's own limit |
 | `PORT` | no | Defaults to 8080; most platforms inject this |

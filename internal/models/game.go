@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +13,26 @@ const (
 	SportFootball   = "football"
 	SportBasketball = "basketball"
 )
+
+// ParseSport reads a sport from a form. Absent means football, which is what a
+// league was before leagues had a sport; the second return is false for anything
+// else that is not a sport.
+func ParseSport(value string) (string, bool) {
+	switch value {
+	case "", SportFootball:
+		return SportFootball, true
+	case SportBasketball:
+		return SportBasketball, true
+	default:
+		return "", false
+	}
+}
+
+// BasketballSeasonLabel names a basketball season for display. The feed labels a
+// season by the year it ends in, so season 2027 is "2026-27".
+func BasketballSeasonLabel(season int) string {
+	return fmt.Sprintf("%d-%02d", season-1, season%100)
+}
 
 // GameStatus represents the current state of a game.
 type GameStatus string

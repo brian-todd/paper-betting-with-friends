@@ -13,6 +13,7 @@ import (
 	"github.com/brian/paper-betting-with-friends/internal/bets"
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
+	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -27,6 +28,7 @@ var (
 	ErrInvalidCode     = errors.New("invalid invite code")
 	ErrNotAuthorized   = errors.New("not authorized to perform this action")
 	ErrInvalidName     = errors.New("league name is required")
+	ErrInvalidSport    = errors.New("league sport is not one we offer")
 )
 
 // MaxLeagueNameLength bounds a league name to the width of the column that
@@ -39,15 +41,23 @@ type Service struct {
 	purseRepo     *repository.PurseRepository
 	betRecordRepo *repository.BetRecordRepository
 	holyLockRepo  *repository.HolyLockRepository
+
+	// location decides which calendar week a basketball bet falls in. See
+	// buildWeeklyStats.
+	location *time.Location
 }
 
 // NewService creates a new leagues service.
-func NewService(db *gorm.DB) *Service {
+func NewService(db *gorm.DB, loc *time.Location) *Service {
+	if loc == nil {
+		loc = time.UTC
+	}
 	return &Service{
 		leagueRepo:    repository.NewLeagueRepository(db),
 		purseRepo:     repository.NewPurseRepository(db),
 		betRecordRepo: repository.NewBetRecordRepository(db),
 		holyLockRepo:  repository.NewHolyLockRepository(db),
+		location:      loc,
 	}
 }
 
@@ -154,9 +164,15 @@ func (s *Service) GetAvailableLeagues(userID uuid.UUID) ([]models.League, error)
 }
 
 // CreateLeague creates a new league with the user as the admin.
-func (s *Service) CreateLeague(name string, creatorID uuid.UUID, isPublic bool, startingBalance decimal.Decimal) (*models.League, error) {
+func (s *Service) CreateLeague(name, sport string, creatorID uuid.UUID, isPublic bool, startingBalance decimal.Decimal) (*models.League, error) {
+	sport, ok := models.ParseSport(sport)
+	if !ok {
+		return nil, ErrInvalidSport
+	}
+
 	league := &models.League{
 		Name:            name,
+		Sport:           sport,
 		CreatedBy:       creatorID,
 		IsPublic:        &isPublic,
 		StartingBalance: startingBalance,
@@ -424,14 +440,20 @@ func (s *Service) GetWeeklyStats(leagueID, currentUserID uuid.UUID) ([]WeekStats
 	if err != nil {
 		return nil, err
 	}
-	return buildWeeklyStats(rows, currentUserID), nil
+	return buildWeeklyStats(rows, currentUserID, s.location), nil
 }
 
 // buildWeeklyStats pivots flat bet rows into per-week, per-user aggregates.
-func buildWeeklyStats(rows []repository.LeagueBetRow, currentUserID uuid.UUID) []WeekStats {
+//
+// Football weeks are the calendar's own. Basketball has none, so its bets group
+// by the Monday-to-Sunday week they tip off in, read in loc. That grouping is
+// this recap's alone: the basketball games pages browse by day and season.
+func buildWeeklyStats(rows []repository.LeagueBetRow, currentUserID uuid.UUID, loc *time.Location) []WeekStats {
 	type weekKey struct {
 		season int // -1 when unknown
 		week   int // -1 when unknown
+		// weekOf is the Unix time of a basketball week's Monday, zero for football.
+		weekOf int64
 	}
 	type userKey struct {
 		week weekKey
@@ -446,6 +468,9 @@ func buildWeeklyStats(rows []repository.LeagueBetRow, currentUserID uuid.UUID) [
 		}
 		if row.Week != nil {
 			key.week.week = *row.Week
+		}
+		if row.Sport == models.SportBasketball {
+			key.week.weekOf = timeutil.StartOfWeek(row.ScheduledAt, loc).Unix()
 		}
 
 		entry, ok := stats[key]
@@ -517,6 +542,14 @@ func buildWeeklyStats(rows []repository.LeagueBetRow, currentUserID uuid.UUID) [
 	}
 	// Newest first; rows with no calendar data sort last.
 	sort.Slice(weeks, func(i, j int) bool {
+		// Only a league holding bets from before leagues had a sport mixes the
+		// two, and a basketball season label says nothing about football's order.
+		if isBasketball := weeks[i].weekOf != 0; isBasketball != (weeks[j].weekOf != 0) {
+			return !isBasketball
+		}
+		if weeks[i].weekOf != weeks[j].weekOf {
+			return weeks[i].weekOf > weeks[j].weekOf
+		}
 		if weeks[i].season != weeks[j].season {
 			return weeks[i].season > weeks[j].season
 		}
@@ -532,7 +565,11 @@ func buildWeeklyStats(rows []repository.LeagueBetRow, currentUserID uuid.UUID) [
 			}
 			return strings.ToLower(users[i].Username) < strings.ToLower(users[j].Username)
 		})
-		result = append(result, WeekStats{Label: weekLabel(wk.season, wk.week), Rows: users})
+		label := weekLabel(wk.season, wk.week)
+		if wk.weekOf != 0 {
+			label = basketballWeekLabel(wk.season, time.Unix(wk.weekOf, 0).In(loc))
+		}
+		result = append(result, WeekStats{Label: label, Rows: users})
 	}
 	return result
 }
@@ -547,6 +584,11 @@ func weekLabel(season, week int) string {
 	default:
 		return "Unscheduled"
 	}
+}
+
+// basketballWeekLabel renders a season and the Monday of a calendar week.
+func basketballWeekLabel(season int, monday time.Time) string {
+	return models.BasketballSeasonLabel(season) + " · Week of " + monday.Format("Jan 2")
 }
 
 // LeaderboardSort names the column a league's standings are ordered by.

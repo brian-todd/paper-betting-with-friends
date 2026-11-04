@@ -17,6 +17,15 @@
             </div>
 
             <div class="form-group">
+                <label for="sport">Sport</label>
+                <select id="sport" name="sport" class="form-input">
+                    <option value="football">Football</option>
+                    <option value="basketball">Basketball</option>
+                </select>
+                <small class="form-hint">This can't be changed later. Each league has its own purses and standings.</small>
+            </div>
+
+            <div class="form-group">
                 <label for="starting_balance">Starting Balance</label>
                 <input type="number" id="starting_balance" name="starting_balance" value="1000" min="1" step="1" class="form-input">
                 <small class="form-hint">The amount each member starts with when joining this league.</small>

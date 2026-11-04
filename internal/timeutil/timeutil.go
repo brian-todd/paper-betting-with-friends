@@ -21,6 +21,29 @@ func StartOfDay(t time.Time, loc *time.Location) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, loc)
 }
 
+// CalendarDayInUTC returns t's calendar day in loc, written as midnight UTC, for
+// comparing against a feed value that is a date stored as a UTC instant.
+//
+// A poll dated Monday arrives as Monday 00:00 UTC, which is Sunday evening in the
+// US. Compared with the game's instant, or the end of its local day, a Sunday game
+// would read a poll not published until the day after it was played.
+func CalendarDayInUTC(t time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+	year, month, day := t.In(loc).Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+// StartOfWeek returns midnight on the Monday of t's calendar week in loc. It
+// steps back with AddDate for the reason StartOfDay gives: a day is not always 24
+// hours.
+func StartOfWeek(t time.Time, loc *time.Location) time.Time {
+	day := StartOfDay(t, loc)
+	sinceMonday := (int(day.Weekday()) + 6) % 7
+	return day.AddDate(0, 0, -sinceMonday)
+}
+
 // NextOnGrid advances t, which is already expressed in loc, to the next
 // multiple of interval since midnight.
 //

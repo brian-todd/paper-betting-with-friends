@@ -1,11 +1,16 @@
 package cbbdata
 
 import (
+	"context"
+	"slices"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/apibudget"
 	"github.com/brian/paper-betting-with-friends/internal/config"
+	"github.com/brian/paper-betting-with-friends/internal/fixtures"
+	"github.com/brian/paper-betting-with-friends/internal/fixtureserver"
 )
 
 func mustLoad(t *testing.T, name string) *time.Location {
@@ -44,16 +49,15 @@ func TestInSeason(t *testing.T) {
 
 func TestNextGamesSync(t *testing.T) {
 	eastern := mustLoad(t, "America/New_York")
-	const interval = 15 * time.Minute
 
 	tests := []struct {
 		name string
 		now  time.Time
 		want time.Time
 	}{
-		{"in season, the next point on the interval's grid",
+		{"in season, the next hour",
 			time.Date(2026, time.December, 5, 19, 7, 0, 0, eastern),
-			time.Date(2026, time.December, 5, 19, 15, 0, 0, eastern)},
+			time.Date(2026, time.December, 5, 20, 0, 0, 0, eastern)},
 		{"out of season, the next midnight",
 			time.Date(2026, time.July, 4, 19, 7, 0, 0, eastern),
 			time.Date(2026, time.July, 5, 0, 0, 0, 0, eastern)},
@@ -68,11 +72,11 @@ func TestNextGamesSync(t *testing.T) {
 			time.Date(2026, time.October, 25, 0, 0, 0, 0, eastern)},
 		{"and the run on that midnight takes the season's rate",
 			time.Date(2026, time.October, 25, 0, 0, 0, 0, eastern),
-			time.Date(2026, time.October, 25, 0, 15, 0, 0, eastern)},
+			time.Date(2026, time.October, 25, 1, 0, 0, 0, eastern)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NextGamesSync(tt.now, eastern, interval); !got.Equal(tt.want) {
+			if got := NextGamesSync(tt.now, eastern); !got.Equal(tt.want) {
 				t.Errorf("NextGamesSync(%v) = %v, want %v", tt.now, got, tt.want)
 			}
 		})
@@ -88,20 +92,35 @@ func TestNextGamesSyncReadsTheSeasonInItsLocation(t *testing.T) {
 	now := time.Date(2026, time.October, 25, 2, 0, 0, 0, time.UTC)
 
 	want := time.Date(2026, time.October, 25, 0, 0, 0, 0, eastern)
-	if got := NextGamesSync(now, eastern, 15*time.Minute); !got.Equal(want) {
+	if got := NextGamesSync(now, eastern); !got.Equal(want) {
 		t.Errorf("NextGamesSync(%v, Eastern) = %v, want Eastern midnight %v", now, got, want)
 	}
 
-	want = time.Date(2026, time.October, 25, 2, 15, 0, 0, time.UTC)
-	if got := NextGamesSync(now, nil, 15*time.Minute); !got.Equal(want) {
+	want = time.Date(2026, time.October, 25, 3, 0, 0, 0, time.UTC)
+	if got := NextGamesSync(now, nil); !got.Equal(want) {
 		t.Errorf("NextGamesSync(%v, nil) = %v, want UTC's own grid at %v", now, got, want)
 	}
 }
 
-// The lines run looks up games the games run writes, so in every slot it has
-// to come after the games run and before the next one -- at the rate of every
-// interval configuration accepts, and across both edges of the season.
-func TestLinesRunBetweenOneGamesRunAndTheNext(t *testing.T) {
+// /games dropping back onto the lines rate would cost ~2,200 a month and still
+// fit under the budget cap, so the rate is pinned on its own.
+func TestGamesRunHourlyThroughTheSeason(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+	day := time.Date(2026, time.December, 5, 0, 0, 0, 0, eastern)
+
+	runs := 0
+	for now := NextGamesSync(day, eastern); now.Before(day.AddDate(0, 0, 1)); now = NextGamesSync(now, eastern) {
+		runs++
+	}
+	if runs != 23 {
+		t.Errorf("%d games runs after midnight in a day, want 23 more on the hour", runs)
+	}
+}
+
+// The lines grid sits behind every other grid, at every interval configuration
+// accepts, so a lines run never lands on the instant a games run does -- which
+// is the race the lag exists to prevent.
+func TestLinesNeverLandOnAGamesRun(t *testing.T) {
 	eastern := mustLoad(t, "America/New_York")
 
 	for _, interval := range validIntervals(t) {
@@ -110,16 +129,175 @@ func TestLinesRunBetweenOneGamesRunAndTheNext(t *testing.T) {
 			time.Date(2027, time.April, 14, 0, 0, 0, 0, eastern),
 		} {
 			end := start.AddDate(0, 0, 4)
-			for games := NextGamesSync(start, eastern, interval); games.Before(end); {
-				next := NextGamesSync(games, eastern, interval)
-				lines := NextLinesSync(games, eastern, interval)
-				if !lines.After(games) || !lines.Before(next) {
-					t.Fatalf("interval %v: games runs at %v and %v, lines at %v -- not between them",
-						interval, games, next, lines)
+			for lines := NextLinesSync(start, eastern, interval); lines.Before(end); lines = NextLinesSync(lines, eastern, interval) {
+				if lines.Equal(NextGamesSync(lines.Add(-time.Nanosecond), eastern)) {
+					t.Fatalf("interval %v: lines and games both run at %v", interval, lines)
 				}
-				games = next
 			}
 		}
+	}
+}
+
+func TestNextScoreboardSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+	evening := time.Date(2026, time.December, 5, 19, 7, 0, 0, eastern)
+	july := time.Date(2026, time.July, 4, 19, 7, 0, 0, eastern)
+
+	tests := []struct {
+		name  string
+		now   time.Time
+		state ScoreboardState
+		want  time.Time
+	}{
+		{"a live game, the next five minutes", evening, ScoreboardState{Active: true},
+			time.Date(2026, time.December, 5, 19, 10, 0, 0, eastern)},
+		{"nothing live and nothing known, the next hour", evening, ScoreboardState{},
+			time.Date(2026, time.December, 5, 20, 0, 0, 0, eastern)},
+		{"a tip-off before the next hour brings the run forward", evening,
+			ScoreboardState{NextTip: new(time.Date(2026, time.December, 5, 19, 30, 0, 0, eastern))},
+			time.Date(2026, time.December, 5, 19, 30, 0, 0, eastern)},
+		{"a tip-off after the next hour does not", evening,
+			ScoreboardState{NextTip: new(time.Date(2026, time.December, 5, 21, 0, 0, 0, eastern))},
+			time.Date(2026, time.December, 5, 20, 0, 0, 0, eastern)},
+		{"out of season, the next midnight", july, ScoreboardState{},
+			time.Date(2026, time.July, 5, 0, 0, 0, 0, eastern)},
+		{"but a game out of season still gets the live rate", july, ScoreboardState{Active: true},
+			time.Date(2026, time.July, 4, 19, 10, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextScoreboardSync(tt.now, eastern, tt.state); !got.Equal(tt.want) {
+				t.Errorf("NextScoreboardSync() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextRankingsSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"a Wednesday waits for Monday evening", time.Date(2026, time.November, 4, 12, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 9, 18, 0, 0, 0, eastern)},
+		{"Monday evening's run is followed by Tuesday morning's", time.Date(2026, time.November, 9, 18, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 10, 6, 0, 0, 0, eastern)},
+		{"Tuesday morning's run waits a week", time.Date(2026, time.November, 10, 6, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 16, 18, 0, 0, 0, eastern)},
+		{"out of season it waits for the first slot in the season", time.Date(2027, time.July, 4, 12, 0, 0, 0, eastern),
+			time.Date(2027, time.October, 25, 18, 0, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextRankingsSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextRankingsSync(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextRatingsSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"before the slot runs that morning", time.Date(2026, time.November, 4, 4, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 4, 5, 0, 0, 0, eastern)},
+		{"on the slot waits a day", time.Date(2026, time.November, 4, 5, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 5, 5, 0, 0, 0, eastern)},
+		{"the season spans New Year", time.Date(2026, time.December, 31, 12, 0, 0, 0, eastern),
+			time.Date(2027, time.January, 1, 5, 0, 0, 0, eastern)},
+		{"the last day of the season is followed by the next season", time.Date(2027, time.April, 15, 5, 0, 0, 0, eastern),
+			time.Date(2027, time.October, 25, 5, 0, 0, 0, eastern)},
+		{"out of season it waits for the first slot in the season", time.Date(2027, time.July, 4, 12, 0, 0, 0, eastern),
+			time.Date(2027, time.October, 25, 5, 0, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextRatingsSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextRatingsSync(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextTeamStatsSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"mid-slot goes to the next one", time.Date(2026, time.November, 4, 7, 30, 0, 0, eastern),
+			time.Date(2026, time.November, 4, 12, 0, 0, 0, eastern)},
+		{"on a slot goes to the next one", time.Date(2026, time.November, 4, 12, 0, 0, 0, eastern),
+			time.Date(2026, time.November, 4, 18, 0, 0, 0, eastern)},
+		{"out of season it waits for the first slot in the season", time.Date(2027, time.July, 4, 12, 0, 0, 0, eastern),
+			time.Date(2027, time.October, 25, 0, 0, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextTeamStatsSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextTeamStatsSync(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextLineupsSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"before the offset, this hour's", time.Date(2026, time.December, 5, 19, 7, 0, 0, eastern),
+			time.Date(2026, time.December, 5, 19, 40, 0, 0, eastern)},
+		{"on the offset, the next hour's", time.Date(2026, time.December, 5, 19, 40, 0, 0, eastern),
+			time.Date(2026, time.December, 5, 20, 40, 0, 0, eastern)},
+		{"out of season, the next day's", time.Date(2026, time.July, 4, 19, 7, 0, 0, eastern),
+			time.Date(2026, time.July, 5, 0, 40, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextLineupsSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextLineupsSync(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextScheduleSync(t *testing.T) {
+	eastern := mustLoad(t, "America/New_York")
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"before the hour, today", time.Date(2026, time.December, 5, 3, 0, 0, 0, eastern),
+			time.Date(2026, time.December, 5, 4, 0, 0, 0, eastern)},
+		{"on the hour, tomorrow", time.Date(2026, time.December, 5, 4, 0, 0, 0, eastern),
+			time.Date(2026, time.December, 6, 4, 0, 0, 0, eastern)},
+		{"out of season it still runs, to find next season's games", time.Date(2026, time.July, 4, 12, 0, 0, 0, eastern),
+			time.Date(2026, time.July, 5, 4, 0, 0, 0, eastern)},
+		{"across a month end", time.Date(2026, time.December, 31, 5, 0, 0, 0, eastern),
+			time.Date(2027, time.January, 1, 4, 0, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextScheduleSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextScheduleSync(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -149,21 +327,28 @@ func TestDelaysAreAlwaysPositiveAcrossDST(t *testing.T) {
 	} {
 		for offset := range 48 * 60 {
 			now := start.Add(time.Duration(offset) * time.Minute)
+			for name, delay := range map[string]time.Duration{
+				"games":      GamesDelay(now, eastern),
+				"scoreboard": ScoreboardDelay(now, eastern, ScoreboardState{}),
+				"live":       ScoreboardDelay(now, eastern, ScoreboardState{Active: true}),
+				"schedule":   ScheduleDelay(now, eastern),
+				"lineups":    LineupsDelay(now, eastern),
+			} {
+				if delay < minDelay {
+					t.Fatalf("%s delay at %v = %v, under the %v floor", name, now, delay, minDelay)
+				}
+			}
 			for _, interval := range validIntervals(t) {
-				for name, delay := range map[string]time.Duration{
-					"games": GamesDelay(now, eastern, interval),
-					"lines": LinesDelay(now, eastern, interval),
-				} {
-					if delay < minDelay {
-						t.Fatalf("%s delay at %v, interval %v = %v, under the %v floor", name, now, interval, delay, minDelay)
-					}
-					// The repeated hour on the fall-back day stretches one step
-					// by an hour of absolute time; anything longer skipped a
-					// cycle.
-					if delay > interval+time.Hour {
-						t.Fatalf("%s delay at %v, interval %v = %v, longer than a step stretched by the fall-back",
-							name, now, interval, delay)
-					}
+				delay := LinesDelay(now, eastern, interval)
+				if delay < minDelay {
+					t.Fatalf("lines delay at %v, interval %v = %v, under the %v floor", now, interval, delay, minDelay)
+				}
+				// The repeated hour on the fall-back day stretches one step
+				// by an hour of absolute time; anything longer skipped a
+				// cycle.
+				if delay > interval+time.Hour {
+					t.Fatalf("lines delay at %v, interval %v = %v, longer than a step stretched by the fall-back",
+						now, interval, delay)
 				}
 			}
 		}
@@ -171,68 +356,133 @@ func TestDelaysAreAlwaysPositiveAcrossDST(t *testing.T) {
 }
 
 // The basketball jobs spend against the same meter as football, so this walks
-// real months at the real schedules, the way the football test does, and holds
-// them to basketball's share of the plan in internal/apibudget.
+// real months at the real schedules and holds them to basketball's share of the
+// plan in internal/apibudget.
 //
-// It counts at the shortest interval configuration accepts, not the default:
-// the default staying affordable says nothing about whether the knob is safe.
-// At ten minutes the worst month is ~9,000 -- 4,464 runs of each job in a
-// 31-day month and 80 restart calls. The default of fifteen is ~6,000.
+// It counts lines at the shortest interval configuration accepts, not the
+// default: the default staying affordable says nothing about whether the knob is
+// safe.
 //
-// And it holds the off-season months on their own, much lower cap, since the
-// throttle is the half of this change that saves anything: without it a July
-// costs what a January does, and still fits under the in-season cap.
+// The scoreboard's cost is decided by the games table, so it is driven by the
+// real 2025-26 schedule rather than a synthetic slate. Each game is held live for
+// assumedGameLength, which is longer than a real game on purpose, so the measured
+// ~10,000 for November is a ceiling.
+//
+// And it holds the off-season months on their own, much lower cap, since a July
+// at the in-season rate would still fit under the share.
 func TestBasketballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 	const (
-		// cbb-games and cbb-lines are one request each a run.
-		callsPerRun = 1
+		assumedGameLength = 3 * time.Hour
 
-		// As in the football test: a worst case, not an observed rate. Both
-		// jobs carry RunOnStart only when the process starts out of season,
-		// so each restart there is one extra run of each. They are counted in
-		// every month anyway, which overstates a season month by 80.
+		// As in the football test: a worst case, not an observed rate. Counted
+		// for each of the four jobs, though only cbb-schedule runs on start in
+		// season, which overstates a season month by 120.
 		restartsPerMonth = 40
+		jobs             = 4
+
+		// cbb-ratings (two requests) and cbb-team-stats (one) can run on start only
+		// in season, so a restart costs an off-season month nothing for them.
+		inSeasonRestartRequests = 3
 
 		// A month entirely out of season is a run a day of each job plus
-		// restarts: ~140. The cap is loose on purpose -- the regression it
-		// exists for is the throttle disappearing, which costs thousands.
-		offSeasonCap = 250
+		// restarts: ~285. The regression this exists for is a throttle
+		// disappearing, which costs thousands.
+		offSeasonCap = 400 + lineupsPerRun*31
 	)
 
 	eastern := mustLoad(t, "America/New_York")
 	interval := config.MinCBBSyncIntervalMins * time.Minute
+	tips := capturedTips(t)
 
-	countRuns := func(start, end time.Time, next func(time.Time) time.Time) (runs, inSeason int) {
+	stateAt := func(now time.Time) ScoreboardState {
+		// The first tip after now, and whether any game within the assumed length
+		// before it is still going. tips is sorted.
+		next := sort.Search(len(tips), func(i int) bool { return tips[i].After(now) })
+		state := ScoreboardState{Active: next > 0 && now.Sub(tips[next-1]) < assumedGameLength}
+		if next < len(tips) {
+			state.NextTip = &tips[next]
+		}
+		return state
+	}
+
+	count := func(start, end time.Time, next func(time.Time) time.Time) int {
+		runs := 0
 		for now := next(start); now.Before(end); now = next(now) {
 			runs++
-			if InSeason(now, eastern) {
-				inSeason++
-			}
 		}
-		return runs, inSeason
+		return runs
 	}
 
-	for year := 2026; year <= 2027; year++ {
-		for month := time.January; month <= time.December; month++ {
-			start := time.Date(year, month, 1, 0, 0, 0, 0, eastern)
-			end := start.AddDate(0, 1, 0)
+	// The captured season, then the year after it for the off-season.
+	for month := time.Date(2025, time.November, 1, 0, 0, 0, 0, eastern); month.Year() < 2027; month = month.AddDate(0, 1, 0) {
+		end := month.AddDate(0, 1, 0)
 
-			gamesRuns, gamesInSeason := countRuns(start, end, func(now time.Time) time.Time {
-				return NextGamesSync(now, eastern, interval)
-			})
-			linesRuns, linesInSeason := countRuns(start, end, func(now time.Time) time.Time {
-				return NextLinesSync(now, eastern, interval)
-			})
+		scoreboard := count(month, end, func(now time.Time) time.Time { return NextScoreboardSync(now, eastern, stateAt(now)) })
+		games := count(month, end, func(now time.Time) time.Time { return NextGamesSync(now, eastern) })
+		lines := count(month, end, func(now time.Time) time.Time { return NextLinesSync(now, eastern, interval) })
+		schedule := count(month, end, func(now time.Time) time.Time { return NextScheduleSync(now, eastern) })
+		rankings := count(month, end, func(now time.Time) time.Time { return NextRankingsSync(now, eastern) })
+		// The hard cap, not the games a month actually holds. Out of season nothing
+		// is due and this costs nothing, so it overstates those months.
+		lineups := lineupsPerRun * count(month, end, func(now time.Time) time.Time { return NextLineupsSync(now, eastern) })
 
-			calls := callsPerRun * (gamesRuns + linesRuns + 2*restartsPerMonth)
-			if calls > apibudget.Basketball {
-				t.Errorf("%d-%02d: %d games and %d lines runs plus %d restarts = %d calls, over basketball's %d share",
-					year, month, gamesRuns, linesRuns, restartsPerMonth, calls, apibudget.Basketball)
-			}
-			if gamesInSeason+linesInSeason == 0 && calls > offSeasonCap {
-				t.Errorf("%d-%02d is out of season but costs %d calls, over the %d an off-season month should",
-					year, month, calls, offSeasonCap)
+		// Two requests a run, one per rating table.
+		ratings := 2 * count(month, end, func(now time.Time) time.Time { return NextRatingsSync(now, eastern) })
+		teamStats := count(month, end, func(now time.Time) time.Time { return NextTeamStatsSync(now, eastern) })
+
+		calls := scoreboard + games + lines + schedule + rankings + lineups + ratings + teamStats + jobs*restartsPerMonth
+		if InSeason(month, eastern) || InSeason(end.Add(-time.Minute), eastern) {
+			calls += inSeasonRestartRequests * restartsPerMonth
+		}
+		t.Logf("%s: scoreboard %d, games %d, lines %d, schedule %d, rankings %d, lineups %d, ratings %d, team stats %d = %d",
+			month.Format("2006-01"), scoreboard, games, lines, schedule, rankings, lineups, ratings, teamStats, calls)
+
+		if calls > apibudget.Basketball {
+			t.Errorf("%s: %d calls is over basketball's %d share", month.Format("2006-01"), calls, apibudget.Basketball)
+		}
+		if !InSeason(month, eastern) && !InSeason(end.Add(-time.Minute), eastern) && calls > offSeasonCap {
+			t.Errorf("%s is out of season but costs %d calls, over the %d an off-season month should",
+				month.Format("2006-01"), calls, offSeasonCap)
+		}
+	}
+}
+
+// capturedTips is every tip-off of the captured 2025-26 season that was played,
+// sorted. It reads the month windows SeedAll fetches, through the real client.
+func capturedTips(t *testing.T) []time.Time {
+	t.Helper()
+
+	base, _, stop, err := fixtureserver.Listen(fixtures.CBBD)
+	if err != nil {
+		t.Fatalf("starting the fixture server: %v", err)
+	}
+	defer stop()
+	client := NewClientAt(base, "")
+
+	season := 2026
+	bounds := []string{
+		"2025-11-01T00:00:00.000Z", "2025-12-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z",
+		"2026-02-01T00:00:00.000Z", "2026-03-01T00:00:00.000Z", "2026-04-01T00:00:00.000Z",
+		"2026-05-01T00:00:00.000Z",
+	}
+
+	var tips []time.Time
+	for i := range len(bounds) - 1 {
+		games, err := client.GetGames(context.Background(), GameQueryOpts{
+			Season: &season, StartDateRange: &bounds[i], EndDateRange: &bounds[i+1],
+		})
+		if err != nil {
+			t.Fatalf("reading captured games: %v", err)
+		}
+		for _, g := range games {
+			if g.Status == "final" {
+				tips = append(tips, g.StartDate)
 			}
 		}
 	}
+	if len(tips) == 0 {
+		t.Fatal("the capture holds no played games, so the scoreboard would cost nothing")
+	}
+	slices.SortFunc(tips, time.Time.Compare)
+	return tips
 }

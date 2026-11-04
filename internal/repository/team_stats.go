@@ -59,6 +59,14 @@ func (r *TeamRatingRepository) FindForTeams(season int, teamIDs ...uuid.UUID) ([
 	return ratings, nil
 }
 
+// HasSeason reports whether any team holds a rating from this source for a season.
+func (r *TeamRatingRepository) HasSeason(season int, source models.RatingSource) (bool, error) {
+	var found bool
+	err := r.db.Raw(`SELECT EXISTS (SELECT 1 FROM team_ratings WHERE season = ? AND source = ?)`, season, source).
+		Scan(&found).Error
+	return found, err
+}
+
 // TeamRecordRepository provides access to season win-loss records.
 type TeamRecordRepository struct {
 	db *gorm.DB
@@ -82,6 +90,56 @@ func (r *TeamRecordRepository) Upsert(record *models.TeamRecord) error {
 			"updated_at",
 		}),
 	}).Create(record).Error
+}
+
+// TeamSplit is one team's home and away results in a season.
+type TeamSplit struct {
+	HomeWins, HomeLosses, AwayWins, AwayLosses int
+}
+
+// BasketballSplits works out each team's home and away results from the finished
+// games stored for a season, since basketball's feed reports only the overall record.
+// A neutral-site game is neither, and a level score cannot be final in basketball.
+func (r *TeamRecordRepository) BasketballSplits(season int) (map[uuid.UUID]TeamSplit, error) {
+	var rows []struct {
+		TeamID     uuid.UUID
+		HomeWins   int
+		HomeLosses int
+		AwayWins   int
+		AwayLosses int
+	}
+	err := r.db.Raw(`
+		WITH finished AS (
+			SELECT g.home_team_id, g.away_team_id, gr.home_score, gr.away_score
+			FROM games g
+			JOIN game_results gr ON gr.game_id = g.id
+			WHERE g.sport = ? AND g.season = ? AND NOT g.neutral_site AND gr.finalized_at IS NOT NULL
+		), sides AS (
+			SELECT home_team_id AS team_id,
+				(home_score > away_score)::int AS home_wins, (home_score < away_score)::int AS home_losses,
+				0 AS away_wins, 0 AS away_losses
+			FROM finished
+			UNION ALL
+			SELECT away_team_id,
+				0, 0,
+				(away_score > home_score)::int, (away_score < home_score)::int
+			FROM finished
+		)
+		SELECT team_id, SUM(home_wins) AS home_wins, SUM(home_losses) AS home_losses,
+			SUM(away_wins) AS away_wins, SUM(away_losses) AS away_losses
+		FROM sides GROUP BY team_id`, models.SportBasketball, season).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	splits := make(map[uuid.UUID]TeamSplit, len(rows))
+	for _, row := range rows {
+		splits[row.TeamID] = TeamSplit{
+			HomeWins: row.HomeWins, HomeLosses: row.HomeLosses,
+			AwayWins: row.AwayWins, AwayLosses: row.AwayLosses,
+		}
+	}
+	return splits, nil
 }
 
 // FindForTeams returns the season records for the given teams, keyed by team ID.
@@ -192,4 +250,58 @@ func (r *TeamAdvancedStatsRepository) FindForTeams(season int, teamIDs ...uuid.U
 		byTeam[row.TeamID] = row
 	}
 	return byTeam, nil
+}
+
+// TeamSeasonStatsRepository provides access to basketball season figures.
+type TeamSeasonStatsRepository struct {
+	db *gorm.DB
+}
+
+// NewTeamSeasonStatsRepository creates a new TeamSeasonStatsRepository.
+func NewTeamSeasonStatsRepository(db *gorm.DB) *TeamSeasonStatsRepository {
+	return &TeamSeasonStatsRepository{db: db}
+}
+
+// Upsert writes one team's season figures, replacing any previous value. Every column
+// is assigned, as in TeamRatingRepository.Upsert.
+func (r *TeamSeasonStatsRepository) Upsert(stats *models.TeamSeasonStats) error {
+	return r.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "team_id"}, {Name: "season"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"fetched_at", "games", "pace",
+			"offense_rating", "defense_rating",
+			"offense_effective_fg_pct", "defense_effective_fg_pct",
+			"offense_turnover_pct", "defense_turnover_pct",
+			"offense_rebound_pct", "defense_rebound_pct",
+			"offense_free_throw_rate", "defense_free_throw_rate",
+			"offense_three_pct", "defense_three_pct",
+			"updated_at",
+		}),
+	}).Create(stats).Error
+}
+
+// HasSeason reports whether any team holds figures for a season.
+func (r *TeamSeasonStatsRepository) HasSeason(season int) (bool, error) {
+	var found bool
+	err := r.db.Raw(`SELECT EXISTS (SELECT 1 FROM team_season_stats WHERE season = ?)`, season).Scan(&found).Error
+	return found, err
+}
+
+// FindForTeams returns the given teams' figures for a season, keyed by team ID. A team
+// with no row is absent from the map.
+func (r *TeamSeasonStatsRepository) FindForTeams(season int, teamIDs ...uuid.UUID) (map[uuid.UUID]models.TeamSeasonStats, error) {
+	if len(teamIDs) == 0 {
+		return nil, nil
+	}
+
+	var rows []models.TeamSeasonStats
+	if err := r.db.Where("season = ? AND team_id IN ?", season, teamIDs).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	stats := make(map[uuid.UUID]models.TeamSeasonStats, len(rows))
+	for _, row := range rows {
+		stats[row.TeamID] = row
+	}
+	return stats, nil
 }

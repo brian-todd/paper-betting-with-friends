@@ -68,6 +68,30 @@ func (r *TeamRepository) FindByExternalID(externalID int64, sport string) (*mode
 	return &team, nil
 }
 
+// IDsByExternalID maps external IDs to team IDs for one sport, so a feed that names
+// a thousand teams costs one query. An ID with no team is absent from the map.
+func (r *TeamRepository) IDsByExternalID(sport string, externalIDs []int64) (map[int64]uuid.UUID, error) {
+	if len(externalIDs) == 0 {
+		return map[int64]uuid.UUID{}, nil
+	}
+
+	var rows []models.Team
+	err := r.db.Select("id", "external_id").
+		Where("sport = ? AND external_id IN ?", sport, externalIDs).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make(map[int64]uuid.UUID, len(rows))
+	for _, row := range rows {
+		if row.ExternalID != nil {
+			ids[*row.ExternalID] = row.ID
+		}
+	}
+	return ids, nil
+}
+
 // FindByName retrieves a team by its name.
 func (r *TeamRepository) FindByName(name string) (*models.Team, error) {
 	var team models.Team
@@ -84,6 +108,20 @@ func (r *TeamRepository) FindByNameAndSport(name, sport string) (*models.Team, e
 		return nil, err
 	}
 	return &team, nil
+}
+
+// FindWithLogos returns one sport's teams that have a logo, in a stable order, with
+// only the columns a logo lookup needs.
+func (r *TeamRepository) FindWithLogos(sport string) ([]models.Team, error) {
+	var teams []models.Team
+	err := r.db.Select("external_id", "name", "logo_url").
+		Where("sport = ? AND logo_url IS NOT NULL AND logo_url <> ''", sport).
+		Order("external_id").
+		Find(&teams).Error
+	if err != nil {
+		return nil, err
+	}
+	return teams, nil
 }
 
 // SearchByName searches teams by name for a given sport using case-insensitive matching.

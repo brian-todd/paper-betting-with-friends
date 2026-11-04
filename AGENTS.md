@@ -245,6 +245,116 @@ the service, not the handler — see `basketball.Service.Today` / `ParseDate`.
 `cmd/server` imports `_ "time/tzdata"` so `LoadLocation` works even on an image
 without the tzdata package.
 
+### Basketball Days and Ranks
+
+The basketball pages browse by calendar day in `APP_TIMEZONE`, with no `weeks`
+rows. A calendar day is safe here: only 1 of 6,329 captured games tips after
+midnight Eastern, so there is no need for a "slate day". The pager moves between
+days that have games, so the holiday break and the off-season are not dead ends,
+and a season from the dropdown resolves to its nearest game day.
+
+The day page hides games without a line only when the day has a matching line.
+Books post late, so a future day usually has none, and hiding everything would read
+as nothing being scheduled. So "Bettable only" here is a preference rather than the
+strict filter it is on football's grid, and the page says when no lines are posted. A
+custom row is not a line: it is one bettor's number, so `gameHasOddsClause` and
+`oddsInRange` skip it, here, on football's grid and in the lineups queue.
+
+The day page takes football's filters through `games.ParseSubmittedFilter`, less
+division and kickoff day: the feed reports no division, and the page is already one
+day. The ranked filters read the same as-of poll the cards do, resolved first into
+`GameFilter.RankedTeamIDs`, because `rankedSide` reads football's weekly rankings.
+
+Ranks live in `poll_ranks`, not football's `team_rankings`, which hangs off
+`week_id`. A game reads the **latest AP poll on or before its calendar day**
+(`PollRankRepository.AsOf` with `timeutil.CalendarDayInUTC`). A poll date is a date
+stored as midnight UTC, which is the evening before in the US, so comparing it with
+a game's instant gives Sunday games a poll not yet published. It is never "this
+week's" poll, because polls skip weeks: AP has
+no rows for 2025-12-29, and neither poll publishes between Selection Sunday and the
+final one. Key on the poll date, not the feed's week number, which restarts in the
+postseason. Over a third of the feed's rows are teams only receiving votes, with a
+null rank, and those are dropped. `cbb-rankings` asks for the whole season each run,
+so a missed run repairs itself.
+
+### Basketball Logos
+
+Basketball's feed has no logos, so `syncTeams` looks for one in this order
+(`logoBook.logoFor`): football's team with the same ID as `sourceId`, football's team
+with the same name, then ESPN's image host by `sourceId`. The ID comes first because
+the feeds spell schools differently; football's rows are filtered to those with a logo
+first because 57 of its names are shared, usually with a stub. ESPN is only for a team
+with a conference, which in this feed is exactly Division I: it had all 99 of those
+football could not supply and only 5 of 40 sampled from the rest, who appear as
+opponents and would show a broken image.
+
+ESPN's host is not a documented API, and we are trying it to see how it looks. To stop,
+remove that branch from `logoFor` and re-run `cbb-seed`. Logos are only written by the
+seed, so either change needs one to reach existing rows. There is no shared school ID
+between the two sports' teams; nothing reads one yet, and `sourceId` is the key if
+something ever does.
+
+### Basketball Matchup
+
+The game page's Matchup and Efficiency panels are shared with football, branching on
+`Matchup.Sport` where the provider differs. `cbb-ratings` stores adjusted efficiency
+and SRS in `team_ratings`; `cbb-team-stats` stores the season figures in
+`team_season_stats` and the record in `team_records`.
+
+**A game reads its own season's rows and no other.** The provider publishes no adjusted
+or SRS ratings for a season's first days, and those pages show none rather than last
+season's, because rosters turn over. An empty answer is therefore a success. Like
+football's, these are current values, so a finished game shows them under the "as of"
+line and makes no claim about what they were at tip-off.
+
+Things the feed will not tell you:
+
+- **Elo fits nowhere but the game.** Values like 1571 overflow `team_ratings.overall`,
+  a `decimal(6,3)`, and `homeTeamEloStart` is free on `/games` anyway. The row is hidden
+  while both teams are at exactly 1500 (`basketballEloStart`): 211 of last November's
+  games and none after it, and 224 of 226 unplayed games in the first week of this
+  season. Reading 1500 against 1500 as "even" would be wrong.
+- **`turnoverRatio` changes scale between endpoints**: a fraction in `/stats/team/season`
+  (0.16) and a percentage in `/games/teams` (21.7). `APITeamSeasonSide.TurnoverPct`
+  works it out from the counts. Player `trueShootingPct` is a fraction too (0.636) where
+  the team's is a percentage (60.4). Everything stored is on a 0-100 scale.
+- **The feed's record is overall only.** Home and away are worked out from stored games
+  (`TeamRecordRepository.BasketballSplits`). A team outside Division I appears only for
+  games it played against one, so its record is that and no more.
+- **Coverage is close to Division I but not equal to it.** West Florida has no rating and
+  St. Francis (PA) does, and both-or-neither drops the row.
+
+There is no sample-size floor beyond a game each, matching football's low one, and the
+panel's footnote says how many games each side rests on.
+
+### Lineups
+
+**`/lineups` is not a team sheet.** It returns stats for five-man units computed from
+the play-by-play of games already played. There are no starters, injuries or
+projections, and the game page says so, because five names read like tonight's lineup.
+
+`cbb-lineups` asks `/lineups/game/{id}` once per finished game with a line and stores
+the sums in `game_lineups`. The game page shows a finished game's own units, or the
+team's most-used units from earlier in that season, added up across games and cut off
+at tip-off, so a page never credits a team with what came after it. `idHash` is the
+unit's player IDs joined, so it is stable across games. Every rate is worked out from
+summed counts (`models.LineupBox`), never averaged, and over a single game they match
+the feed's own to within rounding: eFG% on all 356 sides of the captured games.
+
+An empty answer is not an answer: it can mean not processed yet or never available,
+so `game_lineup_fetches` counts attempts and gives up after three, a day apart. A
+failed request is not an answer either, and does not count: it starts the same day's
+wait through `RecordFailure`, and only the lookback ends it, so an outage cannot
+abandon the games it touches. The feed's coverage can also be partial, and an opponent outside Division I has no units.
+
+`/lineups/team` can cut off at a date (`endDateRange`), so it could show a game as of
+tip-off, but only at a request per team per cutoff, about 3,000 a month for what the
+game endpoint already gives. A recap would need the game endpoint anyway.
+
+`lineupFetchRules.Lookback` is what stops a seed spending the budget: seeding a past
+season leaves thousands of games final with a line, and without it the job would walk
+them all. There is deliberately no backfill.
+
 ### Purse Operations
 
 Stake deduction is atomic — `DeductStake` uses a WHERE clause checking `balance >= amount`. On bet creation failure after deduction, always refund: `_ = s.purseRepo.CreditWinnings(...)`.
@@ -271,6 +381,24 @@ member comes back to the balance they had — otherwise leaving would reset a
 losing season. Every path that opens a purse goes through
 `PurseRepository.CreateIfAbsent`; a plain `Create` on rejoin collides with the
 old purse's primary key, which is how rejoining used to fail outright.
+
+### Leagues
+
+**A league plays one sport**, chosen when it is created and fixed after that, so a
+member of a football league and a basketball league holds two separate purses and
+appears in two separate standings. `ensureLeagueTakesBet` is where that is enforced,
+on all three placement paths, and the bet slip offers only the game's sport's
+leagues. The check is at placement alone: bets placed before leagues had a sport
+stay where they are and settle normally, so nothing that edits, cancels or pays a
+bet may assume the league and the game agree.
+
+My Bets filters by sport, because the two number their seasons differently and
+overlap: season 2026 is fall 2026 in football and the winter before it in basketball.
+
+The weekly recap groups a football league by its calendar weeks and basketball by
+the Monday-to-Sunday week in `APP_TIMEZONE` (`timeutil.StartOfWeek`). That grouping
+belongs to the recap: basketball has no `weeks` rows, and its games pages browse by
+day and season. Holy Lock stays football-only.
 
 ### Bets
 
@@ -358,9 +486,30 @@ Anything new that reads a score has to decide which of the two it wants.
 
 Live football scores come from `/scoreboard`, not `/games`. CFBD's `/games`
 returns null points until `completed` flips true, so the nil-`FinalizedAt` path
-never runs from there; `internal/cfbdata/scoreboard.go` is what fills it. The
-basketball feed reports a real status and filters on `status=in_progress`, so it
-may well carry live points — unverified, as it was checked out of season.
+never runs from there; `internal/cfbdata/scoreboard.go` is what fills it.
+
+**Basketball has a scoreboard too** (`internal/cbbdata/scoreboard.go`, Patreon
+Tier 1), and it finalizes games the same way, leaving the payout to the
+`bet-settlement` job. Three things differ from football. One request covers the
+whole slate, including non-Division I opponents. It says `final` where football
+says `completed`. And **both feeds report a scheduled game as 0-0, and `/games`
+does the same for postponed and cancelled ones**, so whether points are a score
+is decided by the status, never by their presence. A `final` the score cannot
+back up, level or missing a side, is not believed by either feed: `finalIsCredible`
+keeps the score provisional, because basketball has no ties and none of the ~6,300
+finals in the captured season is one. The scoreboard leaves the status alone, and
+`/games`, which writes a status on every row, stores `in_progress`. `/games` matters
+more here, since it settles the moment it finalizes. A `final` at 0-0 goes further
+(`reportsNoPlay`): it is the placeholder rather than a reading, so no result is written
+and `/games` stores `scheduled`.
+
+**`/games` cannot take a live basketball game back to `scheduled`.** It reports a status
+rather than inferring one, and it lags the scoreboard, so `Upsert` keeps `in_progress`
+over an incoming `scheduled` for basketball. Football cannot share the rule: its status
+is inferred from the kickoff, so `scheduled` there can be a game that has moved. A
+kickoff `/games` writes back is not guarded, so placing and editing a bet, which read the
+kickoff, can stay open until the next scoreboard run on a tip-off moved earlier, the
+same flap football has below.
 
 **Two feeds write a football game, and they disagree for minutes at a time.**
 The scoreboard calls a game over within five minutes; `/games` keeps inferring
@@ -460,7 +609,8 @@ tables are keyed by one.
 `Game.Status` is reported for any football game the scoreboard covers, and
 *inferred* (`now > startDate + 5min`) for the rest — which is every division
 outside `CFB_SCOREBOARD_CLASSIFICATIONS` and every game outside the current
-week. Basketball takes its status from the API.
+week. Basketball takes its status from whichever of its two feeds wrote last,
+and both report one.
 
 The line score is the exception: it stays on `GameResult`, where the score
 lives, and `PeriodScores(sport)` zips the two sides into columns for the game
@@ -527,6 +677,10 @@ type.
   unplayed week` in the level-1 test is what notices; if it fails after a
   capture run, `git checkout` that directory rather than editing the test.
   Recording a *new* unplayed week is the way to replace it
+- **Basketball has an unplayed capture too.** `/games` for 2026-11-05 was
+  recorded the morning before it was played, with every game `scheduled` at 0-0,
+  and `TestAnUnplayedDayStoresNoScores` rests on it. The same rule applies: do not
+  re-record it
 - **`make capture` replaces a route's capture; it refuses to replace a
   sequence.** The server replays oldest-first, so appending a second capture of
   a single-shot endpoint leaves the seed reading the stale one forever. A route
@@ -912,30 +1066,66 @@ requests a month and the football jobs are most of it:
   covers the case the six-hour grid cannot: `NextDelay` is recomputed on every
   start, so a process restarting faster than its interval never reaches the
   timer, and this job would never run at all
-- `cbb-games` and `cbb-lines` share one cadence (`cbbdata.NextGamesSync`):
-  `CBB_SYNC_INTERVAL_MINS` from October 25 to April 15, once a day outside it,
-  ~5,800 a month between them in season and ~60 out. They are two jobs so a
-  failing `/games` no longer skips `/lines` and a line snapshot with it — not
-  to slow `/games` the way football's was. Basketball has no scoreboard, so
-  `/games` is its only source of scores, statuses and settlement. The lines
-  run `linesLag` (five minutes) behind the games: `syncLines` skips a game it
-  cannot find, so racing the games run in one slot drops a new game's lines
-  until the next — a day, out of season. `RunOnStart` is set only when the
-  process starts out of season, where the slot is a day long; in season it
-  would be two metered requests on every Air reload for nothing. The interval
-  is a grid step, so when a basketball key is set `Config.Validate` refuses
-  one that does not divide a day or lies outside 10–1440: zero divides by it,
-  100 runs at irregular spacing across midnight, and under ten the pair
-  outspend their share
+- `cbb-scoreboard` polls every 5 minutes while a game is being played, hourly
+  in season otherwise and daily out of it (`cbbdata.ScoreboardDelay`), at one
+  request a run: ~4,650 in the worst month, measured against the real 2025-26
+  schedule with every game held live for three hours. Like football's, what
+  decides the rate is the games table, and the admin sync page shows the same
+  two facts through the same function
+- `cbb-games` runs hourly from October 25 to April 15 and daily outside it
+  (`cbbdata.NextGamesSync`), ~745 a month. It is not slowed to football's six
+  hours because the scoreboard only reaches a day or so either side of now and
+  never writes `postponed` or `cancelled`, so `/games` is the backstop for
+  anything it misses and the only source of those two statuses
+- `cbb-lines` follows `CBB_SYNC_INTERVAL_MINS` in season and runs daily out of
+  it, ~2,975 a month at the default, on a grid `linesLag` (five minutes) behind
+  the hour so it never lands on a games run. The interval is a grid step, so when
+  a basketball key is set `Config.Validate` refuses one that does not divide a
+  day or lies outside 10–1440: zero divides by it, 100 runs at irregular spacing
+  across midnight, and under ten it outspends its share. Books post late: at 8am
+  on the day of one capture, 10 of that night's 27 games had a quote and none of
+  the next day's 66 did, so a game with no line is usually a game with no line
+  *yet*
+- `cbb-schedule` runs once a day, all year, from a week back to a month ahead
+  (`cbbdata.NextScheduleSync`), ~30 a month. The incremental window only reaches
+  three days ahead, so without it the day picker is empty beyond that; and its
+  week of lookback repairs a game left unfinished by an outage longer than the
+  incremental window's one day. It carries `RunOnStart`; the other three do so
+  only when the process starts out of season, where the slot is a day long and in
+  season it would be metered requests on every Air reload for nothing
+
+- `cbb-rankings` checks Monday at 6pm and Tuesday at 6am local through the season
+  and not at all outside it (`cbbdata.NextRankingsSync`), ~10 a month. Weekly polls
+  are dated Mondays, but the date does not say when the feed has them. `RunOnStart`
+  is set only while the season has no poll stored (`RankingsMissing`), never from how
+  old the newest poll is: AP goes weeks without publishing, so age would spend a
+  request on every restart for nothing new. A slot missed while the process was down
+  waits for the next one or the admin page's manual run. `cbb-seed` fetches ranks as
+  well, because a run before teams are stored places none of them, and fails rather
+  than reporting success
+
+- `cbb-lineups` runs hourly in season and daily out of it (`cbbdata.NextLineupsSync`),
+  asking about at most `lineupsPerRun` (3) games a run, so ~2,230 a month at most
+  against ~1,550 games a month with a line. It has no `RunOnStart`: it works through
+  a queue, so a missed run loses nothing. A peak day of 155 games takes a couple of
+  days to drain
+
+- `cbb-ratings` runs daily at 5am local in season and not at all outside it
+  (`cbbdata.NextRatingsSync`), two requests a run, ~60 a month
+- `cbb-team-stats` runs every six hours in season and not at all outside it
+  (`cbbdata.NextTeamStatsSync`), one request for every team, ~120 a month. Both carry
+  `RunOnStart` only while the season has none stored, as `cbb-rankings` does
 
 The allowance is split in `internal/apibudget` — a share for each sport and a
 reserve for the jobs no test counts — and each sport's cadence test holds its
 worst month to its own share. `apibudget`'s own test checks the shares still fit
 the allowance, so neither sport can pass by raising its number.
-`TestBasketballCadenceStaysWithinMonthlyCallBudget` counts at the ten-minute
-floor rather than the default, and holds an off-season month to a few hundred —
-which is what notices the throttle going missing, since a July at the in-season
-rate still fits under the share.
+`TestBasketballCadenceStaysWithinMonthlyCallBudget` counts lines at the
+ten-minute floor rather than the default, drives the scoreboard from the captured
+season, and holds an off-season month to a few hundred — which is what notices the
+throttle going missing, since a July at the in-season rate still fits under the
+share. `TestGamesRunHourlyThroughTheSeason` pins the `/games` rate, which the cap
+would not notice.
 
 `TestFootballCadenceStaysWithinMonthlyCallBudget` walks real months at all
 three schedules and fails if a change to any of them overruns the plan, capped
@@ -1024,6 +1214,14 @@ a migration is the wrong place to decide that.
 - `.Format` on a `time.Time` in a template — use `localTime`, or the server's UTC leaks into the UI
 - `Truncate(24 * time.Hour)` or `Add(24 * time.Hour)` for calendar days — use `timeutil.StartOfDay` and `AddDate`
 - Saving a whole bet row — a preloaded association overwrites the foreign key and a stale status overwrites a cancel or a settlement; write named columns, conditionally, as `UpdateIfPending` does
+- Reading a basketball rank from "this week's" poll or the feed's week number — polls skip weeks and week numbers restart in the postseason; use the latest poll date on or before the game
+- Counting a custom odds row as a line the game offers — one bet would switch everyone's day page to that game alone, with no odds to show
+- Showing last season's ratings on this season's games — rosters turn over; a game reads its own season's rows
+- Storing a feed's `turnoverRatio` as it comes — it is a fraction on one endpoint and a percentage on another; work it out from the counts
+- Treating `/lineups` as who is playing tonight — it is what units did in games already played
+- Removing the lookback from the lineups queue — a seeded past season is thousands of due games, each a metered request
+- Scanning `MAX` or `MIN` into a `*time.Time` — over no rows the aggregate is NULL and the scan errors; use `sql.NullTime`
+- Assuming a bet's league and game are the same sport anywhere but placement — bets from before leagues had a sport do not, and they still have to settle
 - Moving a bet's status and a purse outside `inTx` — a credit that fails after the status commits leaves the bet settled and unpaid, and nothing retries it
 - Treating a `GameResult` as final — check `IsFinal()`, or bets settle on a live score
 - Crediting a purse for a settled bet without first winning `SettleIfPending` — the settlement sweep is not the only caller, and a bet read as pending twice is paid twice. A cancel's refund is gated the same way, on `CancelIfPending`
@@ -1046,7 +1244,8 @@ a migration is the wrong place to decide that.
 - Re-capturing an *unplayed* week — its value is that the games had not happened, and a refresh destroys it silently
 - Inferring a status from a `startTimeTBD` placeholder or a zero `startDate` — both are instants the feed does not mean, and `advancesFrom` has no edge back from the `in_progress` they produce
 - A unique index on a display string — the one on `teams.abbreviation` cost 107 basketball teams and the 49 games that needed them, because `Upsert` arbitrates a different index and the violation was logged and continued past
-- Slowing basketball's `/games` to football's schedule rate — there is no basketball scoreboard behind it, so it is the score feed and the settlement trigger
+- Slowing basketball's `/games` to football's six hours — the scoreboard only reaches about a day either side of now and never writes `postponed` or `cancelled`, so `/games` is still the backstop for both
+- Treating a basketball feed's points as a score without checking the status — both feeds report a scheduled game as 0-0
 - Raising a share in `internal/apibudget` to make a cadence test pass — the shares are the plan; overrunning one is the finding
 - Deltas in `odds_movements` — store the whole line at each change; a delta log turns one lost row into every later value being wrong
 - Writing a book's quotes one by one in a lines sync — fold them with `quotesBySource` first, or a book under two spellings records a phantom move every run

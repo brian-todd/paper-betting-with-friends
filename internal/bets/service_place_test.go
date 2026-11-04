@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
+	"github.com/brian/paper-betting-with-friends/internal/testdb"
 )
 
 // Every refusal to place a bet has to leave the purse and the bet tables as it
@@ -164,5 +165,90 @@ func TestPlaceBetWithCustomLineWritesACustomOddsRow(t *testing.T) {
 	}
 	if !bet.SpreadSnapshot.Equal(dec("7")) || !bet.OddsSnapshot.Equal(dec("-105")) {
 		t.Errorf("snapshot = %s at %s, want 7 at -105", bet.SpreadSnapshot, bet.OddsSnapshot)
+	}
+}
+
+// A league plays one sport, and the rule has to hold for all three bet types,
+// each with its own placement path. A refusal has to leave the purse alone.
+func TestPlacingABetRequiresTheLeaguesSport(t *testing.T) {
+	kickoff := placedAt.Add(2 * time.Hour)
+	stake := dec("100")
+
+	// place tries each bet type on game, returning what each one answered.
+	place := func(h *harness, game *models.Game) map[string]error {
+		spread, moneyLine, total := h.lines(game)
+		_, spreadErr := h.svc.CreateSpreadBet(CreateSpreadBetInput{
+			UserID: h.owner.ID, LeagueID: h.league.ID, GameID: game.ID,
+			Pick: models.SpreadPickHome, Stake: stake, OddsID: &spread.ID,
+		})
+		_, moneyLineErr := h.svc.CreateMoneyLineBet(CreateMoneyLineBetInput{
+			UserID: h.owner.ID, LeagueID: h.league.ID, GameID: game.ID,
+			Pick: models.MoneyLinePickHome, Stake: stake, OddsID: &moneyLine.ID,
+		})
+		_, totalErr := h.svc.CreateOverUnderBet(CreateOverUnderBetInput{
+			UserID: h.owner.ID, LeagueID: h.league.ID, GameID: game.ID,
+			Pick: models.OverUnderPickOver, Stake: stake, OddsID: &total.ID,
+		})
+		return map[string]error{"spread": spreadErr, "money line": moneyLineErr, "over/under": totalErr}
+	}
+	setLeagueSport := func(h *harness, sport string) {
+		h.t.Helper()
+		if err := h.db.Model(h.league).Update("sport", sport).Error; err != nil {
+			h.t.Fatalf("setting league sport: %v", err)
+		}
+	}
+	gameOf := func(h *harness, sport string) *models.Game {
+		return testdb.InsertGame(h.t, h.db, models.Game{Sport: sport, ScheduledAt: kickoff})
+	}
+
+	tests := []struct {
+		name        string
+		leagueSport string
+		gameSport   string
+		wantErr     error
+		wantBalance string
+	}{
+		{"a basketball game in a football league", models.SportFootball, models.SportBasketball, ErrLeagueWrongSport, "1000"},
+		{"a football game in a basketball league", models.SportBasketball, models.SportFootball, ErrLeagueWrongSport, "1000"},
+		{"a basketball game in a basketball league", models.SportBasketball, models.SportBasketball, nil, "700"},
+		{"a football game in a football league", models.SportFootball, models.SportFootball, nil, "700"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			setLeagueSport(h, tt.leagueSport)
+
+			for kind, err := range place(h, gameOf(h, tt.gameSport)) {
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("%s bet: error = %v, want %v", kind, err, tt.wantErr)
+				}
+			}
+			h.requireBalance(h.owner, tt.wantBalance)
+		})
+	}
+}
+
+// Basketball bets were placed in football leagues before leagues had a sport.
+// They have to keep working: the rule is about placing a bet, not holding one.
+func TestABetFromBeforeLeaguesHadASportStillSettles(t *testing.T) {
+	h := newHarness(t)
+	kickoff := placedAt.Add(2 * time.Hour)
+
+	game := testdb.InsertGame(t, h.db, models.Game{Sport: models.SportFootball, ScheduledAt: kickoff})
+	spread, _, _ := h.lines(game)
+	bet := h.placeSpread(h.owner, game, spread, models.SpreadPickHome, "100")
+
+	// The same shape as a real leftover: the bet's game and its league disagree.
+	if err := h.db.Model(game).Update("sport", models.SportBasketball).Error; err != nil {
+		t.Fatalf("changing the game's sport: %v", err)
+	}
+
+	finalizedAt := kickoff.Add(3 * time.Hour)
+	h.score(game, 80, 70, &finalizedAt)
+	if err := h.svc.EvaluateBetsForGame(game.ID); err != nil {
+		t.Fatalf("EvaluateBetsForGame: %v", err)
+	}
+	if got := h.status(&models.SpreadBet{}, bet.ID); got != models.BetStatusWon {
+		t.Errorf("status = %q, want won", got)
 	}
 }

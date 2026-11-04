@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/brian/paper-betting-with-friends/internal/models"
 	"html/template"
 	"io"
 	"io/fs"
@@ -204,6 +205,7 @@ func (r *Renderer) loadTemplates() error {
 			))
 		},
 		// deref dereferences a pointer to int.
+		"basketballSeason": models.BasketballSeasonLabel,
 		"deref": func(p *int) int {
 			if p == nil {
 				return 0

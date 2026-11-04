@@ -19,6 +19,11 @@ const (
 	RatingSourceSP   RatingSource = "sp+"
 	RatingSourceFPI  RatingSource = "fpi"
 	RatingSourceCORE RatingSource = "core"
+
+	// Basketball's two. Adjusted is points per 100 possessions against an average
+	// opponent, its overall being net rating. SRS is points above an average team.
+	RatingSourceAdjusted RatingSource = "adjusted"
+	RatingSourceSRS      RatingSource = "srs"
 )
 
 // TeamRating is one model's current rating of one team for one season.
@@ -101,6 +106,10 @@ func (s RatingSource) Label() string {
 		return "FPI"
 	case RatingSourceCORE:
 		return "CORE"
+	case RatingSourceAdjusted:
+		return "Adjusted"
+	case RatingSourceSRS:
+		return "SRS"
 	default:
 		return string(s)
 	}

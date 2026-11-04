@@ -155,8 +155,8 @@ func TestRatingsAreFBSOnlyOnlyWhenExactlyOneSideIsRated(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := matchupWith(tt.homeSP, tt.awaySP).RatingsAreFBSOnly(); got != tt.want {
-				t.Errorf("RatingsAreFBSOnly() = %v, want %v", got, tt.want)
+			if got := matchupWith(tt.homeSP, tt.awaySP).CoverageNote() != ""; got != tt.want {
+				t.Errorf("CoverageNote() drawn = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -166,7 +166,7 @@ func TestRatingsAreFBSOnlyOnlyWhenExactlyOneSideIsRated(t *testing.T) {
 // safe too: the template calls these on a game that has none.
 func TestHasAnyAndNilReceiversAreSafe(t *testing.T) {
 	var absent *Matchup
-	if absent.HasAny() || absent.HasElo() || absent.RatingsAreFBSOnly() {
+	if absent.HasAny() || absent.HasElo() || absent.CoverageNote() != "" {
 		t.Error("a nil matchup reported content")
 	}
 	if absent.RatingRows() != nil || absent.SPProjection() != nil || absent.AsOf() != nil {
@@ -178,16 +178,21 @@ func TestHasAnyAndNilReceiversAreSafe(t *testing.T) {
 		t.Error("an empty matchup reported content")
 	}
 
-	// Pregame Elo arrives with the game rather than the stats sync, so it is on
-	// its own enough to draw the panel.
+	// The Elo row needs both sides, so one side's Elo leaves nothing to draw.
 	elo := 1681
 	empty.Home.PregameElo = &elo
-	if !empty.HasAny() {
-		t.Error("a matchup with a pregame Elo reported no content")
-	}
-	// ...but the Elo row still needs both sides.
 	if empty.HasElo() {
 		t.Error("HasElo() true with only one side")
+	}
+	if empty.HasAny() {
+		t.Error("a matchup with one side's Elo reported content")
+	}
+
+	// Pregame Elo arrives with the game rather than the stats sync, so both sides'
+	// are on their own enough to draw the panel.
+	empty.Away.PregameElo = &elo
+	if !empty.HasAny() {
+		t.Error("a matchup with a pregame Elo reported no content")
 	}
 }
 

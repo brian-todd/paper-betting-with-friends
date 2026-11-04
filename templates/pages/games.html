@@ -238,7 +238,7 @@
                          the clock says "live" and more. The scoreboard is the
                          only feed that reports it, so games outside its
                          divisions fall back to the plain label. -->
-                    {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel}}{{.}}{{else}}Live{{end}}{{end}}
+                    {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel .Game.Sport}}{{.}}{{else}}Live{{end}}{{end}}
                     {{if eq .Game.Status "final"}}Final{{end}}
                     {{if eq .Game.Status "postponed"}}Postponed{{end}}
                     {{if eq .Game.Status "cancelled"}}Cancelled{{end}}

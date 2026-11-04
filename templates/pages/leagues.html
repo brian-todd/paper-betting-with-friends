@@ -54,6 +54,7 @@
                 </div>
                 {{end}}
                 <div class="league-meta">
+                    <span class="badge">{{.SportLabel}}</span>
                     <span class="badge {{if .IsPublic}}badge-public{{else}}badge-private{{end}}">
                         {{if .IsPublic}}Public{{else}}Private{{end}}
                     </span>
@@ -92,6 +93,7 @@
             <div class="league-card">
                 <h3>{{.Name}}</h3>
                 <div class="league-meta">
+                    <span class="badge">{{.SportLabel}}</span>
                     <span class="member-count">{{len .Members}} members</span>
                 </div>
                 <p class="text-muted">Created by {{.Creator.Username}}</p>

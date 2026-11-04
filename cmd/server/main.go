@@ -390,28 +390,32 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 		cbbSyncService := cbbdata.NewSyncService(cbbdata.NewClient(cfg.CBBDataAPIKey), db)
 		cbbSyncService.SetBetEvaluator(evaluator)
 
-		// Two jobs on one cadence: CBB_SYNC_INTERVAL_MINS through the season,
-		// once a day outside it, with the lines a few minutes behind the games
-		// so a newly listed game is written before its lines look for it. They
-		// were one job, and a /games failure then skipped /lines too -- a lost
-		// line snapshot for every games error. Games is not slowed the way
-		// football's was, because basketball has no scoreboard: /games is where
-		// the score and the settlement come from. See cbbdata.NextGamesSync.
+		// Each feed has its own rate; schedule.go explains why. The scoreboard
+		// finalizes games and the bet-settlement job pays out, so /games is only
+		// the hourly backstop for what the scoreboard misses, and lines keep
+		// CBB_SYNC_INTERVAL_MINS.
 		//
 		// RunOnStart only out of season, where the slot is a day long and a
 		// process restarting more often than that would never run either. In
-		// season the next slot is minutes away, and a run on every start --
-		// every Air reload, in development -- would be two metered requests
-		// buying nothing. The two startup runs do race each other, so a game
-		// neither had seen can miss its lines until the next day's run; that is
-		// out of season only, and a game three days from tipoff.
+		// season the next slot is close, and a run on every start -- every Air
+		// reload, in development -- would be metered requests buying nothing.
 		cbbInterval := time.Duration(cfg.CBBSyncIntervalMins) * time.Minute
 		cbbRunOnStart := !cbbdata.InSeason(time.Now(), location)
+		sched.Add(scheduler.Job{
+			Name:  "cbb-scoreboard",
+			Label: "Basketball live scores",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.ScoreboardDelay(now, location, cbbSyncService.ScoreboardState(now))
+			},
+			RunOnStart: cbbRunOnStart,
+			Timeout:    scoreboardRunTimeout,
+			Run:        cbbSyncService.SyncScoreboard,
+		})
 		sched.Add(scheduler.Job{
 			Name:  "cbb-games",
 			Label: "Basketball games",
 			NextDelay: func(now time.Time) time.Duration {
-				return cbbdata.GamesDelay(now, location, cbbInterval)
+				return cbbdata.GamesDelay(now, location)
 			},
 			RunOnStart: cbbRunOnStart,
 			Timeout:    syncRunTimeout,
@@ -428,9 +432,71 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			Run:        cbbSyncService.SyncLines,
 		})
 
-		// As above, and more so: the basketball incremental sync only looks at
-		// a few days either side of today, so the season only exists at all if
-		// something seeded it.
+		// The incremental window only reaches three days ahead, so this is what
+		// puts the rest of the month on the day picker. RunOnStart for the reason
+		// cfb-team-stats gives: a daily slot is longer than the gap between two
+		// deploys.
+		sched.Add(scheduler.Job{
+			Name: "cbb-schedule",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.ScheduleDelay(now, location)
+			},
+			RunOnStart: true,
+			Timeout:    syncRunTimeout,
+			Run:        cbbSyncService.SyncSchedule,
+		})
+
+		// Polls move weekly, and this is the job's only spend. RunOnStart only while
+		// the season has no poll stored, so an established season's restarts cost
+		// nothing. cbb-seed fetches ranks too, since a run before teams exist fails.
+		sched.Add(scheduler.Job{
+			Name:  "cbb-rankings",
+			Label: "Basketball rankings",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.RankingsDelay(now, location)
+			},
+			RunOnStart: cbbSyncService.RankingsMissing(time.Now(), location),
+			Timeout:    syncRunTimeout,
+			Run:        cbbSyncService.SyncRankings,
+		})
+
+		// One request reads every team, and nothing moves them out of season. RunOnStart
+		// only while the season has none stored, as with cbb-rankings.
+		sched.Add(scheduler.Job{
+			Name:  "cbb-ratings",
+			Label: "Basketball ratings",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.RatingsDelay(now, location)
+			},
+			RunOnStart: cbbSyncService.RatingsMissing(time.Now(), location),
+			Timeout:    syncRunTimeout,
+			Run:        cbbSyncService.SyncRatings,
+		})
+		sched.Add(scheduler.Job{
+			Name:  "cbb-team-stats",
+			Label: "Basketball team stats",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.TeamStatsDelay(now, location)
+			},
+			RunOnStart: cbbSyncService.TeamStatsMissing(time.Now(), location),
+			Timeout:    syncRunTimeout,
+			Run:        cbbSyncService.SyncTeamStats,
+		})
+
+		// Works through a queue of finished games, a few requests a run, so a run
+		// that is missed loses nothing and there is no reason to run on start.
+		sched.Add(scheduler.Job{
+			Name:  "cbb-lineups",
+			Label: "Basketball lineups",
+			NextDelay: func(now time.Time) time.Duration {
+				return cbbdata.LineupsDelay(now, location)
+			},
+			Timeout: syncRunTimeout,
+			Run:     cbbSyncService.SyncLineups,
+		})
+
+		// Teams and venues are synced by nothing else, and syncGames skips any
+		// game whose teams it cannot find, so a new season needs this run once.
 		sched.Add(scheduler.Job{
 			Name:       "cbb-seed",
 			ManualOnly: true,

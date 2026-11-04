@@ -5,6 +5,7 @@
             <a href="/leagues" class="btn btn-secondary btn-sm">← Back to Leagues</a>
             <h1>{{.League.Name}}</h1>
             <div class="league-badges">
+                <span class="badge">{{.League.SportLabel}}</span>
                 <span class="badge {{if .League.IsPublic}}badge-public{{else}}badge-private{{end}}">
                     {{if .League.IsPublic}}Public{{else}}Private{{end}}
                 </span>

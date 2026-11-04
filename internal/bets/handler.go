@@ -65,6 +65,14 @@ func (h *Handler) ListBets(w http.ResponseWriter, r *http.Request) {
 	// Parse filter parameters.
 	filter := BetListFilter{}
 
+	// ParseSport reads an empty value as football, which is a league's default and
+	// not what an unset filter means here.
+	if sportStr := r.URL.Query().Get("sport"); sportStr != "" {
+		if sport, ok := models.ParseSport(sportStr); ok {
+			filter.Sport = &sport
+		}
+	}
+
 	if seasonStr := r.URL.Query().Get("season"); seasonStr != "" {
 		if season, err := strconv.Atoi(seasonStr); err == nil {
 			filter.Season = &season
@@ -96,22 +104,33 @@ func (h *Handler) ListBets(w http.ResponseWriter, r *http.Request) {
 	// page, so this cannot become a 500 -- but an unchecked error here is how a
 	// truncated page reaches the reader with nothing in the log to explain it.
 	err = h.templates.Render(w, "bets", map[string]any{
-		"Title":          "My Bets",
-		"User":           user,
-		"Bets":           result.Bets,
-		"Seasons":        result.Seasons,
-		"Weeks":          result.Weeks,
-		"Leagues":        result.Leagues,
-		"SelectedSeason": filter.Season,
-		"SelectedWeek":   filter.Week,
-		"SelectedLeague": filter.LeagueID,
-		"Page":           result.Page,
-		"PrevURL":        betsPageURL(filter, result.Page.Prev()),
-		"NextURL":        betsPageURL(filter, result.Page.Next()),
+		"Title":         "My Bets",
+		"User":          user,
+		"Bets":          result.Bets,
+		"Seasons":       result.Seasons,
+		"Weeks":         result.Weeks,
+		"Leagues":       result.Leagues,
+		"SelectedSport": deref(filter.Sport),
+		// A football season reads as one year and a basketball one spans two, so
+		// the labels can only say which when the list is one sport.
+		"BasketballSeasons": filter.Sport != nil && *filter.Sport == models.SportBasketball,
+		"SelectedSeason":    filter.Season,
+		"SelectedWeek":      filter.Week,
+		"SelectedLeague":    filter.LeagueID,
+		"Page":              result.Page,
+		"PrevURL":           betsPageURL(filter, result.Page.Prev()),
+		"NextURL":           betsPageURL(filter, result.Page.Next()),
 	})
 	if err != nil {
 		slog.Error("failed to render bets page", "user", user.ID, "error", err)
 	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // betsPageURL builds a link to another page of the same filtered list. The
@@ -123,6 +142,9 @@ func (h *Handler) ListBets(w http.ResponseWriter, r *http.Request) {
 // result set that has just changed size.
 func betsPageURL(filter BetListFilter, page int) string {
 	query := url.Values{}
+	if filter.Sport != nil {
+		query.Set("sport", *filter.Sport)
+	}
 	if filter.Season != nil {
 		query.Set("season", strconv.Itoa(*filter.Season))
 	}
@@ -752,6 +774,10 @@ func errorMessageText(err error) string {
 		return "Selected odds not found."
 	case errors.Is(err, ErrNotLeagueMember):
 		return "You must be a member of the selected league."
+	case errors.Is(err, ErrLeagueNotFound):
+		return "League not found."
+	case errors.Is(err, ErrLeagueWrongSport):
+		return "That league does not play this sport."
 	case errors.Is(err, ErrInsufficientFunds):
 		return "Insufficient funds in your purse for this bet."
 	case errors.Is(err, ErrBetNotFootballWeek):
@@ -782,6 +808,10 @@ func errorMessageCode(err error) string {
 		return "odds_not_found"
 	case errors.Is(err, ErrNotLeagueMember):
 		return "not_league_member"
+	case errors.Is(err, ErrLeagueNotFound):
+		return "league_not_found"
+	case errors.Is(err, ErrLeagueWrongSport):
+		return "league_wrong_sport"
 	case errors.Is(err, ErrInsufficientFunds):
 		return "insufficient_funds"
 	case errors.Is(err, ErrBetNotFootballWeek):

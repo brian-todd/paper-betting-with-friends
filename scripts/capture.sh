@@ -100,7 +100,8 @@ for week in 1 2; do
 done
 
 # Basketball's SeedAll chunks the season by month to stay under the API's 3000
-# result cap, so its fixture set is venues, teams, and six games+lines pairs.
+# result cap, so its fixture set is venues, teams, ranks, ratings, team stats, and
+# six games+lines pairs.
 # Season 2026 means November 2025 through April 2026. The date format and the
 # month boundaries here have to match cbbdata.SyncService.SeedAll exactly; the
 # fixture server's 500 is what says so when they drift.
@@ -108,6 +109,10 @@ SEASON="${SEASON:-2026}"
 default_cbbd=(
     /venues
     /teams
+    "/rankings?season=$SEASON"
+    "/ratings/adjusted?season=$SEASON"
+    "/ratings/srs?season=$SEASON"
+    "/stats/team/season?season=$SEASON"
 )
 prev=$((SEASON - 1))
 starts=("$prev-11-01" "$prev-12-01" "$SEASON-01-01" "$SEASON-02-01" "$SEASON-03-01" "$SEASON-04-01")

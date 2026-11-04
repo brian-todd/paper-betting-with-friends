@@ -121,4 +121,71 @@ func TestClientDecodesEveryCapturedEndpoint(t *testing.T) {
 			t.Error("games decoded but not one carries a sportsbook line")
 		}
 	})
+
+	t.Run("scoreboard", func(t *testing.T) {
+		games, err := c.GetScoreboard(ctx)
+		if err != nil {
+			t.Fatalf("GetScoreboard: %v", err)
+		}
+		if len(games) == 0 {
+			t.Fatal("no scoreboard games decoded")
+		}
+		var finals, zeroStart int
+		for _, g := range games {
+			if g.Status == "final" && g.HomeTeam.Points != nil && g.AwayTeam.Points != nil {
+				finals++
+			}
+			if g.StartDate.IsZero() {
+				zeroStart++
+			}
+		}
+		if finals == 0 {
+			t.Error("the first capture holds no scored finals, so finalization is untested by it")
+		}
+		if zeroStart > 0 {
+			t.Errorf("%d games decoded with a zero start date", zeroStart)
+		}
+	})
+
+	t.Run("rankings", func(t *testing.T) {
+		rows, err := c.GetRankings(ctx, fixtureSeason)
+		if err != nil {
+			t.Fatalf("GetRankings: %v", err)
+		}
+		var ranked, voteOnly int
+		for _, row := range rows {
+			if row.Ranking != nil {
+				ranked++
+			} else {
+				voteOnly++
+			}
+		}
+		// Both have to be present, or the capture no longer tests dropping one.
+		if ranked == 0 || voteOnly == 0 {
+			t.Errorf("%d ranked rows and %d receiving votes, want some of each", ranked, voteOnly)
+		}
+	})
+
+	t.Run("lineups", func(t *testing.T) {
+		const dukeAtFloridaState = 214309
+		units, err := c.GetGameLineups(ctx, dukeAtFloridaState)
+		if err != nil {
+			t.Fatalf("GetGameLineups: %v", err)
+		}
+		if len(units) == 0 {
+			t.Fatal("no units decoded")
+		}
+		// A stint of a few seconds can really have no possessions, so this reads the
+		// whole game rather than each unit.
+		var possessions int
+		for _, unit := range units {
+			if unit.IDHash == "" || len(unit.Athletes) != 5 || unit.TeamID == 0 {
+				t.Fatalf("a unit decoded incompletely: %+v", unit)
+			}
+			possessions += unit.TeamStats.Possessions + unit.Opponent.Possessions
+		}
+		if possessions == 0 {
+			t.Error("a whole game decoded with no possessions")
+		}
+	})
 }

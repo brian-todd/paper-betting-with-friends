@@ -52,7 +52,7 @@ func TestBuildWeeklyStats(t *testing.T) {
 		row(me, "Me", nil, nil, "pending", "-110"),
 	}
 
-	weeks := buildWeeklyStats(rows, me)
+	weeks := buildWeeklyStats(rows, me, time.UTC)
 
 	if len(weeks) != 3 {
 		t.Fatalf("got %d week groups, want 3", len(weeks))
@@ -140,7 +140,7 @@ func TestBuildWeeklyStatsListsEachMembersBets(t *testing.T) {
 		row("spread", "void", "away", new("7.0"), "-110", kickoff, false),
 	}
 
-	weeks := buildWeeklyStats(rows, me)
+	weeks := buildWeeklyStats(rows, me, time.UTC)
 	if len(weeks) != 1 || len(weeks[0].Rows) != 1 {
 		t.Fatalf("got %d weeks, want one week with one member", len(weeks))
 	}
@@ -426,7 +426,7 @@ func newMembershipFixture(t *testing.T) *membershipFixture {
 	t.Helper()
 
 	db := testdb.Open(t)
-	f := &membershipFixture{t: t, svc: NewService(db)}
+	f := &membershipFixture{t: t, svc: NewService(db, nil)}
 	for _, u := range []**models.User{&f.owner, &f.alice} {
 		*u = &models.User{Username: "member-" + uuid.NewString()[:8], PasswordHash: "unused"}
 		if err := db.Create(*u).Error; err != nil {
@@ -435,10 +435,10 @@ func newMembershipFixture(t *testing.T) *membershipFixture {
 	}
 
 	var err error
-	if f.public, err = f.svc.CreateLeague("Public", f.owner.ID, true, decimal.RequireFromString("1000")); err != nil {
+	if f.public, err = f.svc.CreateLeague("Public", models.SportFootball, f.owner.ID, true, decimal.RequireFromString("1000")); err != nil {
 		t.Fatalf("creating public league: %v", err)
 	}
-	if f.secret, err = f.svc.CreateLeague("Secret", f.owner.ID, false, decimal.RequireFromString("500")); err != nil {
+	if f.secret, err = f.svc.CreateLeague("Secret", models.SportFootball, f.owner.ID, false, decimal.RequireFromString("500")); err != nil {
 		t.Fatalf("creating private league: %v", err)
 	}
 	return f
@@ -612,4 +612,61 @@ func TestLeagueMembership(t *testing.T) {
 			t.Errorf("name = %q, want the trimmed %q", league.Name, "Sunday Club")
 		}
 	})
+}
+
+// Basketball has no weeks, so its bets group by the calendar week they tip off
+// in, read in the app's zone: a Sunday night tip in New York is Monday in UTC and
+// belongs to the week before.
+func TestBuildWeeklyStatsGroupsBasketballByCalendarWeek(t *testing.T) {
+	eastern, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := uuid.New()
+
+	bet := func(at time.Time) repository.LeagueBetRow {
+		return repository.LeagueBetRow{
+			UserID: me, Username: "Me", Sport: models.SportBasketball, Season: new(2027),
+			BetType: "spread", Status: "pending", Pick: "home", LineValue: new("-3.0"),
+			Stake: decimal.RequireFromString("25"), OddsSnapshot: decimal.RequireFromString("-110"),
+			HomeAbbr: "DUKE", AwayAbbr: "UNC", ScheduledAt: at,
+		}
+	}
+
+	weeks := buildWeeklyStats([]repository.LeagueBetRow{
+		bet(time.Date(2026, time.November, 3, 19, 0, 0, 0, eastern)),
+		// Sunday 10pm Eastern, already Monday in UTC: still the week of Nov 2.
+		bet(time.Date(2026, time.November, 8, 22, 0, 0, 0, eastern)),
+		// Monday, so the next week.
+		bet(time.Date(2026, time.November, 9, 19, 0, 0, 0, eastern)),
+	}, me, eastern)
+
+	if len(weeks) != 2 {
+		t.Fatalf("got %d weeks, want 2", len(weeks))
+	}
+	if got, want := weeks[0].Label, "2026-27 · Week of Nov 9"; got != want {
+		t.Errorf("newest week = %q, want %q", got, want)
+	}
+	if got, want := weeks[1].Label, "2026-27 · Week of Nov 2"; got != want {
+		t.Errorf("older week = %q, want %q", got, want)
+	}
+	if got := weeks[1].Rows[0].Pending; got != 2 {
+		t.Errorf("week of Nov 2 holds %d bets, want 2", got)
+	}
+}
+
+func TestCreateLeagueStoresItsSport(t *testing.T) {
+	f := newMembershipFixture(t)
+	balance := decimal.RequireFromString("100")
+
+	league, err := f.svc.CreateLeague("Hoops", models.SportBasketball, f.owner.ID, true, balance)
+	if err != nil {
+		t.Fatalf("CreateLeague: %v", err)
+	}
+	if league.Sport != models.SportBasketball {
+		t.Errorf("sport = %q, want basketball", league.Sport)
+	}
+	if _, err := f.svc.CreateLeague("Rink", "curling", f.owner.ID, true, balance); !errors.Is(err, ErrInvalidSport) {
+		t.Errorf("error = %v, want ErrInvalidSport", err)
+	}
 }

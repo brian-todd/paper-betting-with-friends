@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -16,6 +17,9 @@ import (
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
+
+// gamesResultCap is the most games the API returns for one /games request.
+const gamesResultCap = 3000
 
 // BetEvaluator is called when a game becomes final to evaluate pending bets.
 type BetEvaluator interface {
@@ -34,6 +38,12 @@ type SyncService struct {
 	spreadOddsRepo    *repository.SpreadOddsRepository
 	overUnderOddsRepo *repository.OverUnderOddsRepository
 	oddsMovementRepo  *repository.OddsMovementRepository
+	gameLiveStateRepo *repository.GameLiveStateRepository
+	pollRankRepo      *repository.PollRankRepository
+	gameLineupRepo    *repository.GameLineupRepository
+	teamRatingRepo    *repository.TeamRatingRepository
+	teamRecordRepo    *repository.TeamRecordRepository
+	teamStatsRepo     *repository.TeamSeasonStatsRepository
 	betEvaluator      BetEvaluator
 	logger            *slog.Logger
 
@@ -57,6 +67,12 @@ func NewSyncService(client *Client, db *gorm.DB) *SyncService {
 		spreadOddsRepo:    repository.NewSpreadOddsRepository(db),
 		overUnderOddsRepo: repository.NewOverUnderOddsRepository(db),
 		oddsMovementRepo:  repository.NewOddsMovementRepository(db),
+		gameLiveStateRepo: repository.NewGameLiveStateRepository(db),
+		pollRankRepo:      repository.NewPollRankRepository(db),
+		gameLineupRepo:    repository.NewGameLineupRepository(db),
+		teamRatingRepo:    repository.NewTeamRatingRepository(db),
+		teamRecordRepo:    repository.NewTeamRecordRepository(db),
+		teamStatsRepo:     repository.NewTeamSeasonStatsRepository(db),
 	}
 }
 
@@ -167,16 +183,263 @@ func (s *SyncService) SeedAll(ctx context.Context, season int) error {
 		}
 	}
 
+	// Last, so a poll feed that is down costs the ranks and not the season. This is
+	// also the first moment a first deploy has teams to attach ranks to.
+	err := errors.Join(
+		incomplete,
+		s.syncRankings(ctx, season),
+		s.syncRatings(ctx, season),
+		s.syncTeamStats(ctx, season),
+	)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("full seed completed for season", "season", season)
-	return incomplete
+	return nil
+}
+
+// SyncLineups asks for the five-man units of a few finished games.
+//
+// The number of games is the spend: one request each, capped per run, which is what
+// holds this job to its share however many games are waiting. A busy day drains over
+// the quieter ones after it.
+//
+// A failed request says nothing about the game, so it does not use up an attempt:
+// an outage would otherwise abandon every game it touched. It does start the retry
+// wait, so a game the feed always refuses cannot use up the whole run, every run, and
+// the lookback ends it. A run cut short by shutdown records nothing at all.
+func (s *SyncService) SyncLineups(ctx context.Context) error {
+	now := s.clock.Now()
+
+	due, err := s.gameLineupRepo.FindDue(now, lineupFetchRules, lineupsPerRun)
+	if err != nil {
+		return fmt.Errorf("finding games due lineups: %w", err)
+	}
+
+	var failed syncerr.Tally
+	stored := 0
+	for _, game := range due {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		rows, fetchErr := s.client.GetGameLineups(ctx, game.ExternalID)
+		if fetchErr != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			s.logger.Error("failed to fetch lineups", "game", game.ExternalID, "error", fetchErr)
+			failed.Add(fetchErr)
+			if err := s.gameLineupRepo.RecordFailure(game.ID, now); err != nil {
+				s.logger.Error("failed to record a failed lineups request", "game", game.ExternalID, "error", err)
+				failed.Add(err)
+			}
+			continue
+		}
+
+		lineups, err := s.lineupsFor(game.ID, rows)
+		if err != nil {
+			return err
+		}
+
+		if err := s.gameLineupRepo.RecordFetch(game.ID, lineups, now); err != nil {
+			s.logger.Error("failed to store lineups", "game", game.ExternalID, "error", err)
+			failed.Add(err)
+			continue
+		}
+		if len(lineups) > 0 {
+			stored++
+		}
+	}
+
+	s.logger.Info("synced lineups", "asked", len(due), "found", stored, "failed", failed.Count())
+	return failed.Err("lineups")
+}
+
+// lineupsFor resolves one response's teams and builds its rows.
+func (s *SyncService) lineupsFor(gameID uuid.UUID, rows []APIGameLineup) ([]models.GameLineup, error) {
+	externalIDs := make([]int64, len(rows))
+	for i, row := range rows {
+		externalIDs[i] = row.TeamID
+	}
+	teams, err := s.teamRepo.IDsByExternalID(models.SportBasketball, externalIDs)
+	if err != nil {
+		return nil, fmt.Errorf("looking up lineup teams: %w", err)
+	}
+	return gameLineupsFrom(gameID, rows, teams), nil
+}
+
+// gameLineupsFrom keeps the rows for teams we hold, one per team and unit.
+func gameLineupsFrom(gameID uuid.UUID, rows []APIGameLineup, teams map[int64]uuid.UUID) []models.GameLineup {
+	type key struct {
+		team uuid.UUID
+		hash string
+	}
+	seen := make(map[key]bool, len(rows))
+
+	lineups := make([]models.GameLineup, 0, len(rows))
+	for _, row := range rows {
+		teamID, ok := teams[row.TeamID]
+		if !ok || row.IDHash == "" || len(row.Athletes) == 0 {
+			continue
+		}
+		k := key{teamID, row.IDHash}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		lineups = append(lineups, models.GameLineup{
+			GameID:             gameID,
+			TeamID:             teamID,
+			IDHash:             row.IDHash,
+			Athletes:           row.Athletes,
+			Seconds:            int(math.Round(row.TotalSeconds)),
+			PointsFor:          row.TeamStats.Points,
+			PossessionsFor:     row.TeamStats.Possessions,
+			PointsAgainst:      row.Opponent.Points,
+			PossessionsAgainst: row.Opponent.Possessions,
+			For:                lineupBoxFrom(row.TeamStats),
+			Against:            lineupBoxFrom(row.Opponent),
+		})
+	}
+	return lineups
+}
+
+func lineupBoxFrom(side APILineupSide) models.LineupBox {
+	return models.LineupBox{
+		FGMade:         side.FieldGoals.Made,
+		FGAttempted:    side.FieldGoals.Attempted,
+		ThreeMade:      side.ThreePointers.Made,
+		ThreeAttempted: side.ThreePointers.Attempted,
+		FTMade:         side.FreeThrows.Made,
+		FTAttempted:    side.FreeThrows.Attempted,
+		Turnovers:      side.Turnovers,
+		OffRebounds:    side.OffensiveRebounds,
+		DefRebounds:    side.DefensiveRebounds,
+	}
+}
+
+// SyncRankings stores the AP poll for the current season.
+//
+// One request returns every poll so far, so a run that fails or is missed is
+// repaired by the next. Only AP is kept, since it is the one poll the pages show.
+func (s *SyncService) SyncRankings(ctx context.Context) error {
+	return s.syncRankings(ctx, SeasonFor(s.clock.Now()))
+}
+
+// syncRankings stores one season's AP poll. A run that had ranks to store and could
+// place none of them is an error rather than a success: it means the teams were never
+// seeded, and the job would otherwise look healthy with every game unranked.
+func (s *SyncService) syncRankings(ctx context.Context, season int) error {
+	s.logger.Info("syncing rankings", "season", season)
+
+	rows, err := s.client.GetRankings(ctx, season)
+	if err != nil {
+		return fmt.Errorf("syncing rankings: %w", err)
+	}
+
+	externalIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		externalIDs = append(externalIDs, int64(row.TeamID))
+	}
+	teams, err := s.teamRepo.IDsByExternalID(models.SportBasketball, externalIDs)
+	if err != nil {
+		return fmt.Errorf("looking up ranked teams: %w", err)
+	}
+
+	ranks, unknown := pollRanksFrom(rows, teams)
+	if unknown > 0 {
+		s.logger.Warn("skipping poll ranks for teams not stored", "ranks", unknown)
+		if len(ranks) == 0 {
+			return fmt.Errorf("storing rankings: none of the %d ranked teams are stored, so basketball teams need seeding", unknown)
+		}
+	}
+	if err := s.pollRankRepo.Upsert(ranks); err != nil {
+		return fmt.Errorf("storing rankings: %w", err)
+	}
+
+	s.logger.Info("synced rankings", "ranks", len(ranks))
+	return nil
+}
+
+// RankingsMissing reports whether a process starting at now should fetch rankings
+// rather than wait for the weekly slot: it is in season and this season has no poll
+// stored. A database error reads as not missing, since the slot will come round.
+//
+// How old the newest poll is cannot decide this. AP goes weeks without publishing,
+// and the feed's silence would read as stale, costing a request on every restart for
+// nothing new. So a slot missed while the process was down waits for the next one, or
+// for the admin page's manual run. Until a season's first poll this still spends one
+// request a restart, which is what cbb-schedule spends on every one.
+func (s *SyncService) RankingsMissing(now time.Time, loc *time.Location) bool {
+	if !InSeason(now, loc) {
+		return false
+	}
+	_, ok, err := s.pollRankRepo.LatestPollDate(SeasonFor(now), models.PollAP)
+	if err != nil {
+		s.logger.Error("failed to read the latest poll date", "error", err)
+		return false
+	}
+	return !ok
+}
+
+// pollRanksFrom keeps the ranked AP rows whose team is stored, one per team and
+// date, and counts the ranked rows it had to drop for a team it does not know.
+func pollRanksFrom(rows []APIPollRanking, teams map[int64]uuid.UUID) (ranks []models.PollRank, unknown int) {
+	type key struct {
+		team uuid.UUID
+		date time.Time
+	}
+	seen := make(map[key]bool, len(rows))
+
+	for _, row := range rows {
+		if row.PollType != models.PollAP || row.Ranking == nil || row.PollDate == nil {
+			continue
+		}
+		teamID, ok := teams[int64(row.TeamID)]
+		if !ok {
+			unknown++
+			continue
+		}
+		k := key{teamID, row.PollDate.UTC()}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		ranks = append(ranks, models.PollRank{
+			TeamID:   teamID,
+			Season:   row.Season,
+			Poll:     row.PollType,
+			PollDate: *row.PollDate,
+			Rank:     int(*row.Ranking),
+		})
+	}
+	return ranks, unknown
+}
+
+// SyncSchedule refreshes the games in the wide window: a week back, so an outage
+// longer than the incremental window's one-day lookback cannot leave a game
+// unfinished for good, and a month ahead, so the day picker has games to show.
+//
+// One request. The widest window this spans held 1,986 games across the captured
+// season, inside the API's 3,000-game cap.
+func (s *SyncService) SyncSchedule(ctx context.Context) error {
+	start, end := scheduleWindow(s.clock.Now())
+	s.logger.Info("syncing schedule", "from", start, "to", end)
+
+	if err := s.syncGames(ctx, GameQueryOpts{StartDateRange: &start, EndDateRange: &end}); err != nil {
+		return fmt.Errorf("syncing schedule: %w", err)
+	}
+	return nil
 }
 
 // SyncGames refreshes the games -- schedule, status and score -- in the
 // incremental window, and settles any that finished.
 //
 // It is a job of its own, apart from SyncLines, so that a failure here costs
-// the lines nothing. See NextGamesSync for why the two share a cadence anyway,
-// and NextLinesSync for why the lines run a few minutes behind.
+// the lines nothing. The scoreboard normally gets to a finished game first; this
+// is the backstop for what that feed misses. See the cadence notes in schedule.go.
 func (s *SyncService) SyncGames(ctx context.Context) error {
 	start, end := incrementalWindow(s.clock.Now())
 	s.logger.Info("syncing games", "from", start, "to", end)
@@ -216,9 +479,19 @@ func (s *SyncService) SyncLines(ctx context.Context) error {
 //
 // The instant is taken to UTC first, since the strings say Z.
 func incrementalWindow(now time.Time) (start, end string) {
+	return dayWindow(now, 1, 3)
+}
+
+// scheduleWindow is the span the daily schedule sync asks for.
+func scheduleWindow(now time.Time) (start, end string) {
+	return dayWindow(now, 7, 30)
+}
+
+// dayWindow is whole UTC days around now, in the form the API validates.
+func dayWindow(now time.Time, back, ahead int) (start, end string) {
 	today := now.UTC()
-	start = today.AddDate(0, 0, -1).Format(time.DateOnly) + "T00:00:00.000Z"
-	end = today.AddDate(0, 0, 3).Format(time.DateOnly) + "T23:59:59.000Z"
+	start = today.AddDate(0, 0, -back).Format(time.DateOnly) + "T00:00:00.000Z"
+	end = today.AddDate(0, 0, ahead).Format(time.DateOnly) + "T23:59:59.000Z"
 	return start, end
 }
 
@@ -263,6 +536,12 @@ func (s *SyncService) syncTeams(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	football, err := s.teamRepo.FindWithLogos(models.SportFootball)
+	if err != nil {
+		return fmt.Errorf("reading football logos: %w", err)
+	}
+	logos := newLogoBook(football)
 
 	for _, t := range teams {
 		// Resolve venue.
@@ -339,13 +618,6 @@ func (s *SyncService) syncTeams(ctx context.Context) error {
 			conference = "Independent"
 		}
 
-		// Try to get logo from matching football team.
-		var logoURL *string
-		footballTeam, err := s.teamRepo.FindByNameAndSport(t.School, models.SportFootball)
-		if err == nil && footballTeam.LogoURL != nil {
-			logoURL = footballTeam.LogoURL
-		}
-
 		team := &models.Team{
 			ExternalID:     &t.ID,
 			Sport:          models.SportBasketball,
@@ -354,7 +626,7 @@ func (s *SyncService) syncTeams(ctx context.Context) error {
 			Mascot:         strPtr(t.Mascot),
 			Conference:     conference,
 			HomeVenueID:    venueID,
-			LogoURL:        logoURL,
+			LogoURL:        logos.logoFor(t),
 			PrimaryColor:   formatColor(t.PrimaryColor),
 			SecondaryColor: formatColor(t.SecondaryColor),
 		}
@@ -376,8 +648,21 @@ func (s *SyncService) syncGames(ctx context.Context, opts GameQueryOpts) error {
 		return err
 	}
 
+	// A full page means the API dropped the rest of the window, and every later
+	// game in it silently stays unwritten.
+	if len(games) >= gamesResultCap {
+		s.logger.Warn("games response hit the API's result cap", "games", len(games))
+	}
+
 	syncedCount := 0
 	for _, g := range games {
+		// A missing startDate decodes to year 1, which reads as a tip-off long
+		// past: it closes betting and freezes every bet already placed.
+		if g.StartDate.IsZero() {
+			s.logger.Warn("skipping game: no start date", "game", g.ID)
+			continue
+		}
+
 		// Look up home team.
 		homeTeam, err := s.teamRepo.FindByExternalID(g.HomeTeamID, models.SportBasketball)
 		if err != nil {
@@ -405,8 +690,7 @@ func (s *SyncService) syncGames(ctx context.Context, opts GameQueryOpts) error {
 			venueID = homeTeam.HomeVenueID
 		}
 
-		// Map status.
-		status := mapGameStatus(g.Status)
+		status := s.gamesFeedStatus(g)
 
 		game := &models.Game{
 			ExternalID:     &g.ID,
@@ -425,6 +709,9 @@ func (s *SyncService) syncGames(ctx context.Context, opts GameQueryOpts) error {
 			NeutralSite:    g.NeutralSite,
 			ConferenceGame: g.ConferenceGame,
 			Completed:      status == models.GameStatusFinal,
+
+			HomePregameElo: g.HomeTeamEloStart,
+			AwayPregameElo: g.AwayTeamEloStart,
 		}
 
 		if err := s.gameRepo.Upsert(game); err != nil {
@@ -432,15 +719,13 @@ func (s *SyncService) syncGames(ctx context.Context, opts GameQueryOpts) error {
 			continue
 		}
 
-		// Sync the score whenever the provider reports one, including for a
-		// game still in progress, so a live card can show it. gameResultFrom
-		// leaves FinalizedAt nil until the game is over.
+		// Sync the score for a game being played or over. gameResultFrom leaves
+		// FinalizedAt nil until the game is over.
 		//
-		// Unlike the football feed this API reports a real status rather than
-		// one inferred from the clock, and takes status=in_progress as a query
-		// filter, so it plausibly carries live points -- unconfirmed, since
-		// there are no games in progress out of season.
-		if g.HomePoints != nil && g.AwayPoints != nil {
+		// The status decides this, not the presence of points: the feed reports
+		// every scheduled, postponed and cancelled game as 0-0, and a row written
+		// from points alone puts a score on a game nobody has played.
+		if hasScore(status) && g.HomePoints != nil && g.AwayPoints != nil {
 			dbGame, err := s.gameRepo.FindByExternalID(g.ID, models.SportBasketball)
 			if err != nil {
 				s.logger.Error("failed to find game for result", "error", err)
@@ -591,6 +876,12 @@ func (s *SyncService) syncLines(ctx context.Context, opts LineQueryOpts) error {
 	return errors.Join(failed.Err("odds"), failedMoves.Err("odds history"))
 }
 
+// hasScore reports whether a game in this status has played any basketball, and
+// so whether the points the feed reports for it are a score.
+func hasScore(status models.GameStatus) bool {
+	return status == models.GameStatusInProgress || status == models.GameStatusFinal
+}
+
 // gameResultFrom builds the score row for a game the provider has reported
 // points for.
 //
@@ -618,6 +909,26 @@ func gameResultFrom(gameID uuid.UUID, g APIGame, status models.GameStatus, now t
 		ExcitementIndex: excitementIndex,
 		FinalizedAt:     finalizedAt,
 	}
+}
+
+// gamesFeedStatus is the status to store for a /games row. A "final" the score
+// cannot back up is stored as in progress, which leaves the score provisional and
+// the bets pending until a feed reports a result that can be final. Upsert never
+// regresses a final, so this cannot reopen a game already finished.
+//
+// The exception is a final at 0-0, which is stored as scheduled, since nothing says
+// the game has started and Upsert would not let in_progress be taken back.
+func (s *SyncService) gamesFeedStatus(g APIGame) models.GameStatus {
+	status := mapGameStatus(g.Status)
+	if status == models.GameStatusFinal && !finalIsCredible(g.HomePoints, g.AwayPoints) {
+		s.logger.Warn("ignoring a final the score cannot back up",
+			"game", g.ID, "home_points", g.HomePoints, "away_points", g.AwayPoints)
+		if reportsNoPlay(g.HomePoints, g.AwayPoints) {
+			return models.GameStatusScheduled
+		}
+		return models.GameStatusInProgress
+	}
+	return status
 }
 
 func mapGameStatus(status string) models.GameStatus {

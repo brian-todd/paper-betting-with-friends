@@ -143,6 +143,22 @@ type Filter struct {
 // Unparseable values are dropped rather than rejected: a filter is a view
 // preference, and a mangled bookmark should show games, not an error page.
 func ParseFilter(query url.Values) Filter {
+	filter := ParseSubmittedFilter(query)
+	if !FilterApplied(query) && filter.isEmpty() {
+		filter = defaultFilter()
+	}
+	return filter
+}
+
+// FilterApplied reports whether a query came from submitting the filter form, as
+// opposed to a page nobody has filtered yet.
+func FilterApplied(query url.Values) bool {
+	return query.Get(appliedParam) == "1"
+}
+
+// ParseSubmittedFilter reads what a query asked for and applies no default, for a page
+// whose default is not football's.
+func ParseSubmittedFilter(query url.Values) Filter {
 	filter := Filter{
 		Tiers:       cleanValues(query["tier"]),
 		Conferences: cleanValues(query["conf"]),
@@ -189,10 +205,6 @@ func ParseFilter(query url.Values) Filter {
 	swapIfReversed(&filter.SpreadMin, &filter.SpreadMax)
 	swapIfReversed(&filter.TotalMin, &filter.TotalMax)
 	swapIfReversed(&filter.MoneyLineMin, &filter.MoneyLineMax)
-
-	if query.Get(appliedParam) != "1" && filter.isEmpty() {
-		filter = defaultFilter()
-	}
 
 	return filter
 }

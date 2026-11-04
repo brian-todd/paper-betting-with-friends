@@ -235,3 +235,119 @@ func TestGameRepositoryNextKickoffReportsNoneLeft(t *testing.T) {
 		})
 	}
 }
+
+// The basketball pair drive the same cadence, without football's division scoping,
+// and fail in the same quiet ways.
+func TestGameRepositoryHasActiveBasketballGames(t *testing.T) {
+	const window = 4 * time.Hour
+	now := testKickoff.Add(30 * time.Minute)
+
+	tests := []struct {
+		name string
+		game models.Game
+		want bool
+	}{
+		{"a game past tip-off is being played",
+			models.Game{Sport: models.SportBasketball, ScheduledAt: testKickoff}, true},
+		{"a finished game is not",
+			models.Game{Sport: models.SportBasketball, ScheduledAt: testKickoff, Status: models.GameStatusFinal}, false},
+		{"nor a cancelled one",
+			models.Game{Sport: models.SportBasketball, ScheduledAt: testKickoff, Status: models.GameStatusCancelled}, false},
+		{"nor a postponed one",
+			models.Game{Sport: models.SportBasketball, ScheduledAt: testKickoff, Status: models.GameStatusPostponed}, false},
+		{"nor one yet to tip off",
+			models.Game{Sport: models.SportBasketball, ScheduledAt: now.Add(time.Minute)}, false},
+		{"one stuck past the window stops counting",
+			models.Game{Sport: models.SportBasketball, ScheduledAt: now.Add(-window - time.Minute), Status: models.GameStatusInProgress}, false},
+		{"a football game is someone else's schedule",
+			models.Game{Sport: models.SportFootball, ScheduledAt: testKickoff}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := testdb.Open(t)
+			testdb.InsertGame(t, db, tt.game)
+
+			got, err := NewGameRepository(db).HasActiveBasketballGames(now, window)
+			if err != nil {
+				t.Fatalf("HasActiveBasketballGames: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("HasActiveBasketballGames() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGameRepositoryNextBasketballTip(t *testing.T) {
+	db := testdb.Open(t)
+	repo := NewGameRepository(db)
+	now := testKickoff
+
+	if _, err := repo.NextBasketballTip(now); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("NextBasketballTip() on an empty table = %v, want ErrRecordNotFound", err)
+	}
+
+	sooner := now.Add(time.Hour)
+	testdb.InsertGame(t, db, models.Game{Sport: models.SportFootball, ScheduledAt: now.Add(time.Minute)})
+	testdb.InsertGame(t, db, models.Game{Sport: models.SportBasketball, ScheduledAt: now.Add(2 * time.Minute), Status: models.GameStatusCancelled})
+	testdb.InsertGame(t, db, models.Game{Sport: models.SportBasketball, ScheduledAt: now.Add(-time.Minute)})
+	testdb.InsertGame(t, db, models.Game{Sport: models.SportBasketball, ScheduledAt: sooner.Add(time.Hour)})
+	testdb.InsertGame(t, db, models.Game{Sport: models.SportBasketball, ScheduledAt: sooner})
+
+	got, err := repo.NextBasketballTip(now)
+	if err != nil {
+		t.Fatalf("NextBasketballTip: %v", err)
+	}
+	if !got.Equal(sooner) {
+		t.Errorf("NextBasketballTip() = %v, want %v", got, sooner)
+	}
+}
+
+// These answer the basketball day page's "which day" questions, so finished games
+// count and other sports do not.
+func TestGameRepositorySeasonAndDayBoundaries(t *testing.T) {
+	db := testdb.Open(t)
+	repo := NewGameRepository(db)
+
+	early := time.Date(2026, 11, 3, 23, 0, 0, 0, time.UTC)
+	late := time.Date(2027, 3, 1, 23, 0, 0, 0, time.UTC)
+	insert := func(sport string, season int, at time.Time, status models.GameStatus) {
+		testdb.InsertGame(t, db, models.Game{Sport: sport, Season: season, ScheduledAt: at, Status: status})
+	}
+	insert(models.SportBasketball, 2027, early, models.GameStatusFinal)
+	insert(models.SportBasketball, 2027, late, models.GameStatusScheduled)
+	insert(models.SportBasketball, 2026, early.AddDate(-1, 0, 0), models.GameStatusFinal)
+	insert(models.SportFootball, 2030, early.Add(time.Hour), models.GameStatusScheduled)
+
+	seasons, err := repo.FindSeasons(models.SportBasketball)
+	if err != nil {
+		t.Fatalf("FindSeasons: %v", err)
+	}
+	if len(seasons) != 2 || seasons[0] != 2027 || seasons[1] != 2026 {
+		t.Errorf("seasons = %v, want [2027 2026]", seasons)
+	}
+
+	first, last, ok, err := repo.SeasonSpan(models.SportBasketball, 2027)
+	if err != nil || !ok || !first.Equal(early) || !last.Equal(late) {
+		t.Errorf("SeasonSpan = %v, %v, %v, %v", first, last, ok, err)
+	}
+	if _, _, ok, err := repo.SeasonSpan(models.SportBasketball, 2040); err != nil || ok {
+		t.Errorf("SeasonSpan of an empty season = %v, %v, want not found", ok, err)
+	}
+
+	next, ok, err := repo.NextTipFrom(models.SportBasketball, early.Add(time.Minute))
+	if err != nil || !ok || !next.Equal(late) {
+		t.Errorf("NextTipFrom = %v, %v, %v, want %v, skipping football", next, ok, err, late)
+	}
+	if at, ok, err := repo.NextTipFrom(models.SportBasketball, early); err != nil || !ok || !at.Equal(early) {
+		t.Errorf("NextTipFrom on a tip-off = %v, %v, %v, want that finished game", at, ok, err)
+	}
+	prev, ok, err := repo.LastTipBefore(models.SportBasketball, late)
+	if err != nil || !ok || !prev.Equal(early) {
+		t.Errorf("LastTipBefore = %v, %v, %v, want %v", prev, ok, err, early)
+	}
+	if _, ok, err := repo.NextTipFrom(models.SportBasketball, late.Add(time.Minute)); err != nil || ok {
+		t.Errorf("NextTipFrom past the end = %v, %v, want not found", ok, err)
+	}
+}

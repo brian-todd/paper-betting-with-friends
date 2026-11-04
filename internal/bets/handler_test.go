@@ -2,6 +2,7 @@ package bets
 
 import (
 	"bytes"
+	"errors"
 	"maps"
 	"strings"
 	"testing"
@@ -311,6 +312,25 @@ func TestBetsPageShowsKickoffDateAndTime(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("game details are missing %q", want)
+		}
+	}
+}
+
+// A redirect only has the code to go on, so each refusal needs its own.
+func TestLeagueRefusalsHaveTheirOwnErrorCodes(t *testing.T) {
+	tests := []struct {
+		err  error
+		code string
+	}{
+		{ErrLeagueWrongSport, "league_wrong_sport"},
+		{ErrLeagueNotFound, "league_not_found"},
+	}
+	for _, tt := range tests {
+		if got := errorMessageCode(tt.err); got != tt.code {
+			t.Errorf("errorMessageCode(%v) = %q, want %q", tt.err, got, tt.code)
+		}
+		if got := errorMessageText(tt.err); got == errorMessageText(errors.New("anything else")) {
+			t.Errorf("errorMessageText(%v) = %q, the generic message", tt.err, got)
 		}
 	}
 }

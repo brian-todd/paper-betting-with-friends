@@ -123,6 +123,24 @@
                 {{end}}
             </dd>
             {{end}}
+            {{if .Health.CBBConfigured}}
+            <dt>Basketball scoreboard</dt>
+            <dd>
+                {{if .Health.BasketballScoreboardLive}}
+                a game is being played &mdash; polling every 5 minutes
+                {{else}}
+                nothing being played &mdash; polling hourly in season, daily outside it
+                {{end}}
+            </dd>
+            <dt>Next tip-off</dt>
+            <dd>
+                {{if .Health.BasketballNextTip.IsZero}}
+                none scheduled
+                {{else}}
+                {{localTime .Health.BasketballNextTip "datetime"}}
+                {{end}}
+            </dd>
+            {{end}}
         </dl>
 
         <dl class="health-list">

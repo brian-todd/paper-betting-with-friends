@@ -16,7 +16,7 @@ package games
 // checks the two sets against each other.
 var metricHelp = map[string]string{
 	"Record": "Win-loss record for the season so far. Unlike the ratings below it, " +
-		"this covers every division, so an FCS opponent has one.",
+		"this covers every division, so a lower-division opponent has one.",
 
 	"Away / Home": "The same record split by where the games were played: the " +
 		"visitor's record on the road against the host's at home. Not shown for a " +
@@ -40,6 +40,14 @@ var metricHelp = map[string]string{
 		"scale of its own rather than in points, so it ranks teams against each other " +
 		"and does not translate into a margin the way SP+ does.",
 
+	"Adjusted": "Points scored minus points allowed per 100 possessions, adjusted for " +
+		"the strength of the opposition, with the team's national rank beside it. " +
+		"Published once the season is under way, so a season's first games have none.",
+
+	"SRS": "Simple Rating System: how many points better than an average team this " +
+		"one has been, from its margins of victory and its schedule. On a points scale " +
+		"of its own, so it is not comparable with the Adjusted row above it.",
+
 	"Elo": "A rating that moves only on results: the winner takes points from the " +
 		"loser, more of them when the win was an upset. It knows who beat whom and not " +
 		"how, which is what makes it a useful second opinion on a rating built from " +
@@ -52,7 +60,7 @@ var metricHelp = map[string]string{
 
 	"Recent": "The last five finished games of this season, newest first, with the " +
 		"score from this team's point of view and the opponent beneath it. An @ marks a " +
-		"road game. Week one has nothing to show.",
+		"road game. A team's first game has nothing to show.",
 }
 
 // Explain is the hover text for one row of the matchup panel.

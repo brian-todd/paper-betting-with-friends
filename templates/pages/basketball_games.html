@@ -5,29 +5,179 @@
             <h1>Basketball</h1>
         </div>
         <div class="header-controls">
+            {{if .Seasons}}
+            <select class="select-input" id="season-picker" aria-label="Season" onchange="navigateToSeason(this.value)">
+                {{range .Seasons}}
+                <option value="{{.Value}}" {{if eq .Value $.Season}}selected{{end}}>{{.Label}}</option>
+                {{end}}
+            </select>
+            {{end}}
             <div class="week-navigation">
-                <a href="/basketball/games?date={{.PrevDate}}" class="btn btn-sm btn-secondary">&larr; Prev</a>
-                <input type="date" class="select-input" id="date-picker" value="{{.DateStr}}" onchange="navigateToDate(this.value)">
-                <a href="/basketball/games?date={{.NextDate}}" class="btn btn-sm btn-secondary">Next &rarr;</a>
-            </div>
-            <div class="search-bar" style="margin-left: 1rem;">
-                <form action="/basketball/games" method="GET" style="display:flex;gap:0.5rem;">
-                    <input type="hidden" name="date" value="{{.DateStr}}">
-                    <input type="text" name="search" class="filter-input" placeholder="Search teams..." value="{{.Search}}" style="min-width:200px;">
-                    <button type="submit" class="btn btn-sm btn-primary">Search</button>
-                    {{if .Search}}
-                    <a href="/basketball/games?date={{.DateStr}}" class="btn btn-sm btn-secondary">Clear</a>
-                    {{end}}
-                </form>
+                {{if .PrevURL}}<a href="{{.PrevURL}}" class="btn btn-sm btn-secondary">&larr; Prev</a>{{end}}
+                <input type="date" class="select-input" id="date-picker" value="{{.DateStr}}" aria-label="Date" onchange="navigateToDate(this.value)">
+                {{if .NextURL}}<a href="{{.NextURL}}" class="btn btn-sm btn-secondary">Next &rarr;</a>{{end}}
             </div>
         </div>
     </div>
 
-    <div class="filter-results">
-        <!-- .Date is the calendar day the server resolved in the app timezone, not an
-             instant, so it is formatted here rather than localized per reader. -->
-        <span>{{.Date.Format "Monday, January 2, 2006"}} &mdash; {{.TotalGames}} games{{if .Search}} matching "{{.Search}}"{{end}}</span>
-    </div>
+    <!-- The football grid's filters, less the two with no meaning here: the page is
+         already one day, and the feed reports no division. Everything is a plain GET
+         form, and the hidden "applied" field is what tells the handler an unticked
+         box is a choice rather than an untouched page. -->
+    <form class="games-filters" method="GET" action="/basketball/games">
+        <input type="hidden" name="applied" value="1">
+        <input type="hidden" name="date" value="{{.DateStr}}">
+
+        <div class="filters-row">
+            <div class="filter-group">
+                <label class="filter-label" for="team-filter">Team</label>
+                <input type="search" class="filter-input team-input" id="team-filter" name="team"
+                       value="{{.Filter.Team}}" placeholder="Name or abbreviation">
+            </div>
+            <div class="filter-group">
+                <label class="filter-label" for="status-filter">Status</label>
+                <select class="select-input" id="status-filter" name="status">
+                    {{range .StatusOptions}}
+                    <option value="{{.Value}}" {{if eq .Value $.Filter.Status}}selected{{end}}>{{.Label}}</option>
+                    {{end}}
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Lines</label>
+                <div class="checkbox-row">
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="bettable" value="1" {{if .Filter.Bettable}}checked{{end}}>
+                        <span>Bettable only</span>
+                    </label>
+                </div>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Rankings</label>
+                <div class="checkbox-row">
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="ranked" value="1" {{if .Filter.RankedTeam}}checked{{end}}>
+                        <span>Ranked team</span>
+                    </label>
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="ranked_matchup" value="1" {{if .Filter.RankedMatchup}}checked{{end}}>
+                        <span>Ranked matchup</span>
+                    </label>
+                </div>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Matchup</label>
+                <div class="checkbox-row">
+                    {{range .GameTypeOptions}}
+                    <label class="radio-chip">
+                        <input type="radio" name="game_type" value="{{.Value}}" {{if eq .Value $.Filter.GameType}}checked{{end}}>
+                        <span>{{.Label}}</span>
+                    </label>
+                    {{end}}
+                </div>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Site</label>
+                <div class="checkbox-row">
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="neutral" value="1" {{if .Filter.NeutralSite}}checked{{end}}>
+                        <span>Neutral site</span>
+                    </label>
+                </div>
+            </div>
+            <div class="filter-group range-filter">
+                <!-- Wall-clock hours in the app timezone, resolved on the server, so a
+                     shared link means the same games for everyone. Tip-off times on the
+                     cards stay per-reader. -->
+                <label class="filter-label">Tip-off window ({{.Zone}})</label>
+                <div class="range-inputs">
+                    <select class="select-input" name="from" aria-label="Earliest tip-off">
+                        <option value="">Any</option>
+                        {{range .HourOptions}}
+                        <option value="{{.Value}}" {{if eq .Value $.Filter.FromValue}}selected{{end}}>{{.Label}}</option>
+                        {{end}}
+                    </select>
+                    <span class="range-separator">to</span>
+                    <select class="select-input" name="to" aria-label="Latest tip-off">
+                        <option value="">Any</option>
+                        {{range .HourOptions}}
+                        <option value="{{.Value}}" {{if eq .Value $.Filter.ToValue}}selected{{end}}>{{.Label}}</option>
+                        {{end}}
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="filters-row odds-filters">
+            <div class="filter-group range-filter">
+                <label class="filter-label">Spread</label>
+                <div class="range-inputs">
+                    <input type="number" class="filter-input" name="spread_min" value="{{.Filter.SpreadMinValue}}"
+                           placeholder="0" step="0.5" min="0" aria-label="Minimum spread">
+                    <span class="range-separator">to</span>
+                    <input type="number" class="filter-input" name="spread_max" value="{{.Filter.SpreadMaxValue}}"
+                           placeholder="∞" step="0.5" min="0" aria-label="Maximum spread">
+                </div>
+            </div>
+            <div class="filter-group range-filter">
+                <label class="filter-label">Total (O/U)</label>
+                <div class="range-inputs">
+                    <input type="number" class="filter-input" name="total_min" value="{{.Filter.TotalMinValue}}"
+                           placeholder="Min" step="0.5" aria-label="Minimum total">
+                    <span class="range-separator">to</span>
+                    <input type="number" class="filter-input" name="total_max" value="{{.Filter.TotalMaxValue}}"
+                           placeholder="Max" step="0.5" aria-label="Maximum total">
+                </div>
+            </div>
+            <div class="filter-group range-filter">
+                <label class="filter-label">Money Line</label>
+                <div class="range-inputs">
+                    <input type="number" class="filter-input" name="ml_min" value="{{.Filter.MoneyLineMinValue}}"
+                           placeholder="Min" aria-label="Minimum money line">
+                    <span class="range-separator">to</span>
+                    <input type="number" class="filter-input" name="ml_max" value="{{.Filter.MoneyLineMaxValue}}"
+                           placeholder="Max" aria-label="Maximum money line">
+                </div>
+            </div>
+        </div>
+
+        {{if .Conferences}}
+        <details class="conference-filter"{{if .Filter.Conferences}} open{{end}}>
+            <summary>
+                Conferences
+                {{if .Filter.Conferences}}<span class="filter-badge">{{len .Filter.Conferences}} selected</span>{{end}}
+            </summary>
+            <div class="conference-groups">
+                <div class="checkbox-row">
+                    {{range .Conferences}}
+                    <label class="checkbox-chip">
+                        <input type="checkbox" name="conf" value="{{.Conference}}"
+                               {{if index $.SelectedConferences .Conference}}checked{{end}}>
+                        <span>{{.Conference}} <span class="conf-count">{{.Games}}</span></span>
+                    </label>
+                    {{end}}
+                </div>
+            </div>
+        </details>
+        {{end}}
+
+        <div class="filter-actions">
+            <button type="submit" class="btn btn-primary btn-sm">Apply filters</button>
+            {{if .FilterActive}}<a href="{{.ClearURL}}" class="btn btn-secondary btn-sm">Clear</a>{{end}}
+            <span class="filter-results">
+                <!-- .Date is the calendar day the server resolved in the app timezone,
+                     not an instant, so it is formatted here rather than localized per
+                     reader. -->
+                {{.Date.Format "Monday, January 2, 2006"}} &mdash; {{len .Games}} of {{.TotalGames}} games
+                {{if .LinesOnly}}
+                {{if .HiddenGames}}<a href="{{.ShowAllURL}}">Show {{.HiddenGames}} without lines</a>{{end}}
+                {{else if not .Filter.Bettable}}
+                <a href="{{.LinesOnlyURL}}">Only games with lines</a>
+                {{else if .Games}}
+                <span class="filter-note">No lines posted for these yet, so all are shown</span>
+                {{end}}
+            </span>
+        </div>
+    </form>
 
     {{if .Games}}
     <div class="games-grid">
@@ -39,11 +189,14 @@
             <div class="game-card">
                 <div class="game-status {{.Game.Status}}">
                     {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
-                    {{if eq .Game.Status "in_progress"}}Live{{end}}
+                    {{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel .Game.Sport}}{{.}}{{else}}Live{{end}}{{end}}
                     {{if eq .Game.Status "final"}}Final{{end}}
                     {{if eq .Game.Status "postponed"}}Postponed{{end}}
                     {{if eq .Game.Status "cancelled"}}Cancelled{{end}}
                 </div>
+                <!-- Beside the status rather than inside it, which would take on its
+                     colored pill and, on a live game, its pulse. -->
+                {{if .BetSummary}}<span class="badge badge-user-bet" title="Your bet: {{.BetSummary}}">{{.BetSummary}}</span>{{end}}
                 <div class="game-matchup">
                     <div class="team away-team">
                         <div class="team-block">
@@ -51,7 +204,7 @@
                                 {{if .Game.AwayTeam.LogoURL}}<img src="{{.Game.AwayTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.AwayTeam.Name}} logo">{{end}}
                                 <div class="team-text">
                                     <span class="team-abbr">
-                                        {{if .Game.AwaySeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.AwaySeed}})</span> {{end}}{{.Game.AwayTeam.Abbreviation}}
+                                        {{if .AwayRank}}<span class="team-rank">#{{deref .AwayRank}}</span> {{end}}{{if .Game.AwaySeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.AwaySeed}})</span> {{end}}{{.Game.AwayTeam.Abbreviation}}
                                     </span>
                                     <span class="team-name">{{.Game.AwayTeam.Name}}</span>
                                 </div>
@@ -66,7 +219,7 @@
                                 {{if .Game.HomeTeam.LogoURL}}<img src="{{.Game.HomeTeam.LogoURL}}" class="team-logo" style="width: 24px; height: 24px;" alt="{{.Game.HomeTeam.Name}} logo">{{end}}
                                 <div class="team-text">
                                     <span class="team-abbr">
-                                        {{if .Game.HomeSeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.HomeSeed}})</span> {{end}}{{.Game.HomeTeam.Abbreviation}}
+                                        {{if .HomeRank}}<span class="team-rank">#{{deref .HomeRank}}</span> {{end}}{{if .Game.HomeSeed}}<span style="color:var(--color-text-secondary);font-size:0.85em;">({{deref .Game.HomeSeed}})</span> {{end}}{{.Game.HomeTeam.Abbreviation}}
                                     </span>
                                     <span class="team-name">{{.Game.HomeTeam.Name}}</span>
                                 </div>
@@ -138,8 +291,8 @@
     <div class="empty-state">
         <div class="empty-icon">🏀</div>
         <h2>No Games Found</h2>
-        {{if .Search}}
-        <p>No basketball games matching "{{.Search}}" on this date.</p>
+        {{if .TotalGames}}
+        <p>None of this date's {{.TotalGames}} basketball games match these filters. <a href="{{.ClearURL}}">Clear filters</a>.</p>
         {{else}}
         <p>No basketball games scheduled for this date.</p>
         {{end}}
@@ -148,8 +301,19 @@
 </div>
 
 <script>
+// The active filter rides along to another day or season.
+const filterQuery = {{.FilterQuery}};
+
+function gamesURL(key, value) {
+    const query = new URLSearchParams(filterQuery);
+    query.set(key, value);
+    return '/basketball/games?' + query.toString();
+}
 function navigateToDate(date) {
-    window.location.href = '/basketball/games?date=' + date;
+    window.location.href = gamesURL('date', date);
+}
+function navigateToSeason(season) {
+    window.location.href = gamesURL('season', season);
 }
 // Game times are localized by static/js/localtime.js.
 </script>

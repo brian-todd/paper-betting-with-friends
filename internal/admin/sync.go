@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/brian/paper-betting-with-friends/internal/cbbdata"
 	"github.com/brian/paper-betting-with-friends/internal/cfbdata"
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/repository"
@@ -47,6 +48,11 @@ type SystemHealth struct {
 	// a Tuesday, and only this says which of the two you are looking at.
 	ScoreboardLive        bool
 	ScoreboardNextKickoff time.Time
+
+	// BasketballScoreboardLive and BasketballNextTip are the same two facts for
+	// cbb-scoreboard, shown for the same reason.
+	BasketballScoreboardLive bool
+	BasketballNextTip        time.Time
 }
 
 // JobStatuses returns every registered job, including the internal ones that
@@ -127,6 +133,14 @@ func (s *Service) Health() (SystemHealth, error) {
 		health.ScoreboardLive = state.Active
 		if state.NextKickoff != nil {
 			health.ScoreboardNextKickoff = *state.NextKickoff
+		}
+	}
+
+	if health.CBBConfigured {
+		state := cbbdata.ResolveScoreboardState(s.gameRepo, slog.Default(), s.clock.Now())
+		health.BasketballScoreboardLive = state.Active
+		if state.NextTip != nil {
+			health.BasketballNextTip = *state.NextTip
 		}
 	}
 

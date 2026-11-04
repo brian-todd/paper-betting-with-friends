@@ -143,3 +143,45 @@ func TestNextOnGrid(t *testing.T) {
 		})
 	}
 }
+
+func TestCalendarDayInUTC(t *testing.T) {
+	eastern, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+
+	// 9pm Sunday Eastern is already Monday in UTC, and it is still Sunday's game.
+	got := CalendarDayInUTC(time.Date(2026, time.November, 9, 2, 0, 0, 0, time.UTC), eastern)
+	if want := time.Date(2026, time.November, 8, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("CalendarDayInUTC() = %v, want %v", got, want)
+	}
+}
+
+func TestStartOfWeek(t *testing.T) {
+	eastern, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+	monday := time.Date(2026, time.November, 2, 0, 0, 0, 0, eastern)
+
+	tests := []struct {
+		name string
+		at   time.Time
+		want time.Time
+	}{
+		{"a Monday is its own week", monday, monday},
+		{"a Wednesday", time.Date(2026, time.November, 4, 15, 0, 0, 0, eastern), monday},
+		{"a Sunday belongs to the Monday before it", time.Date(2026, time.November, 8, 23, 59, 0, 0, eastern), monday},
+		{"an instant is read in the location, not its own zone", time.Date(2026, time.November, 9, 3, 0, 0, 0, time.UTC), monday},
+		// Fall back is Sunday November 1, so that week holds a 25-hour day.
+		{"across a DST change", time.Date(2026, time.November, 1, 12, 0, 0, 0, eastern),
+			time.Date(2026, time.October, 26, 0, 0, 0, 0, eastern)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := StartOfWeek(tt.at, eastern); !got.Equal(tt.want) {
+				t.Errorf("StartOfWeek(%v) = %v, want %v", tt.at, got, tt.want)
+			}
+		})
+	}
+}

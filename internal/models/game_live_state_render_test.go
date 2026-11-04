@@ -15,7 +15,7 @@ import (
 // swap target with the reason only in the log.
 func TestLiveStateHelpersRenderWithNilState(t *testing.T) {
 	tmpl := template.Must(template.New("card").Parse(
-		`[{{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel}}{{.}}{{else}}Live{{end}}{{end}}]` +
+		`[{{if eq .Game.Status "in_progress"}}{{with .Game.LiveState.LiveLabel .Game.Sport}}{{.}}{{else}}Live{{end}}{{end}}]` +
 			`[{{with .Game.LiveState.Broadcast}}TV {{.}}{{end}}]` +
 			`[{{with .Game.LiveState.SituationText}}{{.}}{{end}}]` +
 			`[{{with .Game.LiveState.WeatherText}}{{.}}{{end}}]` +

@@ -191,8 +191,15 @@ func (e *Env) Register(username, password string) *models.User {
 func (e *Env) League(name string, owner *models.User, balance string) *models.League {
 	e.T.Helper()
 
-	league, err := leagues.NewService(e.DB).CreateLeague(
-		name, owner.ID, false, decimal.RequireFromString(balance))
+	return e.SportLeague(name, models.SportFootball, owner, balance)
+}
+
+// SportLeague is League for a named sport.
+func (e *Env) SportLeague(name, sport string, owner *models.User, balance string) *models.League {
+	e.T.Helper()
+
+	league, err := leagues.NewService(e.DB, nil).CreateLeague(
+		name, sport, owner.ID, false, decimal.RequireFromString(balance))
 	if err != nil {
 		e.T.Fatalf("creating league %q: %v", name, err)
 	}

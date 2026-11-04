@@ -69,6 +69,10 @@ type TeamStats struct {
 	// Advanced is season efficiency, FBS-only like the ratings.
 	Advanced *models.TeamAdvancedStats
 
+	// Season is basketball's season figures, which fill the same panel Advanced
+	// fills for football. Nil on a football game.
+	Season *models.TeamSeasonStats
+
 	// PregameElo is the /games feed's Elo going into this game. Unlike the rest
 	// of this struct it is per-game rather than per-season, so it is as of
 	// kickoff rather than as of the last sync.
@@ -88,6 +92,9 @@ type Matchup struct {
 	Home TeamStats
 	Away TeamStats
 
+	// Sport says which provider's coverage and scales the panel is describing.
+	Sport string
+
 	// NeutralSite mirrors the game, so the template does not have to reach back
 	// through it to explain why no home-field adjustment was applied.
 	NeutralSite bool
@@ -104,14 +111,16 @@ func (m *Matchup) HasAny() bool {
 	if m == nil {
 		return false
 	}
-	if m.WinProbability != nil {
+	// HasElo rather than the raw values: an Elo the panel will not draw is not
+	// something to draw, and it is on most of a season's first week of basketball.
+	if m.WinProbability != nil || m.HasElo() {
 		return true
 	}
 	for _, side := range []TeamStats{m.Home, m.Away} {
-		if side.Record != nil || len(side.Ratings) > 0 || len(side.Form) > 0 || side.PregameElo != nil {
+		if side.Record != nil || len(side.Ratings) > 0 || len(side.Form) > 0 {
 			return true
 		}
-		if side.ATS != nil || side.Advanced != nil {
+		if side.ATS != nil || side.Advanced != nil || side.Season != nil {
 			return true
 		}
 	}
@@ -140,7 +149,10 @@ func (m *Matchup) RatingRows() []models.RatingSource {
 	}
 
 	var rows []models.RatingSource
-	for _, source := range []models.RatingSource{models.RatingSourceSP, models.RatingSourceFPI, models.RatingSourceCORE} {
+	for _, source := range []models.RatingSource{
+		models.RatingSourceSP, models.RatingSourceFPI, models.RatingSourceCORE,
+		models.RatingSourceAdjusted, models.RatingSourceSRS,
+	} {
 		if m.HasRating(source) {
 			rows = append(rows, source)
 		}
@@ -148,21 +160,37 @@ func (m *Matchup) RatingRows() []models.RatingSource {
 	return rows
 }
 
-// HasElo reports whether both sides carry a pregame Elo.
-func (m *Matchup) HasElo() bool {
-	return m != nil && m.Home.PregameElo != nil && m.Away.PregameElo != nil
-}
+// basketballEloStart is the Elo basketball's feed gives every team before it has a
+// result that counts. Both sides of 211 of last November's games and none after it
+// carried this, and 224 of 226 unplayed games in the first week of this season did.
+const basketballEloStart = 1500
 
-// RatingsAreFBSOnly reports whether the panel dropped rating rows because one
-// side is outside the divisions the ratings cover. It drives the footnote that
-// explains a half-height panel, and is deliberately narrow: it is true only when
-// one side has ratings and the other has none, which is the case the footnote
-// describes. Two unrated teams is a sync that has not run, and says nothing.
-func (m *Matchup) RatingsAreFBSOnly() bool {
-	if m == nil {
+// HasElo reports whether both sides carry a pregame Elo worth drawing. Two basketball
+// teams both at the starting value have not told it anything yet, and a row reading
+// 1500 against 1500 looks like a verdict that they are even.
+func (m *Matchup) HasElo() bool {
+	if m == nil || m.Home.PregameElo == nil || m.Away.PregameElo == nil {
 		return false
 	}
-	return (len(m.Home.Ratings) > 0) != (len(m.Away.Ratings) > 0)
+	if m.Sport == models.SportBasketball &&
+		*m.Home.PregameElo == basketballEloStart && *m.Away.PregameElo == basketballEloStart {
+		return false
+	}
+	return true
+}
+
+// CoverageNote is the footnote explaining a panel short its rating rows because one
+// side is outside the divisions the ratings cover. It is deliberately narrow: it is
+// empty unless one side has ratings and the other has none, which is the case it
+// describes. Two unrated teams is a sync that has not run, and says nothing.
+func (m *Matchup) CoverageNote() string {
+	if m == nil || (len(m.Home.Ratings) > 0) == (len(m.Away.Ratings) > 0) {
+		return ""
+	}
+	if m.Sport == models.SportBasketball {
+		return "Ratings are published for Division I teams only."
+	}
+	return "Ratings and efficiency figures are published for FBS teams only."
 }
 
 // AsOf is the most recent fetch behind anything in the panel, for the "as of"
@@ -196,6 +224,9 @@ func (m *Matchup) AsOf() *time.Time {
 		}
 		if side.Advanced != nil {
 			consider(side.Advanced.FetchedAt)
+		}
+		if side.Season != nil {
+			consider(side.Season.FetchedAt)
 		}
 	}
 	if m.WinProbability != nil {
@@ -319,6 +350,11 @@ var ratingUnitScales = map[models.RatingSource]ratingUnitScale{
 	},
 	models.RatingSourceCORE: {
 		summary: "opponent-relative efficiency; offense high, defense low",
+	},
+	// Checked on the captured season: Michigan, first overall, is 130.6 offense and
+	// 88.8 defense, and net is offense minus defense to within rounding.
+	models.RatingSourceAdjusted: {
+		summary: "points per 100 possessions against an average opponent; offense high, defense low",
 	},
 }
 

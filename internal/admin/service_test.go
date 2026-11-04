@@ -169,7 +169,7 @@ func TestAdminRenameUser(t *testing.T) {
 func TestAdminDeleteUser(t *testing.T) {
 	p := newPortal(t)
 	alice := p.user("alice")
-	league, err := p.svc.CreateLeague(p.actor, "Doomed", decimal.RequireFromString("100"))
+	league, err := p.svc.CreateLeague(p.actor, "Doomed", models.SportFootball, decimal.RequireFromString("100"))
 	if err != nil {
 		t.Fatalf("creating league: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestAdminLeagueMembership(t *testing.T) {
 	p := newPortal(t)
 	alice := p.user("alice")
 
-	league, err := p.svc.CreateLeague(p.actor, "Office Pool", decimal.RequireFromString("250"))
+	league, err := p.svc.CreateLeague(p.actor, "Office Pool", models.SportFootball, decimal.RequireFromString("250"))
 	if err != nil {
 		t.Fatalf("CreateLeague: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestAdminLeagueMembership(t *testing.T) {
 func TestAdminSetPurseBalanceCreatesAMissingPurse(t *testing.T) {
 	p := newPortal(t)
 	alice := p.user("alice")
-	league, err := p.svc.CreateLeague(p.actor, "Repairs", decimal.RequireFromString("100"))
+	league, err := p.svc.CreateLeague(p.actor, "Repairs", models.SportFootball, decimal.RequireFromString("100"))
 	if err != nil {
 		t.Fatalf("CreateLeague: %v", err)
 	}

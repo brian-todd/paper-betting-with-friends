@@ -291,7 +291,13 @@ func (h *Handler) CreateLeague(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.service.CreateLeague(auth.UserFromContext(r.Context()), name, balance); err != nil {
+	sport, ok := models.ParseSport(r.FormValue("sport"))
+	if !ok {
+		h.renderLeagues(w, r, http.StatusBadRequest, "Choose football or basketball.")
+		return
+	}
+
+	if _, err := h.service.CreateLeague(auth.UserFromContext(r.Context()), name, sport, balance); err != nil {
 		slog.Error("failed to create league", "error", err)
 		h.renderLeagues(w, r, http.StatusBadRequest, errorMessage(err))
 		return

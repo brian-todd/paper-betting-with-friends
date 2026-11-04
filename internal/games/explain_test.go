@@ -18,6 +18,8 @@ func TestEveryDrawnRowIsExplained(t *testing.T) {
 		models.RatingSourceSP.Label(),
 		models.RatingSourceFPI.Label(),
 		models.RatingSourceCORE.Label(),
+		models.RatingSourceAdjusted.Label(),
+		models.RatingSourceSRS.Label(),
 		"Elo",
 		"Win probability",
 		"Recent",

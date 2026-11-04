@@ -196,6 +196,16 @@ func TestIncrementalWindow(t *testing.T) {
 	}
 }
 
+func TestScheduleWindowReachesAMonthAheadAndAWeekBack(t *testing.T) {
+	start, end := scheduleWindow(time.Date(2026, 12, 30, 12, 0, 0, 0, time.UTC))
+	if want := "2026-12-23T00:00:00.000Z"; start != want {
+		t.Errorf("start = %s, want %s", start, want)
+	}
+	if want := "2027-01-29T23:59:59.000Z"; end != want {
+		t.Errorf("end = %s, want %s", end, want)
+	}
+}
+
 // The incremental syncs are the only callers that build their own date window,
 // and they sent a malformed one on every run from the day it was written: CBBD
 // answered 400 and the job never succeeded. This drives each real job so the
@@ -212,6 +222,7 @@ func TestIncrementalSyncsSendAValidDateWindow(t *testing.T) {
 	}{
 		{"games", "/games", (*SyncService).SyncGames},
 		{"lines", "/lines", (*SyncService).SyncLines},
+		{"schedule", "/games", (*SyncService).SyncSchedule},
 	}
 
 	for _, tt := range tests {
@@ -269,5 +280,31 @@ func TestLinesSyncDoesNotDependOnGames(t *testing.T) {
 	}
 	if err := sync.SyncLines(context.Background()); err != nil {
 		t.Errorf("SyncLines() error = %v with /games down; the lines should not be asking for it", err)
+	}
+}
+
+func TestPollRanksFrom(t *testing.T) {
+	team := uuid.New()
+	teams := map[int64]uuid.UUID{87: team}
+	date := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+
+	row := func(id float64, poll string, rank *float64, at *time.Time) APIPollRanking {
+		return APIPollRanking{Season: 2027, PollType: poll, TeamID: id, Ranking: rank, PollDate: at}
+	}
+	ranks, unknown := pollRanksFrom([]APIPollRanking{
+		row(87, models.PollAP, new(1.0), &date),
+		row(87, models.PollAP, new(1.0), &date),  // the same row twice
+		row(87, "Coaches Poll", new(2.0), &date), // not the poll we show
+		row(87, models.PollAP, nil, &date),       // only receiving votes
+		row(87, models.PollAP, new(3.0), nil),    // no date to read it by
+		row(999, models.PollAP, new(4.0), &date), // a team we do not hold
+		row(999, models.PollAP, nil, &date),      // unranked, so not worth counting
+	}, teams)
+
+	if len(ranks) != 1 || ranks[0].TeamID != team || ranks[0].Rank != 1 || !ranks[0].PollDate.Equal(date) {
+		t.Errorf("ranks = %+v, want one rank 1 row", ranks)
+	}
+	if unknown != 1 {
+		t.Errorf("unknown = %d, want 1", unknown)
 	}
 }

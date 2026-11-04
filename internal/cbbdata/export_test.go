@@ -12,3 +12,17 @@ import "context"
 func (s *SyncService) SyncLinesForTest(ctx context.Context, opts LineQueryOpts) error {
 	return s.syncLines(ctx, opts)
 }
+
+// SyncReferenceForTest exposes the venue and team half of SeedAll, so a level-2
+// test can write one captured day on top of it without seeding a whole season.
+func (s *SyncService) SyncReferenceForTest(ctx context.Context) error {
+	if err := s.syncVenues(ctx); err != nil {
+		return err
+	}
+	return s.syncTeams(ctx)
+}
+
+// SyncGamesForTest exposes syncGames for the same reason SyncLinesForTest exists.
+func (s *SyncService) SyncGamesForTest(ctx context.Context, opts GameQueryOpts) error {
+	return s.syncGames(ctx, opts)
+}
