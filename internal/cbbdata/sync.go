@@ -509,6 +509,12 @@ func (s *SyncService) syncTeams(ctx context.Context) error {
 		return err
 	}
 
+	football, err := s.teamRepo.FindWithLogos(models.SportFootball)
+	if err != nil {
+		return fmt.Errorf("reading football logos: %w", err)
+	}
+	logos := newLogoBook(football)
+
 	for _, t := range teams {
 		// Resolve venue.
 		var venueID uuid.UUID
@@ -584,13 +590,6 @@ func (s *SyncService) syncTeams(ctx context.Context) error {
 			conference = "Independent"
 		}
 
-		// Try to get logo from matching football team.
-		var logoURL *string
-		footballTeam, err := s.teamRepo.FindByNameAndSport(t.School, models.SportFootball)
-		if err == nil && footballTeam.LogoURL != nil {
-			logoURL = footballTeam.LogoURL
-		}
-
 		team := &models.Team{
 			ExternalID:     &t.ID,
 			Sport:          models.SportBasketball,
@@ -599,7 +598,7 @@ func (s *SyncService) syncTeams(ctx context.Context) error {
 			Mascot:         strPtr(t.Mascot),
 			Conference:     conference,
 			HomeVenueID:    venueID,
-			LogoURL:        logoURL,
+			LogoURL:        logos.logoFor(t),
 			PrimaryColor:   formatColor(t.PrimaryColor),
 			SecondaryColor: formatColor(t.SecondaryColor),
 		}

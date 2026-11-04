@@ -17,7 +17,10 @@ type APIVenue struct {
 
 // APITeam represents a team from the CBB Data API.
 type APITeam struct {
-	ID             int64  `json:"id"`
+	ID int64 `json:"id"`
+	// SourceID is usually a number, and the same one as football's team ID. A few
+	// small schools carry a placeholder such as "UNKNOWN#Cotner College".
+	SourceID       string `json:"sourceId"`
 	School         string `json:"school"`
 	Mascot         string `json:"mascot"`
 	Abbreviation   string `json:"abbreviation"`

@@ -270,6 +270,23 @@ postseason. Over a third of the feed's rows are teams only receiving votes, with
 null rank, and those are dropped. `cbb-rankings` asks for the whole season each run,
 so a missed run repairs itself.
 
+### Basketball Logos
+
+Basketball's feed has no logos, so `syncTeams` looks for one in this order
+(`logoBook.logoFor`): football's team with the same ID as `sourceId`, football's team
+with the same name, then ESPN's image host by `sourceId`. The ID comes first because
+the feeds spell schools differently; football's rows are filtered to those with a logo
+first because 57 of its names are shared, usually with a stub. ESPN is only for a team
+with a conference, which in this feed is exactly Division I: it had all 99 of those
+football could not supply and only 5 of 40 sampled from the rest, who appear as
+opponents and would show a broken image.
+
+ESPN's host is not a documented API, and we are trying it to see how it looks. To stop,
+remove that branch from `logoFor` and re-run `cbb-seed`. Logos are only written by the
+seed, so either change needs one to reach existing rows. There is no shared school ID
+between the two sports' teams; nothing reads one yet, and `sourceId` is the key if
+something ever does.
+
 ### Lineups
 
 **`/lineups` is not a team sheet.** It returns stats for five-man units computed from

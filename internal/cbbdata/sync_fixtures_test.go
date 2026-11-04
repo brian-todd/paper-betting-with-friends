@@ -3,6 +3,7 @@ package cbbdata_test
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -488,4 +489,66 @@ func capturedTeams(t *testing.T) []cbbdata.APITeam {
 		t.Fatal("the /teams capture is empty, so the count assertion would pass vacuously")
 	}
 	return teams
+}
+
+// The real team lists of both feeds. The cases are the ones a name match got wrong or
+// could not reach, and the count is what says the picture holds across Division I.
+func TestBasketballLogosFromRealTeams(t *testing.T) {
+	db := testdb.Open(t)
+	ctx := context.Background()
+
+	if _, err := fixtureseed.Football(ctx, db, 2026, 1); err != nil {
+		t.Fatalf("seeding football: %v", err)
+	}
+
+	base, _, stop, err := fixtureserver.Listen(fixtures.CBBD)
+	if err != nil {
+		t.Fatalf("starting the fake upstream: %v", err)
+	}
+	defer stop()
+	sync := cbbdata.NewSyncService(cbbdata.NewClientAt(base, ""), db)
+	if err := sync.SyncReferenceForTest(ctx); err != nil {
+		t.Fatalf("syncing reference data: %v", err)
+	}
+
+	var teams []models.Team
+	if err := db.Where("sport = ?", models.SportBasketball).Find(&teams).Error; err != nil {
+		t.Fatalf("reading teams: %v", err)
+	}
+	logo := make(map[string]string, len(teams))
+	withLogo, divisionOne, divisionOneWithLogo := 0, 0, 0
+	for _, team := range teams {
+		if team.LogoURL != nil {
+			logo[team.Name] = *team.LogoURL
+			withLogo++
+		}
+		if team.Conference != "Independent" {
+			divisionOne++
+			if team.LogoURL != nil {
+				divisionOneWithLogo++
+			}
+		}
+	}
+
+	const football = "https://cdn.collegefootballdata.com/logos/"
+	for _, tt := range []struct{ school, wantPrefix string }{
+		{"Duke", football},
+		{"Charlotte", football},                    // a football stub shares the name
+		{"Troy", football},                         // and here
+		{"Saint Mary's", "https://a.espncdn.com/"}, // football's row has no logo
+		{"St. Francis (PA)", football},             // football says Saint Francis, and no conference
+		{"VCU", "https://a.espncdn.com/"},          // football has no logo
+		{"DePaul", "https://a.espncdn.com/"},
+	} {
+		if !strings.HasPrefix(logo[tt.school], tt.wantPrefix) {
+			t.Errorf("%s logo = %q, want it from %s", tt.school, logo[tt.school], tt.wantPrefix)
+		}
+	}
+	if got := logo["Culver-Stockton"]; got != "" {
+		t.Errorf("Culver-Stockton logo = %q, want none: ESPN has no such image", got)
+	}
+	if divisionOne < 360 || divisionOneWithLogo != divisionOne {
+		t.Errorf("%d of %d conference teams have a logo, want all of them", divisionOneWithLogo, divisionOne)
+	}
+	t.Logf("%d of %d teams have a logo", withLogo, len(teams))
 }

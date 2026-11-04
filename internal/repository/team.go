@@ -110,6 +110,20 @@ func (r *TeamRepository) FindByNameAndSport(name, sport string) (*models.Team, e
 	return &team, nil
 }
 
+// FindWithLogos returns one sport's teams that have a logo, in a stable order, with
+// only the columns a logo lookup needs.
+func (r *TeamRepository) FindWithLogos(sport string) ([]models.Team, error) {
+	var teams []models.Team
+	err := r.db.Select("external_id", "name", "logo_url").
+		Where("sport = ? AND logo_url IS NOT NULL AND logo_url <> ''", sport).
+		Order("external_id").
+		Find(&teams).Error
+	if err != nil {
+		return nil, err
+	}
+	return teams, nil
+}
+
 // SearchByName searches teams by name for a given sport using case-insensitive matching.
 func (r *TeamRepository) SearchByName(sport, query string) ([]models.Team, error) {
 	var teams []models.Team
