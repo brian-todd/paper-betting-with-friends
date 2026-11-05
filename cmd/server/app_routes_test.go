@@ -111,7 +111,7 @@ func TestSportLinksThroughTheRouter(t *testing.T) {
 
 	t.Run("the signed-out home page names the product and both sports", func(t *testing.T) {
 		_, body := get(t, newClient(t, server), server.URL+"/")
-		for _, want := range []string{`class="nav-brand">🎟️ Paper Better<`, "<title>Home | Paper Better</title>", "college football and basketball"} {
+		for _, want := range []string{`class="nav-brand">🎟️ Paper Betting With Friends<`, "<title>Home | Paper Betting With Friends</title>", "college football and basketball"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("the page is missing %q", want)
 			}
