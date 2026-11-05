@@ -130,16 +130,6 @@ func (c *Client) GetRankings(ctx context.Context, season int) ([]APIPollRanking,
 	return rankings, nil
 }
 
-// GetGameLineups retrieves the five-man unit stats for one played game. An empty
-// answer can mean not processed yet as well as never available.
-func (c *Client) GetGameLineups(ctx context.Context, gameID int64) ([]APIGameLineup, error) {
-	var lineups []APIGameLineup
-	if err := c.doRequest(ctx, fmt.Sprintf("/lineups/game/%d", gameID), &lineups); err != nil {
-		return nil, fmt.Errorf("fetching lineups for game %d: %w", gameID, err)
-	}
-	return lineups, nil
-}
-
 // GetAdjustedRatings retrieves every team's adjusted efficiency for a season. Empty
 // until the provider has published any.
 func (c *Client) GetAdjustedRatings(ctx context.Context, season int) ([]APIAdjustedRating, error) {
@@ -158,6 +148,17 @@ func (c *Client) GetSRSRatings(ctx context.Context, season int) ([]APISRSRating,
 		return nil, fmt.Errorf("fetching srs ratings: %w", err)
 	}
 	return ratings, nil
+}
+
+// GetGameTeamStats retrieves the team box scores of games tipping off in a window.
+// One request covers every game in it, up to the feed's cap of 3,000.
+func (c *Client) GetGameTeamStats(ctx context.Context, start, end string) ([]APIGameTeamStats, error) {
+	var stats []APIGameTeamStats
+	path := "/games/teams?" + buildGameQuery(GameQueryOpts{StartDateRange: &start, EndDateRange: &end})
+	if err := c.doRequest(ctx, path, &stats); err != nil {
+		return nil, fmt.Errorf("fetching game team stats: %w", err)
+	}
+	return stats, nil
 }
 
 // GetTeamSeasonStats retrieves every team's figures for a season.

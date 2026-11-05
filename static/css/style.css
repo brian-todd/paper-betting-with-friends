@@ -3466,23 +3466,6 @@ button.btn {
     font-variant-numeric: tabular-nums;
 }
 
-/* Lineups carry nine figures beside the names, far more than a phone is wide, so
-   this one sizes to its content and scrolls inside the card, not the page. */
-.lineup-scroll {
-    overflow-x: auto;
-}
-
-.lineup-table {
-    table-layout: auto;
-}
-
-.lineup-table th:first-child,
-.lineup-table td:first-child {
-    width: auto;
-    min-width: 16rem;
-    font-family: inherit;
-}
-
 .matchup-rank {
     font-size: 0.8rem;
     color: var(--color-text-muted);

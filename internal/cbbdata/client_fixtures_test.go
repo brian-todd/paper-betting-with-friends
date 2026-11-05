@@ -147,6 +147,37 @@ func TestClientDecodesEveryCapturedEndpoint(t *testing.T) {
 		}
 	})
 
+	// A game is two rows, one per team, and the sync reads only a row's own side, so a
+	// game with one row would lose a side of its box score. Non-Division I opponents
+	// have rows too. The capture has no unplayed games, though tonight's fall in its window.
+	t.Run("game team stats", func(t *testing.T) {
+		rows, err := c.GetGameTeamStats(ctx, "2026-11-02T00:00:00.000Z", "2026-11-06T00:00:00.000Z")
+		if err != nil {
+			t.Fatalf("GetGameTeamStats: %v", err)
+		}
+		if len(rows) == 0 {
+			t.Fatal("no rows decoded")
+		}
+		perGame := make(map[int64]int, len(rows)/2)
+		for _, row := range rows {
+			perGame[row.GameID]++
+			if row.TeamID == 0 {
+				t.Fatalf("a row decoded with no team: %+v", row)
+			}
+			if row.TeamStats.Points.Total == nil || *row.TeamStats.Points.Total == 0 {
+				t.Errorf("game %d: team %d decoded no points", row.GameID, row.TeamID)
+			}
+			if row.TeamStats.FieldGoals.Attempted == nil || row.TeamStats.Rebounds.Total == nil || row.TeamStats.Points.InPaint == nil {
+				t.Errorf("game %d: team %d decoded without its counts", row.GameID, row.TeamID)
+			}
+		}
+		for game, n := range perGame {
+			if n != 2 {
+				t.Errorf("game %d has %d rows, want 2", game, n)
+			}
+		}
+	})
+
 	t.Run("rankings", func(t *testing.T) {
 		rows, err := c.GetRankings(ctx, fixtureSeason)
 		if err != nil {
@@ -166,26 +197,4 @@ func TestClientDecodesEveryCapturedEndpoint(t *testing.T) {
 		}
 	})
 
-	t.Run("lineups", func(t *testing.T) {
-		const dukeAtFloridaState = 214309
-		units, err := c.GetGameLineups(ctx, dukeAtFloridaState)
-		if err != nil {
-			t.Fatalf("GetGameLineups: %v", err)
-		}
-		if len(units) == 0 {
-			t.Fatal("no units decoded")
-		}
-		// A stint of a few seconds can really have no possessions, so this reads the
-		// whole game rather than each unit.
-		var possessions int
-		for _, unit := range units {
-			if unit.IDHash == "" || len(unit.Athletes) != 5 || unit.TeamID == 0 {
-				t.Fatalf("a unit decoded incompletely: %+v", unit)
-			}
-			possessions += unit.TeamStats.Possessions + unit.Opponent.Possessions
-		}
-		if possessions == 0 {
-			t.Error("a whole game decoded with no possessions")
-		}
-	})
 }

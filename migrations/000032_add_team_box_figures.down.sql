@@ -1,0 +1,21 @@
+DROP TABLE game_team_stats;
+
+ALTER TABLE team_season_stats
+    DROP COLUMN points,
+    DROP COLUMN fg_made,
+    DROP COLUMN fg_attempted,
+    DROP COLUMN three_made,
+    DROP COLUMN three_attempted,
+    DROP COLUMN ft_made,
+    DROP COLUMN ft_attempted,
+    DROP COLUMN rebounds,
+    DROP COLUMN off_rebounds,
+    DROP COLUMN def_rebounds,
+    DROP COLUMN assists,
+    DROP COLUMN steals,
+    DROP COLUMN blocks,
+    DROP COLUMN turnovers,
+    DROP COLUMN fouls,
+    DROP COLUMN paint_points,
+    DROP COLUMN fast_break_points,
+    DROP COLUMN points_off_turnovers;

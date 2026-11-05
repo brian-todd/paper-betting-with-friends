@@ -192,6 +192,7 @@ func teamSeasonStatsFrom(teamID uuid.UUID, season int, row APITeamSeasonStats, n
 		DefenseFreeThrowRate:  decimalPtr(opponent.FourFactors.FreeThrowRate),
 		OffenseThreePct:       decimalPtr(team.ThreePoint.Pct),
 		DefenseThreePct:       decimalPtr(opponent.ThreePoint.Pct),
+		Box:                   teamBoxFrom(team),
 	}
 }
 

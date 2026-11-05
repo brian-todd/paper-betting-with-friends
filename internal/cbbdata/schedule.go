@@ -3,24 +3,11 @@ package cbbdata
 import (
 	"time"
 
-	"github.com/brian/paper-betting-with-friends/internal/repository"
 	"github.com/brian/paper-betting-with-friends/internal/timeutil"
 )
 
 // Basketball cadence.
 //
-// lineupFetchRules decide when a finished game is asked for. The feed builds
-// lineups from play-by-play: the previous night's games had them by the next
-// morning, so the first attempt waits past the end of a game, and an empty answer
-// is asked again a day later, twice, because it can mean not processed yet or
-// never available.
-var lineupFetchRules = repository.LineupFetchRules{
-	FirstAfter:  6 * time.Hour,
-	RetryAfter:  24 * time.Hour,
-	MaxAttempts: 3,
-	Lookback:    14 * 24 * time.Hour,
-}
-
 // Eight jobs read eight things at their own rates, and all of them spend from the
 // monthly allowance football also draws on:
 //
@@ -35,7 +22,8 @@ var lineupFetchRules = repository.LineupFetchRules{
 //     day, so the day picker has games to show and a game stuck unfinished by an
 //     outage is repaired.
 //   - cbb-rankings checks twice a week in season, because polls move weekly.
-//   - cbb-lineups asks for a few finished games an hour, one request each.
+//   - cbb-box-scores checks hourly for finished games with no box score, and spends
+//     one request on all of them only when there are some.
 //   - cbb-ratings reads the two rating tables once a day in season.
 //   - cbb-team-stats reads the season figures every six hours in season, since each
 //     night's games change them and one request covers every team.
@@ -72,14 +60,13 @@ const (
 	rankingsMondayHour  = 18
 	rankingsTuesdayHour = 6
 
-	// lineupsOffset places the hourly lineups run clear of the games and lines runs.
-	lineupsOffset = 40 * time.Minute
+	// boxScoresOffset places the hourly box score run clear of the games and lines runs.
+	boxScoresOffset = 40 * time.Minute
 
-	// lineupsPerRun is the most games one lineups run asks for. At a run an hour it
-	// is 72 requests a day and ~2,230 a month at most, which is the job's whole
-	// budget. Days average about 50 games with a line and peak at 155, so a peak day
-	// takes a couple of days to drain.
-	lineupsPerRun = 3
+	// boxScoreLookback is how long a finished game keeps waiting for a box score. One
+	// request covers the whole window, so its width costs nothing per run. It also stops a
+	// game the feed never covers from spending a request every hour forever.
+	boxScoreLookback = 3 * 24 * time.Hour
 
 	// ratingsSyncHour is the local hour cbb-ratings runs, after the night's games.
 	ratingsSyncHour = 5
@@ -239,10 +226,11 @@ func NextRankingsSync(now time.Time, loc *time.Location) time.Time {
 	}
 }
 
-// NextLineupsSync returns the next instant the lineups sync should run after now:
-// hourly in season, daily outside it, always lineupsOffset past the grid.
-func NextLineupsSync(now time.Time, loc *time.Location) time.Time {
-	return nextAtRate(now.Add(-lineupsOffset), loc, time.Hour).Add(lineupsOffset)
+// NextBoxScoresSync returns the next instant the box score sync should check after now:
+// hourly in season, daily outside it, always boxScoresOffset past the grid. A check with
+// no game waiting spends nothing, so this rate is the most it can spend.
+func NextBoxScoresSync(now time.Time, loc *time.Location) time.Time {
+	return nextAtRate(now.Add(-boxScoresOffset), loc, time.Hour).Add(boxScoresOffset)
 }
 
 // NextRatingsSync returns the next daily ratings run after now, skipping forward to
@@ -285,9 +273,9 @@ func TeamStatsDelay(now time.Time, loc *time.Location) time.Duration {
 	return atLeastMinDelay(NextTeamStatsSync(now, loc).Sub(now))
 }
 
-// LineupsDelay returns how long to wait after now before the next lineups sync.
-func LineupsDelay(now time.Time, loc *time.Location) time.Duration {
-	return atLeastMinDelay(NextLineupsSync(now, loc).Sub(now))
+// BoxScoresDelay returns how long to wait after now before the next box score sync.
+func BoxScoresDelay(now time.Time, loc *time.Location) time.Duration {
+	return atLeastMinDelay(NextBoxScoresSync(now, loc).Sub(now))
 }
 
 // RankingsDelay returns how long to wait after now before the next rankings check.

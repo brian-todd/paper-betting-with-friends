@@ -314,50 +314,31 @@
     </div>
     {{end}}
 
-    <!-- Five-man units from games already played. It is decision support, not a
-         team sheet: the feed has no starters, injuries or projections, and the note
-         says so because a list of five names reads like tonight's lineup. -->
-    {{with .Lineups}}
+    <!-- The same rows before and after a game, so a team's night reads against its
+         season: per-game averages until the box score arrives, then the box score. -->
+    {{with .TeamStats}}
     <div class="matchup-section">
         <div class="info-card">
-            <h3>{{if .InThisGame}}Lineups in this game{{else}}Most-used lineups this season{{end}}</h3>
-            {{range .Sides}}
-            <div class="lineup-scroll">
-            <table class="matchup-table lineup-table">
+            <h3>{{if .InThisGame}}Box score{{else}}Season averages{{end}}</h3>
+            <table class="matchup-table">
                 <thead>
                     <tr>
-                        <th scope="col">{{.Team}}</th>
-                        <th scope="col">Min</th>
-                        <th scope="col">Poss</th>
-                        <th scope="col"><span class="metric-help" title="Points scored minus points allowed per 100 possessions. Every rate here is shown from 10 possessions, since less than that is mostly noise.">Net</span></th>
-                        <th scope="col"><span class="metric-help" title="Points scored per 100 possessions.">Off</span></th>
-                        <th scope="col"><span class="metric-help" title="Points allowed per 100 possessions.">Def</span></th>
-                        <th scope="col"><span class="metric-help" title="Effective field goal percentage, with a three counted as one and a half makes.">eFG%</span></th>
-                        <th scope="col"><span class="metric-help" title="The opposition's effective field goal percentage against this unit.">Opp eFG%</span></th>
-                        <th scope="col"><span class="metric-help" title="The share of this unit's field goal attempts that were threes.">3PA%</span></th>
-                        <th scope="col"><span class="metric-help" title="Turnovers per 100 possessions.">TO%</span></th>
+                        <th scope="col">{{if .InThisGame}}Total{{else}}Per game{{end}}</th>
+                        <th scope="col">{{$.Game.AwayTeam.Abbreviation}}</th>
+                        <th scope="col">{{$.Game.HomeTeam.Abbreviation}}</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {{range .Units}}
+                    {{range .Rows}}
                     <tr>
-                        <td>{{.Players}}</td>
-                        <td>{{.Minutes}}</td>
-                        <td>{{.Possessions}}</td>
-                        <td>{{if .Net}}{{.Net}}{{else}}<span class="no-data">—</span>{{end}}</td>
-                        <td>{{if .Offense}}{{.Offense}}{{else}}<span class="no-data">—</span>{{end}}</td>
-                        <td>{{if .Defense}}{{.Defense}}{{else}}<span class="no-data">—</span>{{end}}</td>
-                        <td>{{if .EffectiveFG}}{{.EffectiveFG}}{{else}}<span class="no-data">—</span>{{end}}</td>
-                        <td>{{if .OppEffectiveFG}}{{.OppEffectiveFG}}{{else}}<span class="no-data">—</span>{{end}}</td>
-                        <td>{{if .ThreeRate}}{{.ThreeRate}}{{else}}<span class="no-data">—</span>{{end}}</td>
-                        <td>{{if .TurnoverRate}}{{.TurnoverRate}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <th scope="row">{{.Label}}</th>
+                        <td>{{if .Away}}{{.Away}}{{else}}<span class="no-data">—</span>{{end}}</td>
+                        <td>{{if .Home}}{{.Home}}{{else}}<span class="no-data">—</span>{{end}}</td>
                     </tr>
                     {{end}}
                 </tbody>
             </table>
-            </div>
-            {{end}}
-            <p class="text-muted">Five-player units from games already played, not a starting lineup or a projection. Coverage of a game can be partial.</p>
+            {{with .Note}}<p class="matchup-note">{{.}}</p>{{end}}
         </div>
     </div>
     {{end}}

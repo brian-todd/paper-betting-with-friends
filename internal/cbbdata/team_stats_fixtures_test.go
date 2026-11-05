@@ -56,6 +56,50 @@ func TestRatingsAndTeamStatsFromARealSeason(t *testing.T) {
 		}
 	}
 
+	t.Run("season counts come through as the feed reported them", func(t *testing.T) {
+		var stats models.TeamSeasonStats
+		if err := db.First(&stats, "team_id = ? AND season = ?", team(t, "Georgia Tech").ID, 2026).Error; err != nil {
+			t.Fatalf("reading stats: %v", err)
+		}
+		for label, tt := range map[string]struct {
+			got  *int
+			want int
+		}{
+			"points": {stats.Box.Points, 2287}, "paint": {stats.Box.PaintPoints, 1046},
+			"fast break": {stats.Box.FastBreakPoints, 278}, "off turnovers": {stats.Box.PointsOffTurnovers, 379},
+			"fg made": {stats.Box.FGMade, 817}, "fg attempted": {stats.Box.FGAttempted, 1849},
+			"threes made": {stats.Box.ThreeMade, 215}, "threes attempted": {stats.Box.ThreeAttempted, 613},
+			"ft made": {stats.Box.FTMade, 438}, "ft attempted": {stats.Box.FTAttempted, 616},
+			"rebounds": {stats.Box.Rebounds, 1149}, "offensive": {stats.Box.OffRebounds, 330}, "defensive": {stats.Box.DefRebounds, 819},
+			"assists": {stats.Box.Assists, 489}, "steals": {stats.Box.Steals, 188}, "blocks": {stats.Box.Blocks, 122},
+			"turnovers": {stats.Box.Turnovers, 415}, "fouls": {stats.Box.Fouls, 558},
+		} {
+			if tt.got == nil || *tt.got != tt.want {
+				t.Errorf("%s = %v, want %d", label, tt.got, tt.want)
+			}
+		}
+	})
+
+	// A row stored before the counts existed has none, and the page hides the panel
+	// until the next run fills them in. That only happens if the upsert assigns them.
+	t.Run("a run fills the counts in on a row stored without them", func(t *testing.T) {
+		teamID := team(t, "Georgia Tech").ID
+		if err := db.Model(&models.TeamSeasonStats{}).Where("team_id = ? AND season = ?", teamID, 2026).
+			Update("points", nil).Error; err != nil {
+			t.Fatalf("clearing points: %v", err)
+		}
+		if err := sync.SyncTeamStats(ctx); err != nil {
+			t.Fatalf("SyncTeamStats: %v", err)
+		}
+		var stats models.TeamSeasonStats
+		if err := db.First(&stats, "team_id = ? AND season = ?", teamID, 2026).Error; err != nil {
+			t.Fatalf("reading stats: %v", err)
+		}
+		if stats.Box.Points == nil || *stats.Box.Points != 2287 {
+			t.Errorf("points = %v, want 2287", stats.Box.Points)
+		}
+	})
+
 	t.Run("adjusted efficiency keeps its units and ranks", func(t *testing.T) {
 		var rating models.TeamRating
 		if err := db.First(&rating, "team_id = ? AND season = ? AND source = ?",
