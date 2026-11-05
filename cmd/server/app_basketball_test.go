@@ -63,13 +63,13 @@ func TestBasketballThroughTheRouter(t *testing.T) {
 	}
 
 	t.Run("the nav links to basketball", func(t *testing.T) {
-		if !strings.Contains(page(t, "/games"), `href="/basketball"`) {
-			t.Error("no nav link to /basketball")
+		if !strings.Contains(page(t, "/games"), `href="/games/basketball"`) {
+			t.Error("no nav link to /games/basketball")
 		}
 	})
 
 	t.Run("a conference with no games that day says so and stays selected", func(t *testing.T) {
-		body := page(t, "/basketball/games?date="+day+"&applied=1&conf=Zed")
+		body := page(t, "/games/basketball?date="+day+"&applied=1&conf=Zed")
 		if !strings.Contains(body, "match these filters") {
 			t.Error("the empty state ignores the filter")
 		}
@@ -79,7 +79,7 @@ func TestBasketballThroughTheRouter(t *testing.T) {
 	})
 
 	t.Run("choosing a season keeps the filter", func(t *testing.T) {
-		resp, _ := get(t, client, server.URL+"/basketball/games?season=2026&applied=1&conf=Zed")
+		resp, _ := get(t, client, server.URL+"/games/basketball?season=2026&applied=1&conf=Zed")
 		query := resp.Request.URL.Query()
 		if query.Get("date") == "" || query.Get("conf") != "Zed" || query.Get("applied") != "1" {
 			t.Errorf("landed on %s", resp.Request.URL)
@@ -87,21 +87,21 @@ func TestBasketballThroughTheRouter(t *testing.T) {
 	})
 
 	t.Run("the index opens on the next day with games", func(t *testing.T) {
-		resp, _ := get(t, client, server.URL+"/basketball")
-		if got := resp.Request.URL.Query().Get("date"); got != day {
-			t.Errorf("landed on %q, want %q", got, day)
+		resp, _ := get(t, client, server.URL+"/games/basketball")
+		if got := resp.Request.URL.RawQuery; got != "date="+day {
+			t.Errorf("landed on %q, want only the date %q", got, day)
 		}
 	})
 
 	t.Run("the season dropdown lands on a day in that season", func(t *testing.T) {
-		resp, _ := get(t, client, server.URL+"/basketball/games?season=2026")
+		resp, _ := get(t, client, server.URL+"/games/basketball?season=2026")
 		if got := resp.Request.URL.Query().Get("date"); got != tip.AddDate(0, -5, 0).Format(time.DateOnly) {
 			t.Errorf("landed on %q", got)
 		}
 	})
 
 	t.Run("the day page shows the rank and both seasons", func(t *testing.T) {
-		body := page(t, "/basketball/games?date="+day)
+		body := page(t, "/games/basketball?date="+day)
 		if !strings.Contains(body, "#7") {
 			t.Error("the card does not show the rank")
 		}
@@ -111,11 +111,11 @@ func TestBasketballThroughTheRouter(t *testing.T) {
 	})
 
 	t.Run("the game page shows the rank and links back to its day", func(t *testing.T) {
-		body := page(t, "/games/"+game.ID.String())
+		body := page(t, game.Path())
 		if !strings.Contains(body, "#7") {
 			t.Error("the game page does not show the rank")
 		}
-		if !strings.Contains(body, "/basketball/games?date="+day) {
+		if !strings.Contains(body, "/games/basketball?date="+day) {
 			t.Error("the back link does not return to the game's day")
 		}
 	})
@@ -139,7 +139,7 @@ func TestBasketballThroughTheRouter(t *testing.T) {
 			t.Fatalf("creating bet: %v", err)
 		}
 
-		if !strings.Contains(page(t, "/basketball/games?date="+day), "badge-user-bet") {
+		if !strings.Contains(page(t, "/games/basketball?date="+day), "badge-user-bet") {
 			t.Error("the card does not mark the viewer's bet")
 		}
 
@@ -199,12 +199,12 @@ func TestMatchupReadsOnlyItsOwnSeason(t *testing.T) {
 		})
 	}
 
-	_, body := get(t, client, server.URL+"/games/"+game(2026).ID.String())
+	_, body := get(t, client, server.URL+game(2026).Path())
 	if strings.Contains(body, ">SRS<") {
 		t.Error("a 2026 game shows a 2025 rating")
 	}
 
-	_, body = get(t, client, server.URL+"/games/"+game(2025).ID.String())
+	_, body = get(t, client, server.URL+game(2025).Path())
 	if !strings.Contains(body, ">SRS<") {
 		t.Error("a 2025 game does not show its own season's rating, so this test checked nothing")
 	}
@@ -264,7 +264,7 @@ func TestLineupPanelThroughTheRouter(t *testing.T) {
 
 	page := func(t *testing.T, g *models.Game) string {
 		t.Helper()
-		resp, body := get(t, client, server.URL+"/games/"+g.ID.String())
+		resp, body := get(t, client, server.URL+g.Path())
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("game page status = %d", resp.StatusCode)
 		}
@@ -363,7 +363,7 @@ func TestBasketballGridLinesFilterThroughTheRouter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, body := get(t, client, server.URL+"/basketball/games?date="+day+tt.query)
+			_, body := get(t, client, server.URL+"/games/basketball?date="+day+tt.query)
 			if !strings.Contains(body, "Lined University") {
 				t.Fatal("the game with a line is missing")
 			}

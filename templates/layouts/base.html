@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{.Title}} | Betting Tracker</title>
+    <title>{{.Title}} | Paper Better</title>
     <!--
       htmx discards the body of any 4xx by default, which silently swallows
       server-side form validation messages. Allow 400/422 to swap so those
@@ -24,13 +24,13 @@
 <body>
     <header class="header">
         <nav class="nav">
-            <a href="/" class="nav-brand">🏈 Betting Tracker</a>
+            <a href="/" class="nav-brand">🎟️ Paper Better</a>
             <div class="nav-links">
                 {{if .User}}
-                    <a href="/games" class="nav-link">Football</a>
-                    <a href="/basketball" class="nav-link">Basketball</a>
-                    <a href="/bets" class="nav-link">My Bets</a>
-                    <a href="/leagues" class="nav-link">Leagues</a>
+                    <a href="/games/football" class="nav-link"{{if eq .NavSection "football"}} aria-current="page"{{end}}>🏈 Football</a>
+                    <a href="/games/basketball" class="nav-link"{{if eq .NavSection "basketball"}} aria-current="page"{{end}}>🏀 Basketball</a>
+                    <a href="/bets" class="nav-link"{{if eq .NavSection "bets"}} aria-current="page"{{end}}>My Bets</a>
+                    <a href="/leagues" class="nav-link"{{if eq .NavSection "leagues"}} aria-current="page"{{end}}>Leagues</a>
                     <span class="nav-user">{{.User.Username}}</span>
                     {{if .User.IsAdmin}}
                     <a href="/admin" class="btn btn-primary btn-sm">Admin</a>
@@ -54,7 +54,7 @@
 
     <footer class="footer">
         <div class="container">
-            <p>&copy; {{currentYear}} Betting Tracker. Track your college sports bets.</p>
+            <p>&copy; {{currentYear}} Paper Better. Track your college sports bets.</p>
             {{if .SyncStatus}}
             <ul class="sync-status">
                 {{range .SyncStatus}}
@@ -76,4 +76,21 @@
     </footer>
 </body>
 </html>
+{{end}}
+
+{{/* Lives here because every page is parsed with this file. */}}
+{{define "sport-cards"}}
+<div class="action-cards">
+    <div class="card">
+        <h3>🏈 College Football</h3>
+        <p>Browse the week's games and make your picks.</p>
+        <a href="/games/football" class="btn btn-primary">Football Games</a>
+    </div>
+
+    <div class="card">
+        <h3>🏀 College Basketball</h3>
+        <p>Browse the day's games and make your picks.</p>
+        <a href="/games/basketball" class="btn btn-primary">Basketball Games</a>
+    </div>
+</div>
 {{end}}

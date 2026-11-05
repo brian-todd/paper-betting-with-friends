@@ -26,6 +26,15 @@ func (r *GameRepository) Create(game *models.Game) error {
 	return r.db.Create(game).Error
 }
 
+// FindSport reads only a game's sport, for a caller that does not need the game.
+func (r *GameRepository) FindSport(id uuid.UUID) (string, error) {
+	var game models.Game
+	if err := r.db.Select("sport").Take(&game, "id = ?", id).Error; err != nil {
+		return "", err
+	}
+	return game.Sport, nil
+}
+
 // FindByID retrieves a game by its ID with all relationships.
 func (r *GameRepository) FindByID(id uuid.UUID) (*models.Game, error) {
 	var game models.Game

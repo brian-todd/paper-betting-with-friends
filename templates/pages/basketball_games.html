@@ -2,7 +2,7 @@
 <div class="games-page">
     <div class="page-header">
         <div class="header-left">
-            <h1>Basketball</h1>
+            <h1>🏀 Basketball</h1>
         </div>
         <div class="header-controls">
             {{if .Seasons}}
@@ -24,7 +24,7 @@
          already one day, and the feed reports no division. Everything is a plain GET
          form, and the hidden "applied" field is what tells the handler an unticked
          box is a choice rather than an untouched page. -->
-    <form class="games-filters" method="GET" action="/basketball/games">
+    <form class="games-filters" method="GET" action="/games/basketball">
         <input type="hidden" name="applied" value="1">
         <input type="hidden" name="date" value="{{.DateStr}}">
 
@@ -182,7 +182,7 @@
     {{if .Games}}
     <div class="games-grid">
         {{range .Games}}
-        <a href="/games/{{.Game.ID}}" class="game-card-link"
+        <a href="{{.Game.Path}}" class="game-card-link"
            data-status="{{.Game.Status}}"
            data-home-conference="{{.Game.HomeTeam.Conference}}"
            data-away-conference="{{.Game.AwayTeam.Conference}}">
@@ -307,7 +307,7 @@ const filterQuery = {{.FilterQuery}};
 function gamesURL(key, value) {
     const query = new URLSearchParams(filterQuery);
     query.set(key, value);
-    return '/basketball/games?' + query.toString();
+    return '/games/basketball?' + query.toString();
 }
 function navigateToDate(date) {
     window.location.href = gamesURL('date', date);

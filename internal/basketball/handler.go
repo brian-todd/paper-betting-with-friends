@@ -9,9 +9,13 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/auth"
 	"github.com/brian/paper-betting-with-friends/internal/games"
+	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/templates"
 	"github.com/google/uuid"
 )
+
+// dayPath is the day page. A day is a query on it, not a path of its own.
+const dayPath = "/games/basketball"
 
 // UserBetReader describes the bets a user already holds on a set of games, keyed
 // by game ID. Narrow because this handler needs one method off the bets service.
@@ -46,18 +50,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authMiddleware func(http.Ha
 		return authMiddleware(hf)
 	}
 
-	mux.Handle("GET /basketball", wrap(h.Index))
-	mux.Handle("GET /basketball/games", wrap(h.ListGames))
-}
+	mux.Handle("GET "+dayPath, wrap(h.ListGames))
 
-// Index redirects to the games listing on the day to open on.
-func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
-	day, err := h.service.DefaultDay()
-	if err != nil {
-		slog.Error("failed to resolve the default basketball day", "error", err)
-		day = h.service.Today()
+	// The day page's URLs before they moved under /games.
+	moved := func(w http.ResponseWriter, r *http.Request) {
+		games.RedirectMoved(w, r, dayPath)
 	}
-	http.Redirect(w, r, dayURL(day, games.Filter{Defaulted: true}), http.StatusSeeOther)
+	mux.Handle("GET /basketball", wrap(moved))
+	mux.Handle("GET /basketball/games", wrap(moved))
 }
 
 // parseFilter reads the page's filter from a query.
@@ -76,8 +76,30 @@ func parseFilter(query url.Values) games.Filter {
 	return filter
 }
 
-// ListGames displays basketball games for a single day. A season parameter with no
-// date is the dropdown asking for that season, which redirects to a day in it.
+// openingDay is the day to open on when a request names none: a day in the season it
+// asks for, which is how the dropdown works, or otherwise the nearest day with games.
+// The second return is false when neither can be resolved.
+func (h *Handler) openingDay(params url.Values) (time.Time, bool) {
+	season, err := strconv.Atoi(params.Get("season"))
+	if err != nil {
+		day, err := h.service.DefaultDay()
+		if err != nil {
+			slog.Error("failed to resolve the default basketball day", "error", err)
+			return time.Time{}, false
+		}
+		return day, true
+	}
+
+	day, ok, err := h.service.DayInSeason(season)
+	if err != nil {
+		slog.Error("failed to resolve a day in the basketball season", "season", season, "error", err)
+		return time.Time{}, false
+	}
+	return day, ok
+}
+
+// ListGames displays basketball games for a single day. With no date it redirects to
+// the day to open on, so a day's URL always names its day.
 func (h *Handler) ListGames(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
 	if user == nil {
@@ -87,15 +109,9 @@ func (h *Handler) ListGames(w http.ResponseWriter, r *http.Request) {
 
 	params := r.URL.Query()
 	if params.Get("date") == "" {
-		if season, err := strconv.Atoi(params.Get("season")); err == nil {
-			day, ok, err := h.service.DayInSeason(season)
-			if err != nil {
-				slog.Error("failed to resolve a day in the basketball season", "season", season, "error", err)
-			}
-			if ok {
-				http.Redirect(w, r, dayURL(day, parseFilter(params)), http.StatusSeeOther)
-				return
-			}
+		if day, ok := h.openingDay(params); ok {
+			http.Redirect(w, r, dayURL(day, parseFilter(params)), http.StatusSeeOther)
+			return
 		}
 	}
 
@@ -121,6 +137,7 @@ func (h *Handler) ListGames(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":       "Basketball",
 		"User":        user,
+		"NavSection":  models.SportBasketball,
 		"Games":       day.Games,
 		"Date":        date,
 		"DateStr":     date.Format(time.DateOnly),
@@ -187,5 +204,5 @@ func (h *Handler) annotateUserBets(userID uuid.UUID, games []GameWithOdds) {
 func dayURL(day time.Time, filter games.Filter) string {
 	values := filter.Query()
 	values.Set("date", day.Format(time.DateOnly))
-	return "/basketball/games?" + values.Encode()
+	return dayPath + "?" + values.Encode()
 }

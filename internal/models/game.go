@@ -88,6 +88,15 @@ type Game struct {
 	LiveState *GameLiveState `gorm:"foreignKey:GameID"`
 }
 
+// Path is the URL of the game's page. A game with no sport set, which only a
+// hand-built struct can be, gets the lookup route, which finds the right one.
+func (g Game) Path() string {
+	if g.Sport == "" {
+		return "/games/" + g.ID.String()
+	}
+	return "/games/" + g.Sport + "/" + g.ID.String()
+}
+
 // BeforeCreate sets the UUID before creating a new game.
 func (g *Game) BeforeCreate(tx *gorm.DB) error {
 	if g.ID == uuid.Nil {

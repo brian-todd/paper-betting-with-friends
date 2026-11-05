@@ -416,6 +416,18 @@ func (s *Service) CalendarDay(at time.Time) string {
 	return at.In(s.location).Format(time.DateOnly)
 }
 
+// GamePath is the URL of a game's page, found from its ID alone.
+func (s *Service) GamePath(gameID uuid.UUID) (string, error) {
+	sport, err := s.gameRepo.FindSport(gameID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", ErrGameNotFound
+		}
+		return "", err
+	}
+	return models.Game{ID: gameID, Sport: sport}.Path(), nil
+}
+
 // GetGameDetail retrieves a game with all odds from all sources.
 func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 	game, err := s.gameRepo.FindByID(gameID)

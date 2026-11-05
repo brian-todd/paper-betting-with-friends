@@ -81,6 +81,30 @@ mux.Handle("GET /leagues", authMiddleware(http.HandlerFunc(h.Index)))
 mux.Handle("POST /leagues/{id}/join", authMiddleware(http.HandlerFunc(h.Join)))
 ```
 
+### Game URLs
+
+| URL | Page |
+| --- | --- |
+| `/games` | Chooses a sport |
+| `/games/football` | Redirects to the current week |
+| `/games/football/{season}/{seasonType}/{week}` | A football week |
+| `/games/basketball` | A basketball day, named by `?date=`; without one it redirects to the day to open on |
+| `/games/{sport}/{gameID}` | A game, either sport; the wrong sport redirects to the right one |
+
+`internal/games` registers football's pages and the shared game page, and
+`internal/basketball` registers the day page. Link to a game with `Game.Path` and to a
+week with `Week.Path`; `TestTemplatesDoNotHardCodeGameURLs` fails on a hard-coded one,
+which would otherwise keep working through a redirect and go unnoticed.
+
+`/games/{gameID}` looks up the game's sport and redirects to its page. It is not only
+for old links: the bet form's redirect when htmx is unavailable uses it, because that
+code does not load the game. The other old URLs (`/games/{season}/{seasonType}/{week}`,
+`/basketball`, `/basketball/games`) redirect too. All of them are 301s that keep the
+query string, and sit behind the same auth as the pages they lead to.
+
+Most `/games` in this file and in the sync code is the data feeds' endpoint, not this
+route, so a rename here is not a find-and-replace.
+
 ### Error Handling
 
 - Define package-level sentinel errors at the top of service.go: `var ErrXxx = errors.New("...")`
@@ -1222,6 +1246,7 @@ a migration is the wrong place to decide that.
 - Removing the lookback from the lineups queue — a seeded past season is thousands of due games, each a metered request
 - Scanning `MAX` or `MIN` into a `*time.Time` — over no rows the aggregate is NULL and the scan errors; use `sql.NullTime`
 - Assuming a bet's league and game are the same sport anywhere but placement — bets from before leagues had a sport do not, and they still have to settle
+- Hard-coding a game's URL in a template or handler — it depends on the sport; use `Game.Path` and `Week.Path`. The exception is the bet form's no-htmx redirect, which has only the ID and goes through `/games/{gameID}`
 - Moving a bet's status and a purse outside `inTx` — a credit that fails after the status commits leaves the bet settled and unpaid, and nothing retries it
 - Treating a `GameResult` as final — check `IsFinal()`, or bets settle on a live score
 - Crediting a purse for a settled bet without first winning `SettleIfPending` — the settlement sweep is not the only caller, and a bet read as pending twice is paid twice. A cancel's refund is gated the same way, on `CancelIfPending`

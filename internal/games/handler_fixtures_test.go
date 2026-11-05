@@ -52,7 +52,7 @@ var firstSnapshot = time.Date(2026, 9, 5, 20, 49, 9, 0, time.UTC)
 // gameCardLink matches the anchor each game on the grid is wrapped in, which is
 // the only per-game marker the page emits that a test can count without
 // asserting on the styling around it.
-var gameCardLink = regexp.MustCompile(`href="/games/([0-9a-f-]{36})"`)
+var gameCardLink = regexp.MustCompile(`href="/games/football/([0-9a-f-]{36})"`)
 
 func TestTheWeekPageRendersARealSlate(t *testing.T) {
 	env := pagetest.Open(t, firstSnapshot)
@@ -68,7 +68,7 @@ func TestTheWeekPageRendersARealSlate(t *testing.T) {
 	showWeek := func(t *testing.T, week int, query string) (int, string) {
 		t.Helper()
 
-		target := "/games/" + strconv.Itoa(fixtureYear) + "/regular/" + strconv.Itoa(week)
+		target := "/games/football/" + strconv.Itoa(fixtureYear) + "/regular/" + strconv.Itoa(week)
 		if query != "" {
 			target += "?" + query
 		}
@@ -299,7 +299,7 @@ func TestTheWeekPageRendersARealSlate(t *testing.T) {
 		}
 
 		_, body := show(t, "applied=1&team="+url.QueryEscape(teamNameOf(t, env, final.ID)))
-		if !strings.Contains(body, `href="/games/`+final.ID+`"`) {
+		if !strings.Contains(body, `href="/games/football/`+final.ID+`"`) {
 			t.Fatalf("the game the team filter was built from is not on its own page")
 		}
 
@@ -358,7 +358,7 @@ func gameIDsOn(body string) []string {
 // cardFor is the slice of the page belonging to one game: from its own anchor
 // to the next one, or to the end.
 func cardFor(body, gameID string) string {
-	start := strings.Index(body, `href="/games/`+gameID+`"`)
+	start := strings.Index(body, `href="/games/football/`+gameID+`"`)
 	if start < 0 {
 		return ""
 	}

@@ -2,11 +2,11 @@
 <div class="game-detail-page">
     <div class="page-header">
         {{if .Game.Week}}
-        <a href="/games/{{.Game.Week.Season}}/{{.Game.Week.SeasonType}}/{{.Game.Week.Number}}" class="back-link">
+        <a href="{{.Game.Week.Path}}" class="back-link">
             ← Back to Week {{.Game.Week.Number}}
         </a>
         {{else}}
-        <a href="/basketball/games?date={{.BasketballDay}}" class="back-link">
+        <a href="/games/basketball?date={{.BasketballDay}}" class="back-link">
             ← Back to Basketball Games
         </a>
         {{end}}
@@ -236,10 +236,10 @@
                     <tr class="recent-row">
                         {{if eq $i 0}}<th scope="rowgroup" rowspan="{{len $form}}"><span class="metric-help" title="{{$matchup.Explain "Recent"}}">Recent</span></th>{{end}}
                         <td>
-                            {{with $row.Away}}<a class="recent-result" href="/games/{{.Game.ID}}" title="{{.Outcome}} {{.Score}} {{if .AtHome}}vs{{else}}at{{end}} {{.Opponent.Name}}"><span class="form-chip form-{{.Outcome}}">{{.Outcome}}</span> {{.Score}}<span class="recent-opponent">{{.OpponentText}}</span></a>{{else}}<span class="no-data">—</span>{{end}}
+                            {{with $row.Away}}<a class="recent-result" href="{{.Game.Path}}" title="{{.Outcome}} {{.Score}} {{if .AtHome}}vs{{else}}at{{end}} {{.Opponent.Name}}"><span class="form-chip form-{{.Outcome}}">{{.Outcome}}</span> {{.Score}}<span class="recent-opponent">{{.OpponentText}}</span></a>{{else}}<span class="no-data">—</span>{{end}}
                         </td>
                         <td>
-                            {{with $row.Home}}<a class="recent-result" href="/games/{{.Game.ID}}" title="{{.Outcome}} {{.Score}} {{if .AtHome}}vs{{else}}at{{end}} {{.Opponent.Name}}"><span class="form-chip form-{{.Outcome}}">{{.Outcome}}</span> {{.Score}}<span class="recent-opponent">{{.OpponentText}}</span></a>{{else}}<span class="no-data">—</span>{{end}}
+                            {{with $row.Home}}<a class="recent-result" href="{{.Game.Path}}" title="{{.Outcome}} {{.Score}} {{if .AtHome}}vs{{else}}at{{end}} {{.Opponent.Name}}"><span class="form-chip form-{{.Outcome}}">{{.Outcome}}</span> {{.Score}}<span class="recent-opponent">{{.OpponentText}}</span></a>{{else}}<span class="no-data">—</span>{{end}}
                         </td>
                     </tr>
                     {{end}}
@@ -1096,6 +1096,7 @@
             <h3>Join a {{if eq .Game.Sport "basketball"}}Basketball{{else}}Football{{end}} League to Bet</h3>
             <p>You need to be a member of a league that plays this sport to bet on this game.</p>
             <a href="/leagues" class="btn btn-primary">Browse Leagues</a>
+            <a href="/leagues/create?sport={{.Game.Sport}}" class="btn btn-secondary">Create a {{if eq .Game.Sport "basketball"}}Basketball{{else}}Football{{end}} League</a>
         </div>
     </div>
     {{end}}

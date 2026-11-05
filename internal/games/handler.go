@@ -77,12 +77,80 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authMiddleware func(http.Ha
 		return authMiddleware(hf)
 	}
 
-	mux.Handle("GET /games", wrap(h.ListGames))
-	mux.Handle("GET /games/{season}/{seasonType}/{week}", wrap(h.ShowWeekGames))
-	mux.Handle("GET /games/{gameID}", wrap(h.ShowGameDetail))
+	mux.Handle("GET /games", wrap(h.ChooseSport))
+	mux.Handle("GET /games/football", wrap(h.ListGames))
+	mux.Handle("GET /games/football/{season}/{seasonType}/{week}", wrap(h.ShowWeekGames))
+	// The game page is shared, so basketball's games come through here too. The
+	// basketball package registers that sport's day page.
+	mux.Handle("GET /games/{sport}/{gameID}", wrap(h.ShowGameDetail))
+
+	// Finds a game's page from its ID alone. Older links use it, and so does the bet
+	// form's redirect when htmx is unavailable, which does not load the game.
+	mux.Handle("GET /games/{gameID}", wrap(h.RedirectToGame))
+	// Football's weeks before they moved under /games/football.
+	mux.Handle("GET /games/{season}/{seasonType}/{week}", wrap(h.redirectOldWeek))
 }
 
-// ListGames redirects to the current week's games or shows a season selector.
+// RedirectMoved permanently redirects to a page's new path, keeping the query.
+func RedirectMoved(w http.ResponseWriter, r *http.Request, path string) {
+	if r.URL.RawQuery != "" {
+		path += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, path, http.StatusMovedPermanently)
+}
+
+// ChooseSport offers each sport's games.
+func (h *Handler) ChooseSport(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	h.templates.Render(w, "games_index", map[string]any{
+		"Title": "Games",
+		"User":  user,
+	})
+}
+
+// RedirectToGame sends a game ID on its own to the game's page.
+func (h *Handler) RedirectToGame(w http.ResponseWriter, r *http.Request) {
+	gameID, err := uuid.Parse(r.PathValue("gameID"))
+	if err != nil {
+		http.Error(w, "Invalid game ID", http.StatusBadRequest)
+		return
+	}
+
+	path, err := h.service.GamePath(gameID)
+	if err != nil {
+		if errors.Is(err, ErrGameNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		slog.Error("failed to resolve game path", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	RedirectMoved(w, r, path)
+}
+
+// redirectOldWeek sends a week's URL from before the move to its new one. Its route
+// also matches anything else three segments long, such as a sport's week URL with the
+// end cut off, and a permanent redirect from one of those would be cached.
+func (h *Handler) redirectOldWeek(w http.ResponseWriter, r *http.Request) {
+	season, seasonErr := strconv.Atoi(r.PathValue("season"))
+	week, weekErr := strconv.Atoi(r.PathValue("week"))
+	seasonType := models.SeasonType(r.PathValue("seasonType"))
+	if seasonErr != nil || weekErr != nil ||
+		(seasonType != models.SeasonTypeRegular && seasonType != models.SeasonTypePostseason) {
+		http.NotFound(w, r)
+		return
+	}
+	RedirectMoved(w, r, models.FootballWeekPath(season, seasonType, week))
+}
+
+// ListGames redirects to the current week's football games or shows a season
+// selector.
 func (h *Handler) ListGames(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
 	if user == nil {
@@ -93,8 +161,7 @@ func (h *Handler) ListGames(w http.ResponseWriter, r *http.Request) {
 	// Try to find the current week.
 	season, weekNumber, seasonType, found := h.service.GetCurrentWeek()
 	if found {
-		url := "/games/" + strconv.Itoa(season) + "/" + string(seasonType) + "/" + strconv.Itoa(weekNumber)
-		http.Redirect(w, r, url, http.StatusSeeOther)
+		http.Redirect(w, r, models.FootballWeekPath(season, seasonType, weekNumber), http.StatusSeeOther)
 		return
 	}
 
@@ -102,9 +169,10 @@ func (h *Handler) ListGames(w http.ResponseWriter, r *http.Request) {
 	seasons, _ := h.service.GetAvailableSeasons()
 
 	h.templates.Render(w, "games", map[string]any{
-		"Title":   "Games",
-		"User":    user,
-		"Seasons": seasons,
+		"Title":      "Football",
+		"User":       user,
+		"NavSection": models.SportFootball,
+		"Seasons":    seasons,
 	})
 }
 
@@ -173,11 +241,12 @@ func (h *Handler) ShowWeekGames(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to fetching season types", "error", err)
 	}
 
-	weekPath := "/games/" + strconv.Itoa(season) + "/" + string(seasonType) + "/" + strconv.Itoa(weekNumber)
+	weekPath := models.FootballWeekPath(season, seasonType, weekNumber)
 
 	h.templates.Render(w, "games", map[string]any{
-		"Title":       "Week " + strconv.Itoa(weekNumber) + " Games",
+		"Title":       "Football Week " + strconv.Itoa(weekNumber),
 		"User":        user,
+		"NavSection":  models.SportFootball,
 		"Season":      season,
 		"SeasonType":  seasonType,
 		"WeekNumber":  weekNumber,
@@ -242,6 +311,12 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A game has one page, so a URL naming the wrong sport goes to the right one.
+	if r.PathValue("sport") != gameDetail.Game.Sport {
+		RedirectMoved(w, r, gameDetail.Game.Path())
+		return
+	}
+
 	// Get user's leagues for the bet slip.
 	userLeagues, err := h.leagueRepo.FindUserLeagues(user.ID)
 	if err != nil {
@@ -289,6 +364,7 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 	h.templates.Render(w, "game_detail", map[string]any{
 		"Title":         title,
 		"User":          user,
+		"NavSection":    gameDetail.Game.Sport,
 		"Game":          gameDetail.Game,
 		"BasketballDay": h.service.CalendarDay(gameDetail.Game.ScheduledAt),
 		"Result":        gameDetail.Result,
