@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{.Title}} | Paper Better</title>
+    <title>{{.Title}} | Paper Betting With Friends</title>
     <!--
       htmx discards the body of any 4xx by default, which silently swallows
       server-side form validation messages. Allow 400/422 to swap so those
@@ -24,7 +24,7 @@
 <body>
     <header class="header">
         <nav class="nav">
-            <a href="/" class="nav-brand">🎟️ Paper Better</a>
+            <a href="/" class="nav-brand">🎟️ Paper Betting With Friends</a>
             <div class="nav-links">
                 {{if .User}}
                     <a href="/games/football" class="nav-link"{{if eq .NavSection "football"}} aria-current="page"{{end}}>🏈 Football</a>
@@ -54,7 +54,7 @@
 
     <footer class="footer">
         <div class="container">
-            <p>&copy; {{currentYear}} Paper Better. Track your college sports bets.</p>
+            <p>&copy; {{currentYear}} Paper Betting With Friends. Track your college sports bets.</p>
             {{if .SyncStatus}}
             <ul class="sync-status">
                 {{range .SyncStatus}}

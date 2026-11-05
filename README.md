@@ -1,4 +1,4 @@
-# Paper Better
+# Paper Betting With Friends
 
 A web application for tracking paper bets on college football and college
 basketball with friends. Each member of a league gets a purse of play money and
