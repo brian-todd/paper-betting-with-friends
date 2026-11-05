@@ -56,7 +56,7 @@ func TestLeagueSportThroughTheRouter(t *testing.T) {
 
 	slip := func(t *testing.T, game *models.Game) string {
 		t.Helper()
-		resp, body := get(t, client, server.URL+"/games/"+game.ID.String())
+		resp, body := get(t, client, server.URL+game.Path())
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("game page status = %d", resp.StatusCode)
 		}

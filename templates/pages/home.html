@@ -1,19 +1,15 @@
 {{define "content"}}
 <div class="hero">
-    <h1>College Football Betting Tracker</h1>
-    <p class="hero-subtitle">Track your bets, compete with friends, and dominate your leagues.</p>
+    <h1>Paper Better</h1>
+    <p class="hero-subtitle">Track paper bets on college football and basketball, compete with friends, and dominate your leagues.</p>
     
     {{if .User}}
         <div class="dashboard-preview">
             <h2>Welcome back, {{.User.Username}}!</h2>
             
+            {{template "sport-cards"}}
+
             <div class="action-cards">
-                <div class="card">
-                    <h3>🏈 Place Bets</h3>
-                    <p>Browse upcoming games and make your picks.</p>
-                    <a href="/games" class="btn btn-primary">View Games</a>
-                </div>
-                
                 <div class="card">
                     <h3>📊 My Bets</h3>
                     <p>Track your picks and see your performance.</p>

@@ -73,6 +73,7 @@ func (h *Handler) ListLeagues(w http.ResponseWriter, r *http.Request) {
 	h.templates.Render(w, "leagues", map[string]any{
 		"Title":            "My Leagues",
 		"User":             user,
+		"NavSection":       "leagues",
 		"MyLeagues":        myLeagues,
 		"AvailableLeagues": availableLeagues,
 		"Success":          r.URL.Query().Get("success"),
@@ -89,8 +90,12 @@ func (h *Handler) ShowCreateForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.templates.Render(w, "league_create", map[string]any{
-		"Title": "Create League",
-		"User":  user,
+		"Title":      "Create League",
+		"User":       user,
+		"NavSection": "leagues",
+		// A league's sport cannot be changed later, so the form only preselects one
+		// when the link asked for it.
+		"Sport": selectableSport(r.URL.Query().Get("sport")),
 	})
 }
 
@@ -102,17 +107,21 @@ func (h *Handler) CreateLeague(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	submittedSport := r.FormValue("sport")
+
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
-		h.renderCreateError(w, user, "League name is required")
+		h.renderCreateError(w, user, submittedSport, "League name is required")
 		return
 	}
 
 	isPublic := r.FormValue("is_public") == "on" || r.FormValue("is_public") == "true"
 
-	sport, ok := models.ParseSport(r.FormValue("sport"))
-	if !ok {
-		h.renderCreateError(w, user, "Choose football or basketball")
+	// ParseSport reads absent as football, but a league's sport is permanent, so
+	// this form makes the reader say which.
+	sport, ok := models.ParseSport(submittedSport)
+	if !ok || submittedSport == "" {
+		h.renderCreateError(w, user, submittedSport, "Choose football or basketball")
 		return
 	}
 
@@ -127,7 +136,7 @@ func (h *Handler) CreateLeague(w http.ResponseWriter, r *http.Request) {
 	league, err := h.service.CreateLeague(name, sport, user.ID, isPublic, startingBalance)
 	if err != nil {
 		slog.Error("failed to creating league", "error", err)
-		h.renderCreateError(w, user, "Failed to create league")
+		h.renderCreateError(w, user, submittedSport, "Failed to create league")
 		return
 	}
 
@@ -191,6 +200,7 @@ func (h *Handler) ShowLeague(w http.ResponseWriter, r *http.Request) {
 	h.templates.Render(w, "league_detail", map[string]any{
 		"Title":        details.League.Name,
 		"User":         user,
+		"NavSection":   "leagues",
 		"League":       details.League,
 		"IsMember":     details.IsMember,
 		"IsAdmin":      details.IsAdmin,
@@ -407,13 +417,23 @@ func (h *Handler) DeleteLeague(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/leagues?success=deleted", http.StatusSeeOther)
 }
 
+// selectableSport is the sport the create form should preselect, or empty for none.
+func selectableSport(value string) string {
+	if _, ok := models.ParseSport(value); !ok {
+		return ""
+	}
+	return value
+}
+
 // renderCreateError re-renders create form with error.
-func (h *Handler) renderCreateError(w http.ResponseWriter, user any, message string) {
+func (h *Handler) renderCreateError(w http.ResponseWriter, user any, sport, message string) {
 	w.WriteHeader(http.StatusBadRequest)
 	h.templates.Render(w, "league_create", map[string]any{
-		"Title": "Create League",
-		"User":  user,
-		"Error": message,
+		"Title":      "Create League",
+		"User":       user,
+		"NavSection": "leagues",
+		"Sport":      selectableSport(sport),
+		"Error":      message,
 	})
 }
 

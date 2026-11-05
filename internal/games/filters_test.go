@@ -364,7 +364,7 @@ func TestPageNavigation(t *testing.T) {
 }
 
 func TestPageURL(t *testing.T) {
-	const weekPath = "/games/2026/regular/1"
+	const weekPath = "/games/football/2026/regular/1"
 
 	tests := []struct {
 		name  string

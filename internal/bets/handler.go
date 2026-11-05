@@ -106,6 +106,7 @@ func (h *Handler) ListBets(w http.ResponseWriter, r *http.Request) {
 	err = h.templates.Render(w, "bets", map[string]any{
 		"Title":         "My Bets",
 		"User":          user,
+		"NavSection":    "bets",
 		"Bets":          result.Bets,
 		"Seasons":       result.Seasons,
 		"Weeks":         result.Weeks,

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,16 @@ type Week struct {
 	EndDate    time.Time  `gorm:"not null"`
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+}
+
+// FootballWeekPath is the URL of a football week's games. Only football has weeks.
+func FootballWeekPath(season int, seasonType SeasonType, number int) string {
+	return "/games/football/" + strconv.Itoa(season) + "/" + string(seasonType) + "/" + strconv.Itoa(number)
+}
+
+// Path is the URL of this week's games.
+func (w *Week) Path() string {
+	return FootballWeekPath(w.Season, w.SeasonType, w.Number)
 }
 
 // MaxWeekSpan bounds how long a week may plausibly run.

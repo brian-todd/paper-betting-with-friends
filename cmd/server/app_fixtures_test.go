@@ -31,6 +31,7 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/brian/paper-betting-with-friends/internal/pagetest"
+	"github.com/google/uuid"
 )
 
 // The season and week the committed football fixtures cover in full, and the
@@ -43,9 +44,9 @@ const (
 
 var firstSnapshot = time.Date(2026, 9, 5, 20, 49, 9, 0, time.UTC)
 
-// weekPath matches the URL /games redirects to once it has resolved which week
-// the clock is in.
-var weekPath = regexp.MustCompile(`^/games/(\d+)/(\w+)/(\d+)$`)
+// weekPath matches the URL /games/football redirects to once it has resolved which
+// week the clock is in.
+var weekPath = regexp.MustCompile(`^/games/football/(\d+)/(\w+)/(\d+)$`)
 
 func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 	env := pagetest.Open(t, firstSnapshot)
@@ -62,7 +63,13 @@ func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 			return http.ErrUseLastResponse
 		}
 
-		for _, path := range []string{"/games", "/bets", "/leagues", "/basketball", "/admin"} {
+		for _, path := range []string{
+			"/games", "/games/football", "/games/football/2026/regular/1", "/games/basketball",
+			"/games/football/" + uuid.Nil.String(), "/games/basketball/" + uuid.Nil.String(),
+			// The old URLs redirect, but only for someone signed in.
+			"/games/" + uuid.Nil.String(), "/games/2026/regular/1", "/basketball", "/basketball/games",
+			"/bets", "/leagues", "/admin",
+		} {
 			resp, err := client.Get(server.URL + path)
 			if err != nil {
 				t.Fatalf("GET %s: %v", path, err)
@@ -118,20 +125,20 @@ func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 		}
 	})
 
-	t.Run("/games resolves the week the clock is in", func(t *testing.T) {
+	t.Run("/games/football resolves the week the clock is in", func(t *testing.T) {
 		// ListGames asks the games service which week contains now, and the
 		// answer is a redirect. The expectation is not a week number written
 		// here -- it is that the week the page chose really does contain the
 		// instant every clock in the process was set to.
-		resp, _ := get(t, client, server.URL+"/games")
+		resp, _ := get(t, client, server.URL+"/games/football")
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("GET /games: status %d, want 200", resp.StatusCode)
+			t.Fatalf("GET /games/football: status %d, want 200", resp.StatusCode)
 		}
 
 		landed := resp.Request.URL.Path
 		match := weekPath.FindStringSubmatch(landed)
 		if match == nil {
-			t.Fatalf("GET /games landed on %q, which is not a week page; the calendar did not resolve", landed)
+			t.Fatalf("GET /games/football landed on %q, which is not a week page; the calendar did not resolve", landed)
 		}
 
 		var week models.Week
@@ -141,7 +148,7 @@ func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 			t.Fatalf("reading the week %s back: %v", landed, err)
 		}
 		if env.At.Before(week.StartDate) || env.At.After(week.EndDate) {
-			t.Errorf("/games chose %s, which runs %s to %s and does not contain %s",
+			t.Errorf("/games/football chose %s, which runs %s to %s and does not contain %s",
 				landed, week.StartDate, week.EndDate, env.At)
 		}
 	})
@@ -174,14 +181,14 @@ func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 
 		// The team filter narrows the grid to that one matchup, so the
 		// assertion does not depend on which page of four hundred it fell on.
-		target := server.URL + "/games/" + strconv.Itoa(game.Season) + "/regular/" + strconv.Itoa(game.Week) +
+		target := server.URL + "/games/football/" + strconv.Itoa(game.Season) + "/regular/" + strconv.Itoa(game.Week) +
 			"?applied=1&team=" + url.QueryEscape(game.HomeName)
 		resp, body := get(t, client, target)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET %s: status %d, want 200", target, resp.StatusCode)
 		}
 
-		if !strings.Contains(body, `href="/games/`+game.ID+`"`) {
+		if !strings.Contains(body, `href="/games/football/`+game.ID+`"`) {
 			t.Fatalf("game %s (%s v %s) is in the database but not on its own filtered page",
 				game.ID, game.AwayName, game.HomeName)
 		}
@@ -193,7 +200,7 @@ func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 
 		// And the detail page for the same row, which is the other template
 		// and a different set of queries behind it.
-		resp, body = get(t, client, server.URL+"/games/"+game.ID)
+		resp, body = get(t, client, server.URL+"/games/football/"+game.ID)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET the game detail: status %d, want 200", resp.StatusCode)
 		}
@@ -231,6 +238,7 @@ func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 		}
 
 		resp, _ := postForm(t, client, server.URL+"/leagues", url.Values{
+			"sport":            {models.SportFootball},
 			"name":             {"Level Four"},
 			"starting_balance": {"1000"},
 		})
@@ -268,7 +276,7 @@ func TestAFixtureReachesThePageThroughTheRealRouter(t *testing.T) {
 			t.Fatalf("GET /bets: status %d, want 200", resp.StatusCode)
 		}
 		for what, want := range map[string]string{
-			"the game it was placed on": `href="/games/` + line.GameID + `"`,
+			"the game it was placed on": `href="/games/football/` + line.GameID + `"`,
 			"the stake":                 `<td class="stake-cell">25</td>`,
 			"the league it is in":       "Level Four",
 		} {

@@ -70,3 +70,10 @@ func TestWeekPlausible(t *testing.T) {
 		})
 	}
 }
+
+func TestWeekPath(t *testing.T) {
+	week := &Week{Season: 2026, SeasonType: SeasonTypePostseason, Number: 3}
+	if got, want := week.Path(), "/games/football/2026/postseason/3"; got != want {
+		t.Errorf("Path() = %q, want %q", got, want)
+	}
+}

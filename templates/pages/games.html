@@ -2,7 +2,7 @@
 <div class="games-page">
     <div class="page-header">
         <div class="header-left">
-            <h1>🏈 {{if .Week}}Week {{.WeekNumber}}{{else}}Games{{end}}</h1>
+            <h1>🏈 Football{{if .Week}} · Week {{.WeekNumber}}{{end}}</h1>
             {{if .Week}}
             <p class="week-dates">
                 {{localTime .Week.StartDate "date"}} - {{localTime .Week.EndDate "mediumdate"}}
@@ -230,7 +230,7 @@
     {{if .Games}}
     <div class="games-grid">
         {{range .Games}}
-        <a href="/games/{{.Game.ID}}" class="game-card-link">
+        <a href="{{.Game.Path}}" class="game-card-link">
             <div class="game-card">
                 <div class="game-status {{.Game.Status}}">
                     {{if eq .Game.Status "scheduled"}}Scheduled{{end}}
@@ -414,7 +414,7 @@ function getSeasonType() {
 const filterQuery = {{.FilterQuery}};
 
 function gamesURL(season, seasonType, week) {
-    const path = '/games/' + season + '/' + seasonType + '/' + week;
+    const path = '/games/football/' + season + '/' + seasonType + '/' + week;
     return filterQuery ? path + '?' + filterQuery : path;
 }
 

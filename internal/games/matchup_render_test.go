@@ -263,7 +263,7 @@ func TestGameDetailRendersRecentGameRows(t *testing.T) {
 
 	// Every result links to the game it came from.
 	for _, result := range append(matchup.Home.Form, matchup.Away.Form...) {
-		href := `href="/games/` + result.Game.ID.String() + `"`
+		href := `href="` + result.Game.Path() + `"`
 		if !strings.Contains(page, href) {
 			t.Errorf("page is missing a link to %s", result.Game.ID)
 		}

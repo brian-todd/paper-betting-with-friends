@@ -261,14 +261,14 @@ func renderGamesGrid(t *testing.T, games []GameWithOdds) string {
 	filter := Filter{}
 	week := &models.Week{Number: 1}
 	page := map[string]any{
-		"Title":               "Week 1 Games",
+		"Title":               "Football Week 1",
 		"User":                &models.User{Username: "tester"},
 		"Season":              2026,
 		"SeasonType":          models.SeasonTypeRegular,
 		"WeekNumber":          1,
 		"Week":                week,
 		"Games":               games,
-		"WeekPath":            "/games/2026/regular/1",
+		"WeekPath":            "/games/football/2026/regular/1",
 		"Filter":              filter,
 		"FilterQuery":         filter.Query().Encode(),
 		"FilterActive":        filter.Active(),
@@ -284,9 +284,9 @@ func renderGamesGrid(t *testing.T, games []GameWithOdds) string {
 		"Zone":                ZoneAbbreviation(time.UTC, time.Now()),
 		"Page":                Page{Number: 1, Size: PageSize, Total: len(games), Pages: 1, First: 1, Last: len(games)},
 		"TotalInWeek":         len(games),
-		"PrevURL":             "/games/2026/regular/1",
-		"NextURL":             "/games/2026/regular/1",
-		"ClearURL":            "/games/2026/regular/1?applied=1",
+		"PrevURL":             "/games/football/2026/regular/1",
+		"NextURL":             "/games/football/2026/regular/1",
+		"ClearURL":            "/games/football/2026/regular/1?applied=1",
 	}
 
 	var buf bytes.Buffer

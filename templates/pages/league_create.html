@@ -18,9 +18,10 @@
 
             <div class="form-group">
                 <label for="sport">Sport</label>
-                <select id="sport" name="sport" class="form-input">
-                    <option value="football">Football</option>
-                    <option value="basketball">Basketball</option>
+                <select id="sport" name="sport" class="form-input" required>
+                    <option value="" disabled {{if not .Sport}}selected{{end}}>Choose a sport</option>
+                    <option value="football" {{if eq .Sport "football"}}selected{{end}}>Football</option>
+                    <option value="basketball" {{if eq .Sport "basketball"}}selected{{end}}>Basketball</option>
                 </select>
                 <small class="form-hint">This can't be changed later. Each league has its own purses and standings.</small>
             </div>

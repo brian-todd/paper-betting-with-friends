@@ -33,8 +33,8 @@ func renderGames(t *testing.T, games []GameWithOdds) string {
 		"Games":      games,
 		"Date":       date,
 		"DateStr":    date.Format("2006-01-02"),
-		"PrevURL":    "/basketball/games?date=2026-01-14",
-		"NextURL":    "/basketball/games?date=2026-01-16",
+		"PrevURL":    "/games/basketball?date=2026-01-14",
+		"NextURL":    "/games/basketball?date=2026-01-16",
 		"TotalGames": len(games),
 		"Filter":     basketballFilterDefault(),
 	}
