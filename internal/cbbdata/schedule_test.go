@@ -251,7 +251,7 @@ func TestNextTeamStatsSync(t *testing.T) {
 	}
 }
 
-func TestNextLineupsSync(t *testing.T) {
+func TestNextBoxScoresSync(t *testing.T) {
 	eastern := mustLoad(t, "America/New_York")
 
 	tests := []struct {
@@ -268,8 +268,8 @@ func TestNextLineupsSync(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NextLineupsSync(tt.now, eastern); !got.Equal(tt.want) {
-				t.Errorf("NextLineupsSync(%v) = %v, want %v", tt.now, got, tt.want)
+			if got := NextBoxScoresSync(tt.now, eastern); !got.Equal(tt.want) {
+				t.Errorf("NextBoxScoresSync(%v) = %v, want %v", tt.now, got, tt.want)
 			}
 		})
 	}
@@ -332,7 +332,7 @@ func TestDelaysAreAlwaysPositiveAcrossDST(t *testing.T) {
 				"scoreboard": ScoreboardDelay(now, eastern, ScoreboardState{}),
 				"live":       ScoreboardDelay(now, eastern, ScoreboardState{Active: true}),
 				"schedule":   ScheduleDelay(now, eastern),
-				"lineups":    LineupsDelay(now, eastern),
+				"box scores": BoxScoresDelay(now, eastern),
 			} {
 				if delay < minDelay {
 					t.Fatalf("%s delay at %v = %v, under the %v floor", name, now, delay, minDelay)
@@ -385,9 +385,9 @@ func TestBasketballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		inSeasonRestartRequests = 3
 
 		// A month entirely out of season is a run a day of each job plus
-		// restarts: ~285. The regression this exists for is a throttle
+		// restarts: ~315. The regression this exists for is a throttle
 		// disappearing, which costs thousands.
-		offSeasonCap = 400 + lineupsPerRun*31
+		offSeasonCap = 400
 	)
 
 	eastern := mustLoad(t, "America/New_York")
@@ -422,20 +422,20 @@ func TestBasketballCadenceStaysWithinMonthlyCallBudget(t *testing.T) {
 		lines := count(month, end, func(now time.Time) time.Time { return NextLinesSync(now, eastern, interval) })
 		schedule := count(month, end, func(now time.Time) time.Time { return NextScheduleSync(now, eastern) })
 		rankings := count(month, end, func(now time.Time) time.Time { return NextRankingsSync(now, eastern) })
-		// The hard cap, not the games a month actually holds. Out of season nothing
-		// is due and this costs nothing, so it overstates those months.
-		lineups := lineupsPerRun * count(month, end, func(now time.Time) time.Time { return NextLineupsSync(now, eastern) })
+		// Every check counts as a request, because one game the feed never covers spends one
+		// on every check for three days.
+		boxScores := count(month, end, func(now time.Time) time.Time { return NextBoxScoresSync(now, eastern) })
 
 		// Two requests a run, one per rating table.
 		ratings := 2 * count(month, end, func(now time.Time) time.Time { return NextRatingsSync(now, eastern) })
 		teamStats := count(month, end, func(now time.Time) time.Time { return NextTeamStatsSync(now, eastern) })
 
-		calls := scoreboard + games + lines + schedule + rankings + lineups + ratings + teamStats + jobs*restartsPerMonth
+		calls := scoreboard + games + lines + schedule + rankings + boxScores + ratings + teamStats + jobs*restartsPerMonth
 		if InSeason(month, eastern) || InSeason(end.Add(-time.Minute), eastern) {
 			calls += inSeasonRestartRequests * restartsPerMonth
 		}
-		t.Logf("%s: scoreboard %d, games %d, lines %d, schedule %d, rankings %d, lineups %d, ratings %d, team stats %d = %d",
-			month.Format("2006-01"), scoreboard, games, lines, schedule, rankings, lineups, ratings, teamStats, calls)
+		t.Logf("%s: scoreboard %d, games %d, lines %d, schedule %d, rankings %d, box scores %d, ratings %d, team stats %d = %d",
+			month.Format("2006-01"), scoreboard, games, lines, schedule, rankings, boxScores, ratings, teamStats, calls)
 
 		if calls > apibudget.Basketball {
 			t.Errorf("%s: %d calls is over basketball's %d share", month.Format("2006-01"), calls, apibudget.Basketball)

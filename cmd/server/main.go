@@ -483,16 +483,16 @@ func registerSyncJobs(sched *scheduler.Scheduler, cfg *config.Config, location *
 			Run:        cbbSyncService.SyncTeamStats,
 		})
 
-		// Works through a queue of finished games, a few requests a run, so a run
-		// that is missed loses nothing and there is no reason to run on start.
+		// A finished game with no box score stays on the next check's list, so a missed run
+		// loses nothing and there is no reason to run on start.
 		sched.Add(scheduler.Job{
-			Name:  "cbb-lineups",
-			Label: "Basketball lineups",
+			Name:  "cbb-box-scores",
+			Label: "Basketball box scores",
 			NextDelay: func(now time.Time) time.Duration {
-				return cbbdata.LineupsDelay(now, location)
+				return cbbdata.BoxScoresDelay(now, location)
 			},
 			Timeout: syncRunTimeout,
-			Run:     cbbSyncService.SyncLineups,
+			Run:     cbbSyncService.SyncBoxScores,
 		})
 
 		// Teams and venues are synced by nothing else, and syncGames skips any

@@ -131,12 +131,12 @@ a month of the season, at default configuration (FBS-only scoreboard,
 | `cbb-games` | hourly Oct 25–Apr 15, daily otherwise | 1 (`/games`) | ~745 in season, ~30 out |
 | `cbb-lines` | `CBB_SYNC_INTERVAL_MINS` (default 15) Oct 25–Apr 15, daily otherwise | 1 (`/lines`) | ~2,975 in season, ~30 out |
 | `cbb-schedule` | daily, a week back to a month ahead | 1 (`/games`) | ~30 |
-| `cbb-lineups` | hourly Oct 25–Apr 15, daily otherwise | at most 3 (`/lineups/game/{id}`) | ~1,550 in season, capped at ~2,230; 0 out |
+| `cbb-box-scores` | checks hourly Oct 25–Apr 15, daily otherwise | 1 (`/games/teams`) if a finished game lacks a box score, otherwise 0 | at most ~745 in season, ~30 out |
 | `cbb-rankings` | Mondays 6pm and Tuesdays 6am Oct 25–Apr 15, none otherwise | 1 (`/rankings`) | ~10 in season, 0 out |
 | `cbb-ratings` | daily at 5am Oct 25–Apr 15, none otherwise | 2 (`/ratings/adjusted`, `/ratings/srs`) | ~60 in season, 0 out |
 | `cbb-team-stats` | every 6 hours Oct 25–Apr 15, none otherwise | 1 (`/stats/team/season`) | ~120 in season, 0 out |
 | `bet-settlement` | every 5 minutes | 0 — database only | 0 |
-| **Total** | | | **~15,800 / 30,000** in season, ~3,700 with neither sport in season |
+| **Total** | | | **~15,000 / 30,000** in season, ~3,700 with neither sport in season |
 
 That leaves over half of the budget as headroom. The plan is written
 down in `internal/apibudget`: football's share (10,000), basketball's (12,500)

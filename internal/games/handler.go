@@ -373,7 +373,7 @@ func (h *Handler) ShowGameDetail(w http.ResponseWriter, r *http.Request) {
 		"AwayRank":      gameDetail.AwayRank,
 		"Matchup":       gameDetail.Matchup,
 		"Forecast":      gameDetail.Forecast,
-		"Lineups":       gameDetail.Lineups,
+		"TeamStats":     gameDetail.TeamStats,
 		"BetSummary":    gameDetail.BetSummary,
 		"UserLeagues":   userLeagues,
 		"PurseBalances": purseBalances,

@@ -2,8 +2,6 @@ package cbbdata
 
 import (
 	"time"
-
-	"github.com/brian/paper-betting-with-friends/internal/models"
 )
 
 // APIVenue represents a venue from the CBB Data API.
@@ -133,36 +131,6 @@ type APIPollRanking struct {
 	Ranking  *float64   `json:"ranking"`
 }
 
-// APIMadeAttempted is a made-and-attempted shooting line.
-type APIMadeAttempted struct {
-	Made      int `json:"made"`
-	Attempted int `json:"attempted"`
-}
-
-// APILineupSide is one side's totals while a five-man unit was on the floor.
-type APILineupSide struct {
-	Points            int              `json:"points"`
-	Possessions       int              `json:"possessions"`
-	FieldGoals        APIMadeAttempted `json:"fieldGoals"`
-	ThreePointers     APIMadeAttempted `json:"threePointers"`
-	FreeThrows        APIMadeAttempted `json:"freeThrows"`
-	Turnovers         int              `json:"turnovers"`
-	OffensiveRebounds int              `json:"offensiveRebounds"`
-	DefensiveRebounds int              `json:"defensiveRebounds"`
-}
-
-// APIGameLineup is one five-man unit's stats in one game. IDHash is the unit's
-// player IDs joined in order, so it is the same unit across games.
-type APIGameLineup struct {
-	TeamID       int64                 `json:"teamId"`
-	IDHash       string                `json:"idHash"`
-	Athletes     models.LineupAthletes `json:"athletes"`
-	TotalSeconds float64               `json:"totalSeconds"`
-	NetRating    float64               `json:"netRating"`
-	TeamStats    APILineupSide         `json:"teamStats"`
-	Opponent     APILineupSide         `json:"opponentStats"`
-}
-
 // APIAdjustedRating is one team's row from /ratings/adjusted.
 type APIAdjustedRating struct {
 	TeamID          int64    `json:"teamId"`
@@ -182,19 +150,44 @@ type APISRSRating struct {
 	Rating *float64 `json:"rating"`
 }
 
-// APITeamSeasonSide is what /stats/team/season reports for one end of the floor.
+// APIShooting is a made-and-attempted line. The feed types these as nullable doubles.
+type APIShooting struct {
+	Made      *float64 `json:"made"`
+	Attempted *float64 `json:"attempted"`
+	Pct       *float64 `json:"pct"`
+}
+
+// APITeamSide is what /stats/team/season and /games/teams report for one team, over a
+// season and over one game. The two share a shape.
 //
-// turnoverRatio is left out on purpose. It is a fraction here (0.16) and a percentage
-// in /games/teams (21.7), so TurnoverPct works it out from the counts instead.
-type APITeamSeasonSide struct {
-	Possessions *float64 `json:"possessions"`
-	Rating      *float64 `json:"rating"`
-	ThreePoint  struct {
-		Pct *float64 `json:"pct"`
-	} `json:"threePointFieldGoals"`
+// turnoverRatio is left out on purpose. It is a fraction in the first (0.16) and a
+// percentage in the second (21.7), so TurnoverPct works it out from the counts instead.
+type APITeamSide struct {
+	Possessions *float64    `json:"possessions"`
+	Rating      *float64    `json:"rating"`
+	Assists     *float64    `json:"assists"`
+	Blocks      *float64    `json:"blocks"`
+	Steals      *float64    `json:"steals"`
+	FieldGoals  APIShooting `json:"fieldGoals"`
+	ThreePoint  APIShooting `json:"threePointFieldGoals"`
+	FreeThrows  APIShooting `json:"freeThrows"`
+	Rebounds    struct {
+		Total     *float64 `json:"total"`
+		Offensive *float64 `json:"offensive"`
+		Defensive *float64 `json:"defensive"`
+	} `json:"rebounds"`
 	Turnovers struct {
 		Total *float64 `json:"total"`
 	} `json:"turnovers"`
+	Fouls struct {
+		Total *float64 `json:"total"`
+	} `json:"fouls"`
+	Points struct {
+		Total        *float64 `json:"total"`
+		InPaint      *float64 `json:"inPaint"`
+		OffTurnovers *float64 `json:"offTurnovers"`
+		FastBreak    *float64 `json:"fastBreak"`
+	} `json:"points"`
 	FourFactors struct {
 		EffectiveFGPct      *float64 `json:"effectiveFieldGoalPct"`
 		OffensiveReboundPct *float64 `json:"offensiveReboundPct"`
@@ -203,7 +196,7 @@ type APITeamSeasonSide struct {
 }
 
 // TurnoverPct is turnovers per 100 possessions, nil when either count is missing.
-func (s APITeamSeasonSide) TurnoverPct() *float64 {
+func (s APITeamSide) TurnoverPct() *float64 {
 	if s.Turnovers.Total == nil || s.Possessions == nil || *s.Possessions <= 0 {
 		return nil
 	}
@@ -213,13 +206,20 @@ func (s APITeamSeasonSide) TurnoverPct() *float64 {
 
 // APITeamSeasonStats is one team's row from /stats/team/season.
 type APITeamSeasonStats struct {
-	TeamID        int64             `json:"teamId"`
-	Games         float64           `json:"games"`
-	Wins          float64           `json:"wins"`
-	Losses        float64           `json:"losses"`
-	Pace          *float64          `json:"pace"`
-	TeamStats     APITeamSeasonSide `json:"teamStats"`
-	OpponentStats APITeamSeasonSide `json:"opponentStats"`
+	TeamID        int64       `json:"teamId"`
+	Games         float64     `json:"games"`
+	Wins          float64     `json:"wins"`
+	Losses        float64     `json:"losses"`
+	Pace          *float64    `json:"pace"`
+	TeamStats     APITeamSide `json:"teamStats"`
+	OpponentStats APITeamSide `json:"opponentStats"`
+}
+
+// APIGameTeamStats is one team's row from /games/teams. A game has one for each team.
+type APIGameTeamStats struct {
+	GameID    int64       `json:"gameId"`
+	TeamID    int64       `json:"teamId"`
+	TeamStats APITeamSide `json:"teamStats"`
 }
 
 // GameQueryOpts holds optional query parameters for the games endpoint.

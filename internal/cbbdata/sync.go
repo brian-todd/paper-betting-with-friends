@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"strings"
 	"time"
 
@@ -40,7 +39,7 @@ type SyncService struct {
 	oddsMovementRepo  *repository.OddsMovementRepository
 	gameLiveStateRepo *repository.GameLiveStateRepository
 	pollRankRepo      *repository.PollRankRepository
-	gameLineupRepo    *repository.GameLineupRepository
+	gameTeamStatsRepo *repository.GameTeamStatsRepository
 	teamRatingRepo    *repository.TeamRatingRepository
 	teamRecordRepo    *repository.TeamRecordRepository
 	teamStatsRepo     *repository.TeamSeasonStatsRepository
@@ -69,7 +68,7 @@ func NewSyncService(client *Client, db *gorm.DB) *SyncService {
 		oddsMovementRepo:  repository.NewOddsMovementRepository(db),
 		gameLiveStateRepo: repository.NewGameLiveStateRepository(db),
 		pollRankRepo:      repository.NewPollRankRepository(db),
-		gameLineupRepo:    repository.NewGameLineupRepository(db),
+		gameTeamStatsRepo: repository.NewGameTeamStatsRepository(db),
 		teamRatingRepo:    repository.NewTeamRatingRepository(db),
 		teamRecordRepo:    repository.NewTeamRecordRepository(db),
 		teamStatsRepo:     repository.NewTeamSeasonStatsRepository(db),
@@ -197,127 +196,6 @@ func (s *SyncService) SeedAll(ctx context.Context, season int) error {
 
 	s.logger.Info("full seed completed for season", "season", season)
 	return nil
-}
-
-// SyncLineups asks for the five-man units of a few finished games.
-//
-// The number of games is the spend: one request each, capped per run, which is what
-// holds this job to its share however many games are waiting. A busy day drains over
-// the quieter ones after it.
-//
-// A failed request says nothing about the game, so it does not use up an attempt:
-// an outage would otherwise abandon every game it touched. It does start the retry
-// wait, so a game the feed always refuses cannot use up the whole run, every run, and
-// the lookback ends it. A run cut short by shutdown records nothing at all.
-func (s *SyncService) SyncLineups(ctx context.Context) error {
-	now := s.clock.Now()
-
-	due, err := s.gameLineupRepo.FindDue(now, lineupFetchRules, lineupsPerRun)
-	if err != nil {
-		return fmt.Errorf("finding games due lineups: %w", err)
-	}
-
-	var failed syncerr.Tally
-	stored := 0
-	for _, game := range due {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		rows, fetchErr := s.client.GetGameLineups(ctx, game.ExternalID)
-		if fetchErr != nil {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			s.logger.Error("failed to fetch lineups", "game", game.ExternalID, "error", fetchErr)
-			failed.Add(fetchErr)
-			if err := s.gameLineupRepo.RecordFailure(game.ID, now); err != nil {
-				s.logger.Error("failed to record a failed lineups request", "game", game.ExternalID, "error", err)
-				failed.Add(err)
-			}
-			continue
-		}
-
-		lineups, err := s.lineupsFor(game.ID, rows)
-		if err != nil {
-			return err
-		}
-
-		if err := s.gameLineupRepo.RecordFetch(game.ID, lineups, now); err != nil {
-			s.logger.Error("failed to store lineups", "game", game.ExternalID, "error", err)
-			failed.Add(err)
-			continue
-		}
-		if len(lineups) > 0 {
-			stored++
-		}
-	}
-
-	s.logger.Info("synced lineups", "asked", len(due), "found", stored, "failed", failed.Count())
-	return failed.Err("lineups")
-}
-
-// lineupsFor resolves one response's teams and builds its rows.
-func (s *SyncService) lineupsFor(gameID uuid.UUID, rows []APIGameLineup) ([]models.GameLineup, error) {
-	externalIDs := make([]int64, len(rows))
-	for i, row := range rows {
-		externalIDs[i] = row.TeamID
-	}
-	teams, err := s.teamRepo.IDsByExternalID(models.SportBasketball, externalIDs)
-	if err != nil {
-		return nil, fmt.Errorf("looking up lineup teams: %w", err)
-	}
-	return gameLineupsFrom(gameID, rows, teams), nil
-}
-
-// gameLineupsFrom keeps the rows for teams we hold, one per team and unit.
-func gameLineupsFrom(gameID uuid.UUID, rows []APIGameLineup, teams map[int64]uuid.UUID) []models.GameLineup {
-	type key struct {
-		team uuid.UUID
-		hash string
-	}
-	seen := make(map[key]bool, len(rows))
-
-	lineups := make([]models.GameLineup, 0, len(rows))
-	for _, row := range rows {
-		teamID, ok := teams[row.TeamID]
-		if !ok || row.IDHash == "" || len(row.Athletes) == 0 {
-			continue
-		}
-		k := key{teamID, row.IDHash}
-		if seen[k] {
-			continue
-		}
-		seen[k] = true
-		lineups = append(lineups, models.GameLineup{
-			GameID:             gameID,
-			TeamID:             teamID,
-			IDHash:             row.IDHash,
-			Athletes:           row.Athletes,
-			Seconds:            int(math.Round(row.TotalSeconds)),
-			PointsFor:          row.TeamStats.Points,
-			PossessionsFor:     row.TeamStats.Possessions,
-			PointsAgainst:      row.Opponent.Points,
-			PossessionsAgainst: row.Opponent.Possessions,
-			For:                lineupBoxFrom(row.TeamStats),
-			Against:            lineupBoxFrom(row.Opponent),
-		})
-	}
-	return lineups
-}
-
-func lineupBoxFrom(side APILineupSide) models.LineupBox {
-	return models.LineupBox{
-		FGMade:         side.FieldGoals.Made,
-		FGAttempted:    side.FieldGoals.Attempted,
-		ThreeMade:      side.ThreePointers.Made,
-		ThreeAttempted: side.ThreePointers.Attempted,
-		FTMade:         side.FreeThrows.Made,
-		FTAttempted:    side.FreeThrows.Attempted,
-		Turnovers:      side.Turnovers,
-		OffRebounds:    side.OffensiveRebounds,
-		DefRebounds:    side.DefensiveRebounds,
-	}
 }
 
 // SyncRankings stores the AP poll for the current season.

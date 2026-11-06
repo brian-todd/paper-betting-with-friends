@@ -282,7 +282,7 @@ Books post late, so a future day usually has none, and hiding everything would r
 as nothing being scheduled. So "Bettable only" here is a preference rather than the
 strict filter it is on football's grid, and the page says when no lines are posted. A
 custom row is not a line: it is one bettor's number, so `gameHasOddsClause` and
-`oddsInRange` skip it, here, on football's grid and in the lineups queue.
+`oddsInRange` skip it, here and on football's grid.
 
 The day page takes football's filters through `games.ParseSubmittedFilter`, less
 division and kickoff day: the feed reports no division, and the page is already one
@@ -351,33 +351,54 @@ Things the feed will not tell you:
 There is no sample-size floor beyond a game each, matching football's low one, and the
 panel's footnote says how many games each side rests on.
 
-### Lineups
+### Basketball Team Stats
 
-**`/lineups` is not a team sheet.** It returns stats for five-man units computed from
-the play-by-play of games already played. There are no starters, injuries or
-projections, and the game page says so, because five names read like tonight's lineup.
+The game page's table of team numbers has **the same rows before and after a game**:
+per-game season averages until there is a box score, then the box score. Both read
+`models.TeamBox`, a set of counts, so the rows cannot drift apart. It is
+`team_season_stats` on one side and `game_team_stats` on the other, and
+`/stats/team/season` and `/games/teams` share a response shape (`APITeamSide`).
 
-`cbb-lineups` asks `/lineups/game/{id}` once per finished game with a line and stores
-the sums in `game_lineups`. The game page shows a finished game's own units, or the
-team's most-used units from earlier in that season, added up across games and cut off
-at tip-off, so a page never credits a team with what came after it. `idHash` is the
-unit's player IDs joined, so it is stable across games. Every rate is worked out from
-summed counts (`models.LineupBox`), never averaged, and over a single game they match
-the feed's own to within rounding: eFG% on all 356 sides of the captured games.
+`cbb-box-scores` first asks the database which finished games from the last three days
+have no box score the page would show (`GamesAwaitingBox`). With none it stops without
+a request. With any, it asks `/games/teams` for the whole three days, one request, and
+writes only those games. `/games/teams` takes no game ID, so a narrower range would not
+be cheaper.
 
-An empty answer is not an answer: it can mean not processed yet or never available,
-so `game_lineup_fetches` counts attempts and gives up after three, a day apart. A
-failed request is not an answer either, and does not count: it starts the same day's
-wait through `RecordFailure`, and only the lookback ends it, so an outage cannot
-abandon the games it touches. The feed's coverage can also be partial, and an opponent outside Division I has no units.
+The check keeps no record of the last run on purpose. A game a failed run missed is
+simply still waiting, and the hourly slot is the retry, so an outage cannot become a hot
+loop. A game the feed never covers spends a request an hour until it ages out at three
+days. A box that agrees is never fetched again, so a later correction that leaves the
+points alone, such as a rebound count, does not reach us.
 
-`/lineups/team` can cut off at a date (`endDateRange`), so it could show a game as of
-tip-off, but only at a request per team per cutoff, about 3,000 a month for what the
-game endpoint already gives. A recap would need the game endpoint anyway.
+Two guards keep a partial box off the page, because the heading would be wrong in a way
+nothing there could show: only a waiting game is written, and that means final, and the
+page calls it a box score only when `Points` matches the final score (`boxAgrees`). A
+finished game failing either shows the season instead, as does one the job has not
+reached. `GamesAwaitingBox` has to apply the page's own condition: a box the page rejects
+that did not keep the game waiting would stay rejected for good.
 
-`lineupFetchRules.Lookback` is what stops a seed spending the budget: seeding a past
-season leaves thousands of games final with a line, and without it the job would walk
-them all. There is deliberately no backfill.
+Season averages are current values, so a finished game falling back to them includes
+that game. `cbb-seed` does not fetch box scores, so a seeded past season shows averages.
+A whole month would be one request, so adding that is cheap, but `seedcbb -fixtures`
+would then need those months captured.
+
+Things the feed will not tell you:
+
+- **A row's shots need not add up to its points.** In the capture, Colgate's row reports
+  76 points on 27 field goals, 7 of them threes, and 13 free throws, which is 74. That is
+  one row of 472. Both figures are stored as sent, and `boxAgrees` compares `points.total`.
+- **The capture answers less than it looks.** It held no unplayed game, but nothing was
+  being played when it was taken, so whether the feed answers mid-game is unknown, and the
+  two guards stay. Where the lines feed had a score, all 28 games matched the box.
+
+The capture's window is the sync's own, whole UTC days around its instant. A capture of
+any other window is refused by the fake upstream, and `boxScoreCapture` in the test has
+to move with it.
+
+There were five-man lineups here (`/lineups/game`). A unit's numbers rest on a few
+minutes, one substitution starts a new unit, and the top five units covered 51-84% of a
+team's minutes in the captured games, so 000031 removed them.
 
 ### Purse Operations
 
@@ -931,7 +952,7 @@ to forget to set.
 | Level | Boundary | Where |
 | --- | --- | --- |
 | 1 | Fixture → client | `internal/{cfbdata,cbbdata}/client_fixtures_test.go` |
-| 2 | Fixture → database | `internal/cfbdata/{games_status,convergence,classification,sync_lines}_fixtures_test.go`, `internal/cbbdata/sync_fixtures_test.go` |
+| 2 | Fixture → database | `internal/cfbdata/{games_status,convergence,classification,sync_lines}_fixtures_test.go`, `internal/cbbdata/{sync,team_stats,box_scores}_fixtures_test.go` |
 | 3 | Database → page | `internal/games/handler_fixtures_test.go`, `internal/bets/edit_fixtures_test.go` |
 | 4 | Fixture → page | `cmd/server/app_fixtures_test.go` |
 
@@ -1128,11 +1149,11 @@ requests a month and the football jobs are most of it:
   well, because a run before teams are stored places none of them, and fails rather
   than reporting success
 
-- `cbb-lineups` runs hourly in season and daily out of it (`cbbdata.NextLineupsSync`),
-  asking about at most `lineupsPerRun` (3) games a run, so ~2,230 a month at most
-  against ~1,550 games a month with a line. It has no `RunOnStart`: it works through
-  a queue, so a missed run loses nothing. A peak day of 155 games takes a couple of
-  days to drain
+- `cbb-box-scores` checks the database hourly in season and daily out of it
+  (`cbbdata.NextBoxScoresSync`), and spends one request only when a finished game from
+  the last three days has no usable box score. The cadence test counts every check as a
+  request, ~745 a month, because one game the feed never covers costs that for its three
+  days. It has no `RunOnStart`: a game a missed run would have fetched is still waiting
 
 - `cbb-ratings` runs daily at 5am local in season and not at all outside it
   (`cbbdata.NextRatingsSync`), two requests a run, ~60 a month
@@ -1242,8 +1263,9 @@ a migration is the wrong place to decide that.
 - Counting a custom odds row as a line the game offers — one bet would switch everyone's day page to that game alone, with no odds to show
 - Showing last season's ratings on this season's games — rosters turn over; a game reads its own season's rows
 - Storing a feed's `turnoverRatio` as it comes — it is a fraction on one endpoint and a percentage on another; work it out from the counts
-- Treating `/lineups` as who is playing tonight — it is what units did in games already played
-- Removing the lookback from the lineups queue — a seeded past season is thousands of due games, each a metered request
+- Giving the pregame and postgame team tables different rows — both read `models.TeamBox`, so a team's night reads against its season
+- Showing a box score without checking it against the final score — the feed can answer for a game in progress, and a partial box reads as complete
+- Deciding which games need a box score from "since the last check" — a game a failed run passed over is never retried; ask which finished games still lack one
 - Scanning `MAX` or `MIN` into a `*time.Time` — over no rows the aggregate is NULL and the scan errors; use `sql.NullTime`
 - Assuming a bet's league and game are the same sport anywhere but placement — bets from before leagues had a sport do not, and they still have to settle
 - Hard-coding a game's URL in a template or handler — it depends on the sport; use `Game.Path` and `Week.Path`. The exception is the bet form's no-htmx redirect, which has only the ID and goes through `/games/{gameID}`

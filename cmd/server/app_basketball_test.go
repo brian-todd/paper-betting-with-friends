@@ -210,15 +210,15 @@ func TestMatchupReadsOnlyItsOwnSeason(t *testing.T) {
 	}
 }
 
-// What the lineups panel shows depends on when you are looking. A page must never
-// credit a team with what it did after the game being viewed.
-func TestLineupPanelThroughTheRouter(t *testing.T) {
+// The panel has the same rows before and after a game, and only a box score that adds
+// up to the final score is called one.
+func TestTeamStatsPanelThroughTheRouter(t *testing.T) {
 	env := pagetest.Open(t, firstSnapshot)
 	_, server := serve(t, env)
 	client := newClient(t, server)
 
 	resp, err := client.PostForm(server.URL+"/register", url.Values{
-		"username":         {"unit-watcher"},
+		"username":         {"box-reader"},
 		"password":         {"long-enough-password"},
 		"confirm_password": {"long-enough-password"},
 	})
@@ -227,41 +227,51 @@ func TestLineupPanelThroughTheRouter(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	team := testdb.InsertTeam(t, env.DB, "")
-	opponent := testdb.InsertTeam(t, env.DB, "")
-	base := firstSnapshot.AddDate(0, 0, -10)
+	home := testdb.InsertTeam(t, env.DB, "")
+	away := testdb.InsertTeam(t, env.DB, "")
 
-	game := func(season int, at time.Time, status models.GameStatus) *models.Game {
+	n := func(v int) *int { return &v }
+	box := func(points int) models.TeamBox {
+		return models.TeamBox{
+			Points: n(points), FGMade: n(27), FGAttempted: n(60), ThreeMade: n(9), ThreeAttempted: n(24),
+			FTMade: n(10), FTAttempted: n(14), Rebounds: n(35), OffRebounds: n(9), DefRebounds: n(26),
+			Assists: n(15), Steals: n(6), Blocks: n(3), Turnovers: n(11), Fouls: n(17),
+			PaintPoints: n(30), FastBreakPoints: n(12), PointsOffTurnovers: n(14),
+		}
+	}
+	for _, team := range []uuid.UUID{home.ID, away.ID} {
+		season := models.TeamSeasonStats{
+			TeamID: team, Season: 2026, FetchedAt: firstSnapshot, Games: 10,
+			Box: models.TeamBox{Points: n(751), FGMade: n(270), FGAttempted: n(600), Rebounds: n(355)},
+		}
+		if err := env.DB.Create(&season).Error; err != nil {
+			t.Fatalf("creating season stats: %v", err)
+		}
+	}
+
+	game := func(status models.GameStatus) *models.Game {
 		return testdb.InsertGame(t, env.DB, models.Game{
-			Sport: models.SportBasketball, Season: season, ScheduledAt: at, Status: status,
-			HomeTeamID: team.ID, AwayTeamID: opponent.ID,
+			Sport: models.SportBasketball, Season: 2026, Status: status,
+			ScheduledAt: firstSnapshot.AddDate(0, 0, -1), HomeTeamID: home.ID, AwayTeamID: away.ID,
 		})
 	}
-	unit := func(g *models.Game, player string, seconds int) {
+	final := func(g *models.Game, homeScore, awayScore int) {
 		t.Helper()
-		row := models.GameLineup{
-			GameID: g.ID, TeamID: team.ID, IDHash: player,
-			Athletes: models.LineupAthletes{{ID: 1, Name: player}},
-			Seconds:  seconds, PointsFor: 30, PossessionsFor: 20, PointsAgainst: 20, PossessionsAgainst: 20,
-		}
-		if err := env.DB.Create(&row).Error; err != nil {
-			t.Fatalf("creating lineup: %v", err)
+		at := firstSnapshot
+		result := models.GameResult{GameID: g.ID, HomeScore: homeScore, AwayScore: awayScore, FinalizedAt: &at}
+		if err := env.DB.Create(&result).Error; err != nil {
+			t.Fatalf("creating result: %v", err)
 		}
 	}
-
-	lastSeason := game(2025, base.AddDate(-1, 0, 0), models.GameStatusFinal)
-	earlier := game(2026, base, models.GameStatusFinal)
-	viewed := game(2026, base.AddDate(0, 0, 2), models.GameStatusFinal)
-	later := game(2026, base.AddDate(0, 0, 4), models.GameStatusFinal)
-	upcoming := game(2026, firstSnapshot.AddDate(0, 0, 1), models.GameStatusScheduled)
-	unplayedByAnyone := testdb.InsertGame(t, env.DB, models.Game{
-		Sport: models.SportBasketball, Season: 2026, ScheduledAt: firstSnapshot.AddDate(0, 0, 1),
-	})
-
-	unit(lastSeason, "Graduated Player", 600)
-	unit(earlier, "Earlier Player", 600)
-	unit(later, "Later Player", 600)
-
+	store := func(g *models.Game, homePoints, awayPoints int) {
+		t.Helper()
+		for team, points := range map[uuid.UUID]int{home.ID: homePoints, away.ID: awayPoints} {
+			row := models.GameTeamStats{GameID: g.ID, TeamID: team, FetchedAt: firstSnapshot, Box: box(points)}
+			if err := env.DB.Create(&row).Error; err != nil {
+				t.Fatalf("creating box score: %v", err)
+			}
+		}
+	}
 	page := func(t *testing.T, g *models.Game) string {
 		t.Helper()
 		resp, body := get(t, client, server.URL+g.Path())
@@ -270,46 +280,81 @@ func TestLineupPanelThroughTheRouter(t *testing.T) {
 		}
 		return body
 	}
-	const seasonTitle, gameTitle = "Most-used lineups this season", "Lineups in this game"
+	const seasonTitle, boxTitle = "Season averages", "Box score"
+	labels := []string{"Points", "Field goals", "3-pointers", "Free throws", "Rebounds", "Assists", "Points in the paint"}
 
-	t.Run("a finished game the feed has not covered shows the season before it", func(t *testing.T) {
-		body := page(t, viewed)
-		if !strings.Contains(body, seasonTitle) || !strings.Contains(body, "Earlier Player") {
-			t.Error("the panel does not show the season before this game")
+	var pregame string
+	t.Run("an upcoming game shows the season per game", func(t *testing.T) {
+		pregame = page(t, game(models.GameStatusScheduled))
+		if !strings.Contains(pregame, seasonTitle) || strings.Contains(pregame, boxTitle) {
+			t.Error("the panel is not season averages")
 		}
-		if strings.Contains(body, "Later Player") {
-			t.Error("the panel credits the team with a game played after this one")
-		}
-		if strings.Contains(body, "Graduated Player") {
-			t.Error("the panel reaches into last season")
+		if !strings.Contains(pregame, ">75.1<") || !strings.Contains(pregame, ">27.0-60.0<") {
+			t.Error("the season's totals are not shown per game")
 		}
 	})
 
-	t.Run("an upcoming game shows the whole season so far", func(t *testing.T) {
-		body := page(t, upcoming)
-		if !strings.Contains(body, "Earlier Player") || !strings.Contains(body, "Later Player") {
-			t.Error("the panel is missing games already played")
+	t.Run("a finished game shows the same rows from its box score", func(t *testing.T) {
+		g := game(models.GameStatusFinal)
+		final(g, 80, 70)
+		store(g, 80, 70)
+		body := page(t, g)
+		if !strings.Contains(body, boxTitle) || strings.Contains(body, seasonTitle) {
+			t.Error("the panel is not the box score")
 		}
-		if !strings.Contains(body, "not a starting lineup") {
-			t.Error("the panel does not say what it is not")
+		if !strings.Contains(body, ">80<") || !strings.Contains(body, ">27-60<") {
+			t.Error("the game's own figures are not shown")
 		}
-	})
-
-	t.Run("a finished game with its own units shows those", func(t *testing.T) {
-		unit(viewed, "Viewed Game Player", 600)
-		body := page(t, viewed)
-		if !strings.Contains(body, gameTitle) || !strings.Contains(body, "Viewed Game Player") {
-			t.Error("the panel does not show this game's units")
-		}
-		if strings.Contains(body, "Earlier Player") {
-			t.Error("the panel mixes in the rest of the season")
+		for _, label := range labels {
+			row := ">" + label + "<"
+			if !strings.Contains(pregame, row) || !strings.Contains(body, row) {
+				t.Errorf("%q is not on both versions of the panel", label)
+			}
 		}
 	})
 
-	t.Run("no units means no panel", func(t *testing.T) {
-		body := page(t, unplayedByAnyone)
-		if strings.Contains(body, seasonTitle) || strings.Contains(body, gameTitle) {
-			t.Error("the panel renders with nothing in it")
+	t.Run("a box score that misses the final score is not shown", func(t *testing.T) {
+		g := game(models.GameStatusFinal)
+		final(g, 80, 70)
+		store(g, 41, 38)
+		body := page(t, g)
+		if strings.Contains(body, boxTitle) || !strings.Contains(body, seasonTitle) {
+			t.Error("a partial box score was shown as the game's")
+		}
+	})
+
+	t.Run("a finished game waiting for one shows the season", func(t *testing.T) {
+		g := game(models.GameStatusFinal)
+		final(g, 80, 70)
+		if body := page(t, g); !strings.Contains(body, seasonTitle) {
+			t.Error("the page does not fall back to the season")
+		}
+	})
+
+	t.Run("a season row with no counts yet means no panel", func(t *testing.T) {
+		other := testdb.InsertTeam(t, env.DB, "")
+		season := models.TeamSeasonStats{TeamID: other.ID, Season: 2026, FetchedAt: firstSnapshot, Games: 10}
+		if err := env.DB.Create(&season).Error; err != nil {
+			t.Fatalf("creating season stats: %v", err)
+		}
+		g := testdb.InsertGame(t, env.DB, models.Game{
+			Sport: models.SportBasketball, Season: 2026, Status: models.GameStatusScheduled,
+			ScheduledAt: firstSnapshot.AddDate(0, 0, 1), HomeTeamID: home.ID, AwayTeamID: other.ID,
+		})
+		if body := page(t, g); strings.Contains(body, seasonTitle) {
+			t.Error("a panel of blanks was drawn")
+		}
+	})
+
+	t.Run("a team with no season figures means no panel", func(t *testing.T) {
+		other := testdb.InsertTeam(t, env.DB, "")
+		g := testdb.InsertGame(t, env.DB, models.Game{
+			Sport: models.SportBasketball, Season: 2026, Status: models.GameStatusScheduled,
+			ScheduledAt: firstSnapshot.AddDate(0, 0, 1), HomeTeamID: home.ID, AwayTeamID: other.ID,
+		})
+		body := page(t, g)
+		if strings.Contains(body, seasonTitle) || strings.Contains(body, boxTitle) {
+			t.Error("half a panel was drawn")
 		}
 	})
 }

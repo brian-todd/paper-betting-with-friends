@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"slices"
+
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -267,7 +269,7 @@ func NewTeamSeasonStatsRepository(db *gorm.DB) *TeamSeasonStatsRepository {
 func (r *TeamSeasonStatsRepository) Upsert(stats *models.TeamSeasonStats) error {
 	return r.db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "team_id"}, {Name: "season"}},
-		DoUpdates: clause.AssignmentColumns([]string{
+		DoUpdates: clause.AssignmentColumns(slices.Concat([]string{
 			"fetched_at", "games", "pace",
 			"offense_rating", "defense_rating",
 			"offense_effective_fg_pct", "defense_effective_fg_pct",
@@ -276,7 +278,7 @@ func (r *TeamSeasonStatsRepository) Upsert(stats *models.TeamSeasonStats) error 
 			"offense_free_throw_rate", "defense_free_throw_rate",
 			"offense_three_pct", "defense_three_pct",
 			"updated_at",
-		}),
+		}, models.TeamBoxColumns)),
 	}).Create(stats).Error
 }
 

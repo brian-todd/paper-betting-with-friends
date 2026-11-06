@@ -100,7 +100,7 @@ func TestOneRatingTableFailingStillStoresTheOther(t *testing.T) {
 func TestTurnoverPctNeedsBothCounts(t *testing.T) {
 	number := func(v float64) *float64 { return &v }
 
-	side := APITeamSeasonSide{Possessions: number(200)}
+	side := APITeamSide{Possessions: number(200)}
 	side.Turnovers.Total = number(30)
 	if got := side.TurnoverPct(); got == nil || *got != 15 {
 		t.Errorf("TurnoverPct = %v, want 15", got)

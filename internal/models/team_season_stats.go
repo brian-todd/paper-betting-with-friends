@@ -39,6 +39,9 @@ type TeamSeasonStats struct {
 	OffenseThreePct       *decimal.Decimal `gorm:"type:decimal(6,3)"`
 	DefenseThreePct       *decimal.Decimal `gorm:"type:decimal(6,3)"`
 
+	// Box is the team's season totals, which the game page shows per game.
+	Box TeamBox `gorm:"embedded"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

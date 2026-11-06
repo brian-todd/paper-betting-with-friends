@@ -61,9 +61,9 @@ type GameDetail struct {
 	// form for both sides. Nil when there is nothing to draw, as for a game whose
 	// teams have not been synced yet.
 	Matchup *Matchup
-	// Lineups is the basketball five-man unit panel, nil when there is nothing to
-	// show, which is every football game and any team yet to play.
-	Lineups *LineupPanel
+	// TeamStats is basketball's table of team numbers: the box score once a game
+	// has one, the season's averages until then. Nil on a football game.
+	TeamStats *TeamStatsPanel
 	// Forecast is the weather expected at kickoff, for a game that has not
 	// kicked off yet and is not played under a roof. Separate from Matchup
 	// because it is a fact about the venue rather than about either side, and
@@ -142,7 +142,7 @@ type Service struct {
 	teamSeasonStatsRepo   *repository.TeamSeasonStatsRepository
 	gamePregameWPRepo     *repository.GamePregameWinProbabilityRepository
 	pollRankRepo          *repository.PollRankRepository
-	gameLineupRepo        *repository.GameLineupRepository
+	gameTeamStatsRepo     *repository.GameTeamStatsRepository
 	gameForecastRepo      *repository.GameForecastRepository
 
 	// location resolves the calendar-day and time-of-day filters. Those ask
@@ -176,7 +176,7 @@ func NewService(db *gorm.DB, location *time.Location) *Service {
 		gamePregameWPRepo:     repository.NewGamePregameWinProbabilityRepository(db),
 		gameForecastRepo:      repository.NewGameForecastRepository(db),
 		pollRankRepo:          repository.NewPollRankRepository(db),
-		gameLineupRepo:        repository.NewGameLineupRepository(db),
+		gameTeamStatsRepo:     repository.NewGameTeamStatsRepository(db),
 
 		location: location,
 	}
@@ -504,7 +504,7 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 		detail.Matchup = matchup
 	}
 	if game.Sport == models.SportBasketball {
-		detail.Lineups = s.lineupPanel(game)
+		detail.TeamStats = s.teamStatsPanel(game, detail.Result, detail.Matchup)
 	}
 	detail.Forecast = s.forecastFor(game)
 
