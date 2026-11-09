@@ -501,6 +501,7 @@ func (s *Service) GetGameDetail(gameID uuid.UUID) (*GameDetail, error) {
 	// HasAny because a game synced before the stats jobs first ran has to render the
 	// absent case.
 	if matchup := s.buildMatchup(game); matchup.HasAny() {
+		matchup.ScoreProjection = s.projectionFor(game, matchup, detail.SpreadOdds, detail.OverUnderOdds)
 		detail.Matchup = matchup
 	}
 	if game.Sport == models.SportBasketball {
@@ -532,6 +533,55 @@ func (s *Service) forecastFor(game *models.Game) *models.GameForecast {
 		return nil
 	}
 	return forecast
+}
+
+// projectionFor is a basketball game's projected score, or nil.
+//
+// Before tip-off only. The ratings are current values, so a game under way or
+// finished would be projected partly from its own result, and there is no stored
+// pregame value to show instead. Gated on the kickoff as forecastFor is, because
+// status only advances when a sync runs, and on the status as well, because the
+// kickoff /games writes back is not guarded and can sit in the future after the
+// scoreboard has called the game live.
+//
+// The spread beside it is the first, the same row the games grid shows, and the
+// total is that book's where it posted one, so the line reads as one book's line.
+func (s *Service) projectionFor(game *models.Game, matchup *Matchup, spread []models.SpreadOdds, overUnder []models.OverUnderOdds) *ScoreProjection {
+	if game.Status != models.GameStatusScheduled || !game.ScheduledAt.After(s.clock.Now()) {
+		return nil
+	}
+	// Checked before the baseline so an unrated pairing costs no query.
+	home, away, ok := projectionInputs(matchup)
+	if !ok {
+		return nil
+	}
+
+	baseline, ok, err := s.teamRatingRepo.AdjustedBaseline(game.Season)
+	if err != nil {
+		slog.Error("failed to fetch adjusted baseline", "game", game.ID, "error", err)
+		return nil
+	}
+	if !ok {
+		return nil
+	}
+
+	projection := project(home, away, matchup.NeutralSite, baseline)
+	if projection == nil {
+		return nil
+	}
+	if len(spread) > 0 {
+		projection.Spread = &spread[0]
+	}
+	if len(overUnder) > 0 {
+		projection.OverUnder = &overUnder[0]
+		for i := range overUnder {
+			if projection.Spread != nil && overUnder[i].Source == projection.Spread.Source {
+				projection.OverUnder = &overUnder[i]
+				break
+			}
+		}
+	}
+	return projection
 }
 
 // formGames is how many recent results the form strip shows.

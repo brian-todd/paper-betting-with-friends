@@ -351,6 +351,49 @@ Things the feed will not tell you:
 There is no sample-size floor beyond a game each, matching football's low one, and the
 panel's footnote says how many games each side rests on.
 
+### Basketball Projection
+
+The Matchup panel's "Projected score" and "Win chance" rows are **ours, not the
+provider's**: the adjusted-efficiency method the public rating sites use, in
+`internal/games/projection.go`. Each side's adjusted offense against the other's
+adjusted defense, relative to the national average, over `paceA × paceB / avgPace`
+possessions, with home court split ±1.5 so it moves the margin and not the total.
+Win chance is the normal CDF of the margin over 11 points, held to 1-99%. The primary
+posted spread sits beside it with the same book's total, stated and never called an edge.
+
+The scores are rounded together, not one at a time (`roundScores`): the total is
+rounded once and shared out by largest remainder, and a tie is broken toward the
+favourite. Rounded separately, 78.5 and 61.8 print a total of 141 beside a 140.5 line the
+projection is under, and 70.4 and 69.6 print a tie beside a 53% win chance. The page's
+text reads the constants rather than restating them.
+
+It is drawn **before tip-off only**, gated on `ScheduledAt` like the forecast and on
+`status = scheduled` as well, because the kickoff `/games` writes back is unguarded and
+can stay in the future after the scoreboard has called the game live. The ratings are
+current values, so afterwards they would be projecting a game partly from its own
+result, and nothing stores what they were before. The rating rows stay.
+
+The national average (`TeamRatingRepository.AdjustedBaseline`) is over teams with
+**both** an adjusted rating and a pace. `team_season_stats` also holds teams outside
+Division I, and averaging their faster pace in made totals about seven points low on
+the captured season. Over the rated teams it is 1.7 low, left uncorrected.
+
+Both constants come from one season (2025-26, 5,084 games between rated teams away
+from a neutral site), so treat them as measurements to revisit, not facts:
+
+- **3.0 points home court**: the home side's mean margin over the projection without
+  it. At neutral sites the same figure was 0.2, so the flag can be trusted.
+- **11 points of spread**: the sportsbooks' own error on those games (11.3), not the
+  projection's (10.6). The captured ratings are end-of-season values that already
+  include every game, so measuring the projection against those games flatters it.
+  Do not backtest anything with stored ratings for the same reason.
+
+Elo is not projected from, and `/ratings/elo` is not synced. Each game's pregame Elo
+already arrives with `/games`, is a value as of that game, and chains cleanly (a
+team's next start matched its previous end in all but 22 of 11,895 cases). The best
+fit for a win chance from it was ÷550 with 160 points of home court, not the textbook
+÷400, and a second win chance beside the first would be two answers to one question.
+
 ### Basketball Team Stats
 
 The game page's table of team numbers has **the same rows before and after a game**:
@@ -1262,6 +1305,7 @@ a migration is the wrong place to decide that.
 - Reading a basketball rank from "this week's" poll or the feed's week number — polls skip weeks and week numbers restart in the postseason; use the latest poll date on or before the game
 - Counting a custom odds row as a line the game offers — one bet would switch everyone's day page to that game alone, with no odds to show
 - Showing last season's ratings on this season's games — rosters turn over; a game reads its own season's rows
+- Projecting a game that has tipped off, or backtesting a projection, from stored ratings — they are current values and already include the game's result
 - Storing a feed's `turnoverRatio` as it comes — it is a fraction on one endpoint and a percentage on another; work it out from the counts
 - Giving the pregame and postgame team tables different rows — both read `models.TeamBox`, so a team's night reads against its season
 - Showing a box score without checking it against the final score — the feed can answer for a game in progress, and a partial box reads as complete

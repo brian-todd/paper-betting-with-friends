@@ -103,6 +103,12 @@ type Matchup struct {
 	// most games: it is derived from a posted line, so its coverage follows the
 	// market rather than the schedule.
 	WinProbability *models.GamePregameWinProbability
+
+	// ScoreProjection is basketball's projected score from adjusted efficiency and
+	// pace. Not SPProjection, which is football's SP+ margin. Nil once the game has
+	// tipped off: the ratings are current values, so after tip-off they would be
+	// projecting a game partly from its own result.
+	ScoreProjection *ScoreProjection
 }
 
 // HasAny reports whether there is anything at all to draw. A game whose teams
