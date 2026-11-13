@@ -207,6 +207,26 @@
                     </tr>
                     {{end}}
 
+                    <!-- Computed, not sourced: basketball's projection from the
+                         Adjusted row's units and each side's pace, drawn before
+                         tip-off only. The posted line sits beside it and nothing
+                         here says which of the two is right. -->
+                    {{with .ScoreProjection}}
+                    <tr>
+                        <th scope="row">
+                            <span class="metric-help" title="{{$matchup.Explain "Projected score"}}">Projected score</span>
+                            <span class="matchup-projection">(total {{.Total}}{{with .LineText $matchup.Home.Team $matchup.Away.Team}}; line {{.}}{{end}})</span>
+                        </th>
+                        <td>{{.Away}}</td>
+                        <td>{{.Home}}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><span class="metric-help" title="{{$matchup.Explain "Win chance"}}">Win chance</span></th>
+                        <td>{{.AwayPercent}}%</td>
+                        <td>{{.HomePercent}}%</td>
+                    </tr>
+                    {{end}}
+
                     <!-- Sourced, not computed: the provider derives this from a
                          posted line, which is why most games do not have one
                          until the week they are played. Nothing is substituted
@@ -249,6 +269,10 @@
 
             {{with .CoverageNote}}
             <p class="matchup-note">{{.}}</p>
+            {{end}}
+
+            {{with .ScoreProjection}}
+            <p class="matchup-note">Projected from adjusted efficiency and pace{{if not $matchup.NeutralSite}}, with {{.HomeCourtPoints}} points for home court{{end}}.</p>
             {{end}}
 
             <!-- Without this a reader assumes the numbers are live. During a

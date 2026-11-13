@@ -5,6 +5,7 @@ import (
 
 	"github.com/brian/paper-betting-with-friends/internal/models"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -67,6 +68,44 @@ func (r *TeamRatingRepository) HasSeason(season int, source models.RatingSource)
 	err := r.db.Raw(`SELECT EXISTS (SELECT 1 FROM team_ratings WHERE season = ? AND source = ?)`, season, source).
 		Scan(&found).Error
 	return found, err
+}
+
+// AdjustedBaseline is the national average a basketball projection is measured
+// against: the mean adjusted offense, in points per 100 possessions, and the mean
+// pace, in possessions per game, over the season's rated teams.
+type AdjustedBaseline struct {
+	Efficiency decimal.Decimal
+	Pace       decimal.Decimal
+	Teams      int
+}
+
+// AdjustedBaseline averages the season's adjusted offense and pace over the teams
+// that have both. False when no team does, as in a season's first days.
+//
+// Both averages are over the same rated teams on purpose. The season figures cover
+// teams outside Division I too, which appear only for games against one, and their
+// faster pace pulled the average up enough to cost a projected total about seven
+// points on the captured season.
+func (r *TeamRatingRepository) AdjustedBaseline(season int) (AdjustedBaseline, bool, error) {
+	var row struct {
+		Efficiency decimal.NullDecimal
+		Pace       decimal.NullDecimal
+		Teams      int
+	}
+	err := r.db.Raw(`
+		SELECT AVG(r.offense) AS efficiency, AVG(s.pace) AS pace, COUNT(*) AS teams
+		FROM team_ratings r
+		JOIN team_season_stats s ON s.team_id = r.team_id AND s.season = r.season
+		WHERE r.season = ? AND r.source = ?
+		  AND r.offense IS NOT NULL AND s.pace IS NOT NULL`,
+		season, models.RatingSourceAdjusted).Scan(&row).Error
+	if err != nil {
+		return AdjustedBaseline{}, false, err
+	}
+	if row.Teams == 0 || !row.Efficiency.Valid || !row.Pace.Valid {
+		return AdjustedBaseline{}, false, nil
+	}
+	return AdjustedBaseline{Efficiency: row.Efficiency.Decimal, Pace: row.Pace.Decimal, Teams: row.Teams}, true, nil
 }
 
 // TeamRecordRepository provides access to season win-loss records.

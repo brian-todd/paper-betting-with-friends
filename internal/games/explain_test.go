@@ -21,6 +21,8 @@ func TestEveryDrawnRowIsExplained(t *testing.T) {
 		models.RatingSourceAdjusted.Label(),
 		models.RatingSourceSRS.Label(),
 		"Elo",
+		"Projected score",
+		"Win chance",
 		"Win probability",
 		"Recent",
 	}

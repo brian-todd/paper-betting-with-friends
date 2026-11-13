@@ -54,6 +54,19 @@ var metricHelp = map[string]string{
 		"play-by-play. This is the number going into this game rather than the team's " +
 		"current one.",
 
+	"Projected score": "Our projection, not the provider's: each team's adjusted offense " +
+		"against the other's adjusted defense, relative to the national average, over the " +
+		"possessions the two teams' paces imply, with " + pointsText(basketballHomeCourtPoints) +
+		" points for the home team unless the game is at a neutral site. It is the method " +
+		"the public college basketball rating sites use. The posted line is shown beside it " +
+		"for comparison. Shown before tip-off only, because the ratings are current values " +
+		"and would include the game's own result once it is played.",
+
+	"Win chance": "How often a team projected to win by this margin does win, assuming " +
+		"real margins fall around the projection with the spread the sportsbooks' own " +
+		"lines showed in 2025-26 (about " + pointsText(projectionMarginSD) + " points). " +
+		"Held between 1% and 99%.",
+
 	"Win probability": "The provider's pre-game win probability. It is derived from the " +
 		"posted point spread rather than from any of the ratings above, so it follows " +
 		"the market and exists only for games a sportsbook has priced.",
